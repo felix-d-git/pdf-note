@@ -1,0 +1,9 @@
+# Gilt für alle cargo-/tauri-Aufrufe unterhalb des Repos.
+[env]
+# bindgen (mupdf-sys) braucht libclang; LLVM per winget, nicht im PATH
+LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
+
+[build]
+# Build-Artefakte (GB) nie in den Projektordner; CI überschreibt per CARGO_TARGET_DIR
+# relativ zum Repo-Ordner (liegt 4 Ebenen unter %USERPROFILE%) -> %LOCALAPPDATA%\Temp\pdf-note-target
+target-dir = "../../../../AppData/Local/Temp/pdf-note-target"
