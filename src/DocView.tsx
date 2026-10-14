@@ -6,7 +6,7 @@ import {
   afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
   moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
 } from "./ink";
-import { PageView, Thumb } from "./PageView";
+import { PageView, Thumb, type OrigEdit } from "./PageView";
 import { type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -283,7 +283,15 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     }
   }
 
-  const removeSel = () => {
+  /** Original-Objekte der PDF ändern; eigene Objekte ersetzen (`next`) bzw. entfernen (`drop`) im selben Schritt. */
+  const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = []) =>
+    void pageOp({ op: "orig", page, edits }, (its) =>
+      its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it));
+
+  const removeSel = (ownOnly = false) => {
+    const orig = selection.ids.filter((i) => i < 0).map((i) => ({ index: -1 - i }));
+    // Original-Objekte nur im Lasso: sonst unsichtbar ausgewählt
+    if (orig.length && !ownOnly && tool === "lasso") return origOp(selection.page, orig, [], selItems.map((it) => it.id));
     if (!selItems.length) return;
     const ids = new Set(selItems.map((it) => it.id));
     edit((its) => its.filter((it) => !ids.has(it.id)));
@@ -342,7 +350,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       clip.items = selItems;
       clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
       e.clipboardData.setData("text/plain", clip.text);
-      if (e.type === "cut") removeSel();
+      if (e.type === "cut") removeSel(true); // Original-Objekte nicht in der Zwischenablage → nicht ausschneiden
     };
     // Reihenfolge: Bild → eigene Objekte (Text unverändert seit dem Kopieren) → Text als Textfeld
     const onPaste = (e: ClipboardEvent) => {
@@ -577,6 +585,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
                 onSelect={(page, ids) => setSelection({ page, ids })}
+                onOrig={(edits, next) => origOp(i, edits, next)}
               />
             ))}
           </div>

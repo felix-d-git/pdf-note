@@ -89,6 +89,13 @@ type Gesture =
   | { t: "move"; x: number; y: number; dx: number; dy: number }
   | { t: "scale"; ox: number; oy: number; d0: number; s: number };
 
+/** Kleinstes Objekt, dessen Box den Punkt enthält (Klick auf überlappende Original-Objekte). */
+function smallestAt(its: Item[], x: number, y: number) {
+  const area = (it: Item) => { const b = box(it); return (b.x1 - b.x0) * (b.y1 - b.y0); };
+  return its.filter((it) => { const b = box(it); return x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1; })
+    .sort((a, b) => area(a) - area(b))[0];
+}
+
 export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
   items: Item[]; selected: number[]; tool: Tool; preset: Preset; marker: Preset; settings: Settings;
@@ -96,7 +103,11 @@ export interface PageProps {
   onRemove: (ids: number[]) => void;
   onReplace: (items: Item[]) => void;
   onSelect: (page: number, ids: number[]) => void;
+  /** Original-Objekte der PDF ändern (matrix fehlt → löschen), dazu eigene Objekte – ein Schritt */
+  onOrig: (edits: OrigEdit[], next: Item[]) => void;
 }
+
+export interface OrigEdit { index: number; matrix?: number[] }
 
 export function PageView(p: PageProps) {
   const { doc, index, size, zoom, version, items, selected, tool, preset, marker, settings } = p;
@@ -113,7 +124,21 @@ export function PageView(p: PageProps) {
   const [url, visible] = usePageImage(ref, doc, index, zoom * devicePixelRatio, version);
   const [w, h] = [size[0] * zoom, size[1] * zoom];
 
-  const sel = items.filter((it) => selected.includes(it.id));
+  // Original-Objekte der PDF (nur Lasso): als Pseudo-Bild-Objekte mit Id −1 − Index, nicht gezeichnet
+  // Boxen gehören zu einem Stand (`version`); veraltete Indizes nie verwenden
+  const [origBoxes, setOrigBoxes] = useState<{ v: number; b: number[][] }>({ v: -1, b: [] });
+  const lassoOn = tool === "lasso" && visible;
+  useEffect(() => {
+    if (!lassoOn) return;
+    let live = true;
+    invoke<number[][]>("orig_objects", { id: doc, index }).then((b) => live && setOrigBoxes({ v: version, b }), () => live && setOrigBoxes({ v: version, b: [] }));
+    return () => void (live = false);
+  }, [doc, index, version, lassoOn]);
+  const origs: Item[] = lassoOn && origBoxes.v === version ? origBoxes.b.map(([x0 = 0, y0 = 0, x1 = 0, y1 = 0], i) => ({
+    id: -1 - i, page: index, kind: "image", color: [0, 0, 0], opacity: 1, size: 0, simulated: false,
+    points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
+  })) : [];
+  const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
   const transform = (it: Item) =>
     !selected.includes(it.id) ? it
     : gs?.t === "move" ? moveItem(it, gs.dx, gs.dy)
@@ -275,22 +300,30 @@ export function PageView(p: PageProps) {
         const [x0, y0] = c.poly[0] ?? [0, 0];
         const far = c.poly.some(([x, y]) => Math.hypot(x - x0, y - y0) > 3);
         const ids = far
-          ? items.filter((it) => {
+          ? [...items, ...origs].filter((it) => {
             const b = box(it);
             return inPolygon((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, c.poly);
           }).map((it) => it.id)
-          : items.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id;
+          : items.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id ?? smallestAt(origs, x0, y0)?.id;
         p.onSelect(index, ids === undefined ? [] : Array.isArray(ids) ? ids : [ids]);
         break;
       }
       case "move":
-        if (c.dx || c.dy) p.onReplace(sel.map((it) => moveItem(it, c.dx, c.dy)));
+        if (c.dx || c.dy) commit((it) => moveItem(it, c.dx, c.dy), [1, 0, 0, 1, c.dx, c.dy]);
         break;
       case "scale":
-        if (c.s !== 1) p.onReplace(sel.map((it) => scaleItem(it, c.ox, c.oy, c.s)));
+        if (c.s !== 1) commit((it) => scaleItem(it, c.ox, c.oy, c.s), [c.s, 0, 0, c.s, c.ox * (1 - c.s), c.oy * (1 - c.s)]);
         break;
     }
     rerender();
+  };
+
+  /** Verschieben/Skalieren: eigene Objekte per `f`, Original-Objekte per Matrix `m` im Backend */
+  const commit = (f: (it: Item) => Item, m: number[]) => {
+    const own = sel.filter((it) => it.id >= 0).map(f);
+    const orig = sel.filter((it) => it.id < 0).map((it) => ({ index: -1 - it.id, matrix: m }));
+    if (orig.length) p.onOrig(orig, own);
+    else p.onReplace(own);
   };
 
   const commitText = (text: string) => {
