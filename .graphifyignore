@@ -1,0 +1,4 @@
+vendor/
+spikes/
+src-tauri/icons/
+src-tauri/gen/

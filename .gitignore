@@ -7,3 +7,4 @@ src-tauri/target/
 # Test-PDFs evtl. privat -> nicht ins Repo
 testdata/pdfs/
 graphify-out/
+src-tauri/gen/
