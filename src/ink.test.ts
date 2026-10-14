@@ -1,8 +1,14 @@
 import { expect, test } from "vitest";
-import { normPressure, savedWidth, type Stroke } from "./ink";
+import {
+  afterDelete, afterInsert, afterMove, afterRotate, hitTest, inPolygon, ItemData, fromData, movedIndex, normPressure,
+  savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
+} from "./ink";
 
-const s = (p: number, simulated = false): Stroke => ({
-  page: 0, color: [0, 0, 0], opacity: 1, size: 2, simulated, points: [[0, 0, p], [5, 5, p]],
+const s = (p: number, simulated = false): Item => ({
+  id: 1, page: 0, kind: "ink", color: [0, 0, 0], opacity: 1, size: 2, simulated, points: [[0, 0, p], [5, 5, p]], text: "",
+});
+const it = (kind: Kind, points: [number, number][], page = 0): Item => ({
+  ...s(0.5), kind, page, points: points.map(([x, y]): InkPoint => [x, y, 0.5]),
 });
 
 test("gespeicherte Breite folgt dem mittleren Druck", () => {
@@ -10,10 +16,63 @@ test("gespeicherte Breite folgt dem mittleren Druck", () => {
   expect(savedWidth(s(1))).toBeCloseTo(3);
   expect(savedWidth(s(0))).toBeCloseTo(1);
   expect(savedWidth(s(0, true))).toBe(2);
+  expect(savedWidth({ ...s(1), kind: "rect" })).toBe(2);
 });
 
 test("Druck wird auf Stift-Maximum normiert und begrenzt", () => {
   expect(normPressure(0.75)).toBe(1);
   expect(normPressure(0.9)).toBe(1);
   expect(normPressure(0)).toBe(0.05);
+  expect(normPressure(0.25, 0.5)).toBe(0.5);
+});
+
+test("Treffer je Objektart", () => {
+  const line = it("line", [[0, 0], [100, 0]]);
+  expect(hitTest(line, 50, 2, 1)).toBe(true);
+  expect(hitTest(line, 50, 5, 1)).toBe(false);
+  const rect = it("rect", [[0, 0], [100, 50]]);
+  expect(hitTest(rect, 100, 25, 1)).toBe(true);
+  expect(hitTest(rect, 50, 25, 1)).toBe(false); // innen leer
+  const ell = it("ellipse", [[0, 0], [100, 50]]);
+  expect(hitTest(ell, 50, 0, 1)).toBe(true);
+  expect(hitTest(ell, 50, 25, 1)).toBe(false);
+  const text = { ...it("text", [[10, 10], [60, 30]]), text: "x" };
+  expect(hitTest(text, 30, 20, 0)).toBe(true);
+  expect(hitTest(text, 70, 20, 0)).toBe(false);
+  expect(hitTest(it("ink", [[5, 5]]), 6, 6, 1)).toBe(true);
+});
+
+test("Punkt im Lasso", () => {
+  const sq: [number, number][] = [[0, 0], [10, 0], [10, 10], [0, 10]];
+  expect(inPolygon(5, 5, sq)).toBe(true);
+  expect(inPolygon(15, 5, sq)).toBe(false);
+});
+
+test("Skalieren nimmt Breite mit", () => {
+  const r = scaleItem(it("rect", [[10, 10], [20, 20]]), 10, 10, 2);
+  expect(r?.points.map(([x, y]) => [x, y])).toEqual([[10, 10], [30, 30]]);
+  expect(r.size).toBe(4);
+});
+
+test("Seitenoperationen nummerieren Objekte um", () => {
+  const items = [0, 1, 2].map((p) => it("line", [[0, 0], [1, 1]], p));
+  expect(afterInsert(items, 1, 2).map((i) => i.page)).toEqual([0, 3, 4]);
+  expect(afterDelete(items, 1).map((i) => i.page)).toEqual([0, 1]);
+  expect(afterMove(items, 0, 2).map((i) => i.page)).toEqual([2, 0, 1]);
+  expect(afterMove(items, 2, 0).map((i) => i.page)).toEqual([1, 2, 0]);
+  // jede Verschiebung bleibt eine Permutation
+  for (let f = 0; f < 4; f++)
+    for (let t = 0; t < 4; t++)
+      expect(new Set([0, 1, 2, 3].map((p) => movedIndex(p, f, t))).size).toBe(4);
+  // 90° im Uhrzeigersinn, Höhe 100: oben links → oben rechts
+  const r = afterRotate([it("line", [[0, 0], [10, 20]])], 0, 100)[0];
+  expect(r?.points.map(([x, y]) => [x, y])).toEqual([[100, 0], [80, 10]]);
+});
+
+test("Speicherform passt zur Lade-Prüfung", () => {
+  const d = toData(it("arrow", [[1, 2], [3, 4]]));
+  const back = fromData(ItemData.parse(d));
+  expect(back.points).toEqual(d.points);
+  expect(() => ItemData.parse({ ...d, kind: "bogus" })).toThrow();
+  expect(() => ItemData.parse({ ...d, points: [[NaN, 0, 0]] })).toThrow();
 });
