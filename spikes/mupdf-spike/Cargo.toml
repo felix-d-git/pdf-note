@@ -1,0 +1,13 @@
+[package]
+name = "mupdf-spike"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mupdf = { version = "0.8.0", default-features = false }
+
+[patch.crates-io]
+# Wegwerf: mupdf 0.8.0 kompiliert unter MSVC nicht (max_align_t fehlt). Patch: Crate-Quelle nach
+# %LOCALAPPDATA%/Temp/mupdf-patched kopieren, in src/device/native.rs max_align_t -> u128.
+# Build: LIBCLANG_PATH="C:/Program Files/LLVM/bin", CARGO_TARGET_DIR lokal (nicht im Projektordner).
+mupdf = { path = "../../../../../../AppData/Local/Temp/mupdf-patched" }
