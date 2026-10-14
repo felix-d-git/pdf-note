@@ -34,8 +34,13 @@ fn speichern_und_neu_oeffnen_aendert_nichts() {
     assert!(n > 0, "keine PDFs in {}", dir.display());
 }
 
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into() }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new() }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -79,6 +84,7 @@ fn alle_schreibpfade() {
             item(last, Kind::Rect, two.clone(), ""),
             item(last, Kind::Ellipse, two.clone(), ""),
             item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz ÄÖÜ"),
+            pdf::Item { image: b64(&pdf::render_png(&doc, 0, 0.1).unwrap()), ..item(0, Kind::Image, two.clone(), "") },
         ]);
         pdf::save(&doc, &items, &copy, false).unwrap();
         assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{name}: Zusatzdatei neben der PDF");
@@ -163,8 +169,8 @@ fn zwei_dokumente_gleichzeitig() {
 
     let mut items_a = sa.items.clone();
     items_a.push(item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "nur A"));
-    a.save(&items_a, None, false).unwrap();
-    b.save(&sb.items, None, false).unwrap();
+    a.save(&items_a, None, false, false).unwrap();
+    b.save(&sb.items, None, false, false).unwrap();
     drop((a, b));
 
     let (_, ra) = Open::open(pa).unwrap();
@@ -175,4 +181,55 @@ fn zwei_dokumente_gleichzeitig() {
     assert_eq!(rb.items.len(), sb.items.len(), "B: Objekt aus A gelandet");
     assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 2, "Zusatzdatei neben den PDFs");
     println!("{} + {}: zwei Dokumente OK", first.display(), second.display());
+}
+
+/// Kindprozess für den Kill-Test: speichert endlos in die PDF aus `PDF_NOTE_KILL` (ohne Variable: nichts).
+#[test]
+#[ignore]
+fn kill_kind() {
+    let Ok(p) = std::env::var("PDF_NOTE_KILL") else { return };
+    let p = std::path::PathBuf::from(p);
+    let doc = pdf::open(&p).unwrap();
+    loop {
+        pdf::save(&doc, &[], &p, false).unwrap();
+    }
+}
+
+/// Prozess wird mitten im Speichern hart beendet → PDF öffnet weiter mit unverändertem Text,
+/// der Temp-Rest verschwindet beim nächsten Öffnen.
+#[test]
+#[ignore]
+fn kill_waehrend_speichern() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let src = std::fs::read_dir(&dir)
+        .expect("testdata/pdfs/ fehlt")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "pdf"))
+        .max_by_key(|p| std::fs::metadata(p).unwrap().len())
+        .expect("keine PDFs");
+    let tmp = std::env::temp_dir().join("pdf-note-test-kill");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let copy = tmp.join("kill.pdf");
+    std::fs::copy(&src, &copy).unwrap();
+    let text = page_texts(&pdf::open(&copy).unwrap()).unwrap();
+
+    let mut mid = 0;
+    for i in 0..10u64 {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "kill_kind", "--ignored", "--nocapture"])
+            .env("PDF_NOTE_KILL", &copy)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400 + 137 * i));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        mid += pdf::tmp_path(&copy).exists() as u32;
+        let back = pdf::open(&copy).unwrap_or_else(|e| panic!("Runde {i}: PDF kaputt: {e}"));
+        assert_eq!(page_texts(&back).unwrap(), text, "Runde {i}: Text");
+    }
+    pdf_note_lib::Open::open(copy.clone()).unwrap();
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1, "Temp-Rest nach dem Öffnen");
+    println!("{}: 10 Kills, {mid} davon mitten im Schreiben, PDF heil", src.display());
 }
