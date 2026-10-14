@@ -54,7 +54,11 @@ fn alle_schreibpfade() {
             continue;
         }
         let name = src.display();
-        let copy = tmp.join(src.file_name().unwrap());
+        // eigener Ordner je Kopie → nach dem Speichern darf dort nur die PDF liegen
+        let solo = tmp.join("solo");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(src.file_name().unwrap());
         std::fs::copy(&src, &copy).unwrap();
 
         // Öffnen wie in der App
@@ -77,7 +81,7 @@ fn alle_schreibpfade() {
             item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz ÄÖÜ"),
         ]);
         pdf::save(&doc, &items, &copy, false).unwrap();
-        assert!(!copy.with_extension("pdfnote-tmp").exists(), "{name}: Temp-Datei übrig");
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{name}: Zusatzdatei neben der PDF");
 
         let back = pdf::open(&copy).unwrap();
         assert_eq!(page_texts(&back).unwrap(), text, "{name}: Text");
@@ -115,6 +119,7 @@ fn alle_schreibpfade() {
         assert_eq!(o.page_count().unwrap(), 2 * pages, "{name}: Seitenzahl nach Operationen");
         assert_eq!(page_texts(&o).unwrap()[pages as usize..], text[..], "{name}: angehängter Text");
 
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{name}: Zusatzdatei nach Sitzung");
         println!("{name}: {pages} Seiten, alle Schreibpfade OK");
         n += 1;
     }
