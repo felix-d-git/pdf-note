@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+.env*
+*.log
+# Test-PDFs evtl. privat -> nicht ins Repo
+testdata/pdfs/
+graphify-out/
