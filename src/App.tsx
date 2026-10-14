@@ -1,134 +1,77 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
-import { z } from "zod";
+import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
+import { captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, ItemData, MARKERS, moveItem, newId,
-  PRESETS, toData, type Item, type Preset,
-} from "./ink";
-import { PageView, Thumb } from "./PageView";
-import { captureBinding, describe, loadSettings, storeSettings, type Settings, type Tool } from "./settings";
+  activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, setDirty, show, toggleSplit, type Pane, type Tab,
+} from "./tabs";
 
-const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
-const PageState = z.object({
-  sizes: Sizes, rev: z.number().int().nonnegative(), inserted: z.number().int().nonnegative(), items: z.array(ItemData),
-});
-const clampZoom = (z: number) => Math.min(6, Math.max(0.2, z));
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
-const A4: [number, number] = [595, 842];
-
-/** Ein Stand für Undo/Redo: Objekte + Seitenstand im Backend (rev) + Seitengrößen. */
-interface Snap { items: Item[]; rev: number; sizes: [number, number][] }
-interface History { list: Snap[]; at: number }
-const HISTORY_MAX = 200;
-const EMPTY: Snap = { items: [], rev: 0, sizes: [] };
-const push = (h: History, s: Snap): History => {
-  const list = [...h.list.slice(0, h.at + 1), s].slice(-HISTORY_MAX);
-  return { list, at: list.length - 1 };
-};
-
-const TOOL_LABELS: [Tool, string, string][] = [
-  ["pen", "Stift", "Stift"], ["marker", "Marker", "Textmarker"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)"],
-  ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren"], ["text", "Text", "Textfeld"], ["line", "╱", "Linie"],
-  ["arrow", "→", "Pfeil"], ["rect", "▭", "Rechteck"], ["ellipse", "◯", "Kreis/Ellipse"],
-];
 
 export default function App() {
-  const [path, setPath] = useState<string>();
-  const [hist, setHist] = useState<History>({ list: [EMPTY], at: 0 });
-  const [saved, setSaved] = useState<Snap>(EMPTY);
-  const [version, setVersion] = useState(0);
-  const [zoom, setZoom] = useState(1);
-  const [tool, setTool] = useState<Tool>("pen");
-  const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
-  const [marker, setMarker] = useState<Preset>(MARKERS[0] ?? DEFAULT_PRESET);
+  const [state, setState] = useState(EMPTY_TABS);
+  const [inits, setInits] = useState(new Map<number, Snap>());
+  const [ratio, setRatio] = useState(0.5);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
   const [capture, setCapture] = useState<"lasso" | "eraser">();
-  const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
-  const [current, setCurrent] = useState(0);
-  const [jump, setJump] = useState("");
   const [error, setError] = useState<string>();
   const [drop, setDrop] = useState<{ from: number; to: number }>();
-  const scroller = useRef<HTMLDivElement>(null);
-  const busy = useRef(false);
-  const clip = useRef<Item[]>([]);
-  const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
+  const nextId = useRef(1);
+  const opening = useRef<string[]>([]);
+  const [apis] = useState(() => new Map<number, DocApi>());
+  const split = useRef<HTMLDivElement>(null);
+  const tabDrag = useRef<{ from: number; x: number; moved: boolean }>(null);
 
-  const snap = hist.list[hist.at] ?? EMPTY;
-  const { items, sizes } = snap;
-  const dirty = !!path && snap !== saved;
-  const selItems = items.filter((it) => it.page === selection.page && selection.ids.includes(it.id));
+  const { tabs, panes } = state;
+  const current = tabs.find((t) => t.id === activeId(state));
   // Für Listener, die nur einmal registriert werden
-  const live = useRef<{ dirty: boolean; save: () => Promise<void>; openPath: (p: string) => Promise<void> }>({
-    dirty, save: async () => {}, openPath: async () => {},
+  const live = useRef<{ tabs: Tab[]; openPath: (p: string) => Promise<void>; confirmLeave: (t: Tab) => Promise<boolean> }>({
+    tabs, openPath: async () => {}, confirmLeave: async () => true,
   });
 
-  const edit = (f: (items: Item[]) => Item[]) =>
-    setHist((h) => {
-      const s = h.list[h.at] ?? EMPTY;
-      return push(h, { ...s, items: f(s.items) });
-    });
-  const clearSel = () => setSelection({ page: -1, ids: [] });
-
-  async function save() {
-    // während Seitenoperation/Undo passen die Objekte nicht zum Seitenstand im Backend
-    if (!path || !dirty || busy.current) return;
-    const s = snap;
-    try {
-      await invoke("save_pdf", { items: s.items.map(toData), target: null, flat: false });
-      setSaved(s);
-      setError(undefined);
-    } catch (e) {
-      setError(`Speichern fehlgeschlagen: ${String(e)}`);
-      throw e;
-    }
-  }
-
-  /** Speichern unter, flach: Objekte eingebrannt, nicht mehr bearbeitbar. Weitergearbeitet wird an der offenen PDF. */
-  async function saveAs() {
-    if (!path || busy.current) return;
-    const target = await saveDialog({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: path.replace(/\.pdf$/i, "") + "-flach.pdf" });
-    if (!target) return;
-    // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + noch im Speicher)
-    if (target.toLowerCase() === path.toLowerCase()) return setError("Flach nicht über die offene Datei speichern – anderen Namen wählen");
-    try {
-      await invoke("save_pdf", { items: items.map(toData), target, flat: true });
-      setError(undefined);
-    } catch (e) {
-      setError(`Speichern unter fehlgeschlagen: ${String(e)}`);
-    }
-  }
+  const onDirty = useCallback((id: number, dirty: boolean) => setState((s) => setDirty(s, id, dirty)), []);
 
   /** true = weitermachen (gespeichert oder verworfen), false = abbrechen */
-  async function confirmLeave() {
-    if (!live.current.dirty) return true;
-    const r = await message("Ungespeicherte Änderungen speichern?", {
+  async function confirmLeave(t: Tab) {
+    if (!t.dirty) return true;
+    const r = await message(`„${fileName(t.path)}" hat ungespeicherte Änderungen. Speichern?`, {
       title: "PDF Note", kind: "warning", buttons: { yes: "Speichern", no: "Verwerfen", cancel: "Abbrechen" },
     });
-    if (r === "Speichern") return live.current.save().then(() => true, () => false);
+    if (r === "Speichern") return (apis.get(t.id)?.save() ?? Promise.resolve()).then(() => true, () => false);
     return r === "Verwerfen";
   }
 
+  async function close(t: Tab) {
+    if (!(await confirmLeave(t))) return;
+    setState((s) => closeTab(s, t.id));
+    setInits((m) => {
+      const n = new Map(m);
+      n.delete(t.id);
+      return n;
+    });
+    void invoke("close_pdf", { id: t.id });
+  }
+
   async function openPath(p: string) {
-    if (!(await confirmLeave())) return;
+    const hit = live.current.tabs.find((t) => samePath(t.path, p));
+    if (hit) return setState((s) => show(s, hit.id));
+    // gleiche Datei kurz nacheinander (Start-Pfad + Drop) → nur einmal öffnen
+    if (opening.current.some((o) => samePath(o, p))) return;
+    opening.current.push(p);
+    const id = nextId.current++;
     try {
-      const r = PageState.parse(await invoke("open_pdf", { path: p }));
-      const s: Snap = { items: r.items.map(fromData), rev: r.rev, sizes: r.sizes };
-      const width = (scroller.current?.clientWidth ?? 800) - 48;
-      setPath(p);
-      setHist({ list: [s], at: 0 });
-      setSaved(s);
-      clearSel();
-      setVersion((v) => v + 1);
-      setZoom(clampZoom(width / Math.max(...s.sizes.map(([w]) => w))));
-      setCurrent(0);
+      const snap = toSnap(PageState.parse(await invoke("open_pdf", { id, path: p })));
+      setInits((m) => new Map(m).set(id, snap));
+      setState((s) => openTab(s, id, p));
       setError(undefined);
-      scroller.current?.scrollTo(0, 0);
     } catch (e) {
       setError(`Öffnen fehlgeschlagen: ${String(e)}`);
+    } finally {
+      opening.current = opening.current.filter((o) => o !== p);
     }
   }
 
@@ -137,108 +80,21 @@ export default function App() {
     if (typeof p === "string") await openPath(p);
   }
 
-  /** Seitenoperation im Backend; Objekte werden mit umnummeriert, Objekte einer eingefügten PDF kommen dazu. */
-  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[]) {
-    if (busy.current || !path) return;
-    busy.current = true;
-    try {
-      const r = PageState.parse(await invoke("page_op", { op }));
-      setHist((h) => push(h, {
-        items: [...remap((h.list[h.at] ?? EMPTY).items, r.inserted), ...r.items.map(fromData)], rev: r.rev, sizes: r.sizes,
-      }));
-      setVersion((v) => v + 1);
-      clearSel();
-      setError(undefined);
-    } catch (e) {
-      setError(`Seitenoperation fehlgeschlagen: ${String(e)}`);
-    } finally {
-      busy.current = false;
-    }
-  }
-
-  const insertBlank = () => {
-    const at = Math.min(current + 1, sizes.length);
-    const [width, height] = sizes[current] ?? A4;
-    void pageOp({ op: "blank", at, width, height }, (its) => afterInsert(its, at, 1));
-  };
-  const insertFile = async (at: number, name: string, extensions: string[]) => {
-    const p = await openDialog({ filters: [{ name, extensions }] });
-    if (typeof p === "string") await pageOp({ op: "insertFile", at, path: p }, (its, n) => afterInsert(its, at, n));
-  };
-  const rotate = () => {
-    const k = current, h = sizes[k]?.[1] ?? A4[1];
-    void pageOp({ op: "rotate", index: k }, (its) => afterRotate(its, k, h));
-  };
-  const deletePage = () => {
-    const k = current;
-    void pageOp({ op: "delete", index: k }, (its) => afterDelete(its, k));
-  };
-  const movePage = (from: number, to: number) => void pageOp({ op: "move", from, to }, (its) => afterMove(its, from, to));
-
-  /** Undo/Redo: Seitenstand im Backend mitziehen, wenn er sich unterscheidet. */
-  async function travel(to: number) {
-    if (busy.current || to < 0 || to >= hist.list.length || to === hist.at) return;
-    const target = hist.list[to];
-    if (!target) return;
-    if (target.rev !== snap.rev) {
-      busy.current = true;
-      try {
-        await invoke("goto_rev", { rev: target.rev });
-        setVersion((v) => v + 1);
-      } catch (e) {
-        return setError(`Rückgängig nicht möglich: ${String(e)}`);
-      } finally {
-        busy.current = false;
-      }
-    }
-    setHist((h) => ({ ...h, at: to }));
-    clearSel();
-  }
-
-  function applyZoom(z: number) {
-    const el = scroller.current;
-    const nz = clampZoom(z);
-    if (!el || nz === zoom) return;
-    const r = nz / zoom, top = el.scrollTop, left = el.scrollLeft;
-    setZoom(nz);
-    requestAnimationFrame(() => el.scrollTo(left * r, top * r));
-  }
-
-  function goTo(i: number) {
-    scroller.current?.querySelector(`[data-page="${i}"]`)?.scrollIntoView({ block: "start" });
-  }
-
-  function paste() {
-    if (!clip.current.length || !sizes.length) return;
-    const page = Math.min(current, sizes.length - 1);
-    const pasted = clip.current.map((it) => ({ ...moveItem(it, 10, 10), id: newId(), page }));
-    clip.current = pasted; // nochmal einfügen → weiter versetzt
-    edit((its) => [...its, ...pasted]);
-    setSelection({ page, ids: pasted.map((it) => it.id) });
-  }
-
-  const removeSel = () => {
-    if (!selItems.length) return;
-    const ids = new Set(selItems.map((it) => it.id));
-    edit((its) => its.filter((it) => !ids.has(it.id)));
-    clearSel();
-  };
-
   const updateSettings = (s: Settings) => {
     setSettings(s);
     storeSettings(s);
   };
 
   useEffect(() => {
-    live.current = { dirty, save, openPath };
+    live.current = { tabs, openPath, confirmLeave };
   });
 
-  // Titel mit * bei ungespeicherten Änderungen
+  // Titel mit * bei ungespeicherten Änderungen (aktiver Tab)
   useEffect(() => {
-    void getCurrentWindow().setTitle(`${dirty ? "* " : ""}${path ? `${fileName(path)} – ` : ""}PDF Note`);
-  }, [dirty, path]);
+    void getCurrentWindow().setTitle(`${current?.dirty ? "* " : ""}${current ? `${fileName(current.path)} – ` : ""}PDF Note`);
+  }, [current]);
 
-  // Einmalig: „Öffnen mit", Drag & Drop, Schließen-Nachfrage
+  // Einmalig: „Öffnen mit", Drag & Drop, Beenden fragt für jedes ungespeicherte Dokument
   useEffect(() => {
     void invoke<string | null>("startup_path").then((p) => {
       if (p) void live.current.openPath(p);
@@ -246,11 +102,12 @@ export default function App() {
     const un = [
       getCurrentWebview().onDragDropEvent((e) => {
         if (e.payload.type !== "drop") return;
-        const p = e.payload.paths.find((x) => x.toLowerCase().endsWith(".pdf"));
-        if (p) void live.current.openPath(p);
+        for (const p of e.payload.paths.filter((x) => x.toLowerCase().endsWith(".pdf"))) void live.current.openPath(p);
       }),
       getCurrentWindow().onCloseRequested(async (e) => {
-        if (!(await confirmLeave())) e.preventDefault();
+        for (const t of live.current.tabs) {
+          if (!(await live.current.confirmLeave(t))) return e.preventDefault();
+        }
       }),
     ];
     return () => un.forEach((u) => void u.then((f) => f()));
@@ -276,22 +133,16 @@ export default function App() {
     };
   });
 
-  // Tastatur: Strg+S/Strg+Umschalt+S, Strg+O, Strg+Z/Y, Strg+C/V, Entf, Esc, Strg +/− Zoom
+  // Tastatur: Strg+O, Strg+W, Strg+(Umschalt+)Tab; dokumentbezogene Tasten in DocView
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!e.ctrlKey) return;
       const k = e.key.toLowerCase();
-      const act: Record<string, () => void> = e.ctrlKey ? {
-        s: () => void (e.shiftKey ? saveAs() : save().catch(() => {})),
+      const act: Record<string, () => void> = {
         o: () => void pickFile(),
-        z: () => void travel(e.shiftKey ? hist.at + 1 : hist.at - 1),
-        y: () => void travel(hist.at + 1),
-        c: () => void (clip.current = selItems),
-        v: paste,
-        "+": () => applyZoom(zoom * 1.2),
-        "=": () => applyZoom(zoom * 1.2),
-        "-": () => applyZoom(zoom / 1.2),
-      } : { delete: removeSel, backspace: removeSel, escape: clearSel };
+        w: () => void (current && close(current)),
+        tab: () => setState((s) => cycle(s, e.shiftKey ? -1 : 1)),
+      };
       const f = act[k];
       if (f) {
         e.preventDefault();
@@ -302,142 +153,80 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Strg+Mausrad zoomt (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche)
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      applyZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  });
-
-  // Finger: 1 = scrollen, 2 = Pinch-Zoom. Stift/Maus zeichnen in PageView.
-  const touches = useRef(new Map<number, { x: number; y: number }>());
-  const pinch = useRef<{ d: number; z: number }>(null);
-  const dist = () => {
-    const [a, b] = [...touches.current.values()];
-    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  // Tabs per Zeiger umsortieren (wie Vorschaubilder: HTML5-Drag&Drop geht in Tauri bei aktivem Datei-Drop nicht)
+  const tabDown = (i: number) => (e: React.PointerEvent) => {
+    if (e.buttons === 1) tabDrag.current = { from: i, x: e.clientX, moved: false };
   };
-  const touchDown = (e: React.PointerEvent) => {
-    if (e.pointerType !== "touch") return;
-    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    pinch.current = touches.current.size === 2 ? { d: dist(), z: zoom } : null;
-  };
-  const touchMove = (e: React.PointerEvent) => {
-    const t = touches.current.get(e.pointerId);
-    if (!t) return;
-    const dx = e.clientX - t.x, dy = e.clientY - t.y;
-    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    // ponytail: Pinch zoomt um die Scroll-Position, nicht um den Fingermittelpunkt
-    if (pinch.current && pinch.current.d > 0) applyZoom((pinch.current.z * dist()) / pinch.current.d);
-    else if (touches.current.size === 1) scroller.current?.scrollBy(-dx, -dy);
-  };
-  const touchUp = (e: React.PointerEvent) => {
-    touches.current.delete(e.pointerId);
-    pinch.current = null;
-  };
-
-  // Vorschaubilder per Zeiger umsortieren (HTML5-Drag&Drop geht in Tauri bei aktivem Datei-Drop nicht)
-  const thumbDown = (i: number) => (e: React.PointerEvent) => {
-    if (e.pointerType === "touch" || e.buttons !== 1) return;
-    thumbDrag.current = { from: i, x: e.clientX, y: e.clientY, moved: false };
-  };
-  const navMove = (e: React.PointerEvent) => {
-    const d = thumbDrag.current;
+  const barMove = (e: React.PointerEvent) => {
+    const d = tabDrag.current;
     if (!d) return;
-    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) {
+    if (!d.moved && Math.abs(e.clientX - d.x) > 6) {
       d.moved = true;
-      // Capture erst beim Ziehen, sonst landet der Klick auf <nav> statt auf dem Vorschaubild
       e.currentTarget.setPointerCapture(e.pointerId);
     }
     if (!d.moved) return;
-    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-thumb]");
-    setDrop(el ? { from: d.from, to: Number(el.dataset.thumb) } : undefined);
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-tab]");
+    setDrop(el ? { from: d.from, to: Number(el.dataset.tab) } : undefined);
   };
-  const navUp = () => {
-    const d = thumbDrag.current;
-    thumbDrag.current = null;
-    if (d?.moved && drop && drop.to !== d.from) movePage(d.from, drop.to);
+  const barUp = () => {
+    const d = tabDrag.current;
+    tabDrag.current = null;
+    if (d?.moved && drop && drop.to !== d.from) setState((s) => moveTab(s, d.from, drop.to));
     setDrop(undefined);
   };
 
-  const onScroll = () => {
-    const el = scroller.current;
-    if (!el) return;
-    const mid = el.scrollTop + el.clientHeight / 3;
-    const pages = el.querySelectorAll<HTMLElement>("[data-page]");
-    let i = 0;
-    pages.forEach((p, n) => p.offsetTop <= mid && (i = n));
-    setCurrent(i);
+  // Trennlinie ziehen
+  const dividerMove = (e: React.PointerEvent) => {
+    const r = split.current?.getBoundingClientRect();
+    if (!r || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    setRatio(Math.min(0.8, Math.max(0.2, (e.clientX - r.left) / r.width)));
   };
+
+  const paneOf = (id: number): Pane | undefined =>
+    panes[0] === id ? 0 : state.split && panes[1] === id ? 1 : undefined;
+  const paneStyle = (p: Pane) => ({ order: p * 2, flex: state.split ? `${p === 0 ? ratio : 1 - ratio} 1 0` : "1 1 0" });
 
   const btn = "rounded-xs px-2.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
   const on = (b: boolean) => (b ? " bg-accent-soft text-ink" : "");
-  const sep = <span className="mx-1 h-5 w-px bg-line" />;
-  const palette = tool === "marker" ? MARKERS : PRESETS;
-  const active = tool === "marker" ? marker : preset;
 
   return (
     <div className="flex h-full flex-col">
-      <header className="relative flex flex-wrap items-center gap-1 border-b border-line bg-surface px-3 py-1.5">
+      <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
         <button className={btn} onClick={() => void pickFile()} title="Strg+O">Öffnen</button>
-        <button className={btn} onClick={() => void save().catch(() => {})} disabled={!dirty} title="Strg+S">Speichern</button>
-        <button className={btn} onClick={() => void saveAs()} disabled={!path} title="Strg+Umschalt+S – Anmerkungen eingebrannt">Speichern unter (flach)</button>
-        {sep}
-        <button className={btn} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} title="Strg+Z">↶</button>
-        <button className={btn} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} title="Strg+Y">↷</button>
-        {sep}
-        {TOOL_LABELS.map(([t, label, title]) => (
-          <button key={t} className={btn + on(tool === t)} onClick={() => setTool(t)} title={title}>{label}</button>
-        ))}
-        {sep}
-        {palette.map((p) => (
-          <button
-            key={p.name}
-            title={p.name}
-            onClick={() => (tool === "marker" ? setMarker(p) : setPreset(p))}
-            className={`grid h-7 w-7 place-items-center rounded-pill ring-2 ${p === active ? "ring-accent" : "ring-transparent"}`}
-          >
-            <span className="block rounded-pill" style={{ width: Math.min(p.size * 3, 18), height: Math.min(p.size * 3, 18), background: `rgb(${p.color.map((c) => c * 255).join(",")})`, outline: "1px solid var(--line-2)" }} />
-          </button>
-        ))}
-        {sep}
-        <button className={btn} onClick={insertBlank} disabled={!path} title="Leere Seite nach der aktuellen">Seite +</button>
-        <button className={btn} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} disabled={!path} title="PDF hinten anhängen">PDF anhängen</button>
-        <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} disabled={!path} title="Bild als Seite nach der aktuellen">Bild</button>
-        <button className={btn} onClick={rotate} disabled={!path} title="Aktuelle Seite 90° drehen">⟳</button>
-        <button className={btn} onClick={deletePage} disabled={!path || sizes.length < 2} title="Aktuelle Seite löschen">Seite −</button>
-        {sep}
-        <button className={btn} onClick={() => applyZoom(zoom / 1.2)} disabled={!path}>−</button>
-        <span className="w-12 text-center font-mono text-xs text-ink-2">{Math.round(zoom * 100)} %</span>
-        <button className={btn} onClick={() => applyZoom(zoom * 1.2)} disabled={!path}>+</button>
-        {path && (
-          <form
-            className="flex items-center gap-1 text-sm text-ink-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const n = Number(jump);
-              if (n >= 1 && n <= sizes.length) goTo(n - 1);
-              setJump("");
-            }}
-          >
-            <input
-              value={jump}
-              onChange={(e) => setJump(e.target.value)}
-              placeholder={String(current + 1)}
-              inputMode="numeric"
-              aria-label="Seite"
-              className="w-12 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-center font-mono text-xs text-ink"
-            />
-            / {sizes.length}
-          </form>
-        )}
+        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
+          {tabs.map((t, i) => {
+            const p = paneOf(t.id);
+            const mark = drop?.to === i && i !== drop.from ? (i < drop.from ? " border-l-accent" : " border-r-accent") : "";
+            return (
+              <div
+                key={t.id}
+                data-tab={i}
+                title={t.path}
+                onPointerDown={tabDown(i)}
+                onClick={() => setState((s) => show(s, t.id))}
+                className={`flex shrink-0 cursor-default items-center gap-1 rounded-xs border-2 border-transparent py-0.5 pr-1 pl-2.5 text-sm select-none ${
+                  p === state.active ? "bg-raised text-ink" : p !== undefined ? "bg-surface text-ink-2" : "text-ink-2 hover:bg-surface"
+                }${mark}`}
+              >
+                <span className="max-w-48 truncate">{t.dirty && <span className="text-accent">* </span>}{fileName(t.path)}</span>
+                <button
+                  className="rounded-xs px-1 text-ink-3 hover:bg-line hover:text-ink"
+                  title="Schließen (Strg+W)"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void close(t);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button className={btn + on(state.split)} onClick={() => setState(toggleSplit)} title="Fenster teilen: zwei PDFs nebeneinander">Teilen</button>
         <button className={btn + on(showSettings)} onClick={() => setShowSettings((s) => !s)} title="Stifttasten und Druck">Stift …</button>
-        {error && <span className="ml-auto text-sm text-red-400">{error}</span>}
+        {error && <span className="text-sm text-red-400">{error}</span>}
         {showSettings && (
           <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
             {(["lasso", "eraser"] as const).map((k) => (
@@ -459,73 +248,52 @@ export default function App() {
           </div>
         )}
       </header>
-      <div className="flex min-h-0 flex-1">
-        {path && (
-          <nav
-            data-scroll
-            className="flex w-40 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
-            onPointerMove={navMove}
-            onPointerUp={navUp}
-            onPointerCancel={navUp}
+      {/* Alle Dokumente bleiben gemountet (eigener Undo/Zoom/Scroll); Position per CSS-order, damit
+          Wechsel zwischen den Hälften nichts neu mountet. */}
+      <div ref={split} className="flex min-h-0 flex-1">
+        {tabs.map((t) => {
+          const p = paneOf(t.id);
+          const init = inits.get(t.id);
+          return init && (
+            <DocView
+              key={t.id}
+              id={t.id}
+              path={t.path}
+              init={init}
+              visible={p !== undefined}
+              active={p === state.active}
+              marked={state.split && p === state.active}
+              settings={settings}
+              style={paneStyle(p ?? 0)}
+              apis={apis}
+              onDirty={onDirty}
+              onFocus={() => p !== undefined && setState((s) => focus(s, p))}
+            />
+          );
+        })}
+        {([0, 1] as const).filter((p) => (p === 0 || state.split) && panes[p] === undefined).map((p) => (
+          <div
+            key={`leer-${p}`}
+            style={paneStyle(p)}
+            onPointerDownCapture={() => setState((s) => focus(s, p))}
+            className={`grid min-w-0 place-items-center border-t-2 text-center text-ink-2 ${state.split && state.active === p ? "border-accent" : "border-transparent"}`}
           >
-            {sizes.map((s, i) => (
-              <Thumb
-                key={i}
-                index={i}
-                size={s}
-                version={version}
-                active={i === current}
-                dropMark={drop?.to === i && i !== drop.from ? (i < drop.from ? "before" : "after") : undefined}
-                onPointerDown={thumbDown(i)}
-                onClick={() => goTo(i)}
-              />
-            ))}
-          </nav>
+            <p>
+              Keine PDF geöffnet
+              <br />
+              <span className="text-sm text-ink-3">Strg+O oder Datei hierher ziehen</span>
+            </p>
+          </div>
+        ))}
+        {state.split && (
+          <div
+            className="w-1.5 shrink-0 cursor-col-resize bg-line hover:bg-accent"
+            style={{ order: 1, touchAction: "none" }}
+            title="Trennlinie verschieben"
+            onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+            onPointerMove={dividerMove}
+          />
         )}
-        <main
-          ref={scroller}
-          data-scroll
-          className="flex-1 overflow-auto"
-          style={{ touchAction: "none" }}
-          onScroll={onScroll}
-          onPointerDown={touchDown}
-          onPointerMove={touchMove}
-          onPointerUp={touchUp}
-          onPointerCancel={touchUp}
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          {path ? (
-            <div className="flex w-max min-w-full flex-col gap-4 p-6">
-              {sizes.map((s, i) => (
-                <PageView
-                  key={i}
-                  index={i}
-                  size={s}
-                  zoom={zoom}
-                  version={version}
-                  items={items.filter((x) => x.page === i)}
-                  selected={selection.page === i ? selection.ids : []}
-                  tool={tool}
-                  preset={preset}
-                  marker={marker}
-                  settings={settings}
-                  onAdd={(it) => edit((all) => [...all, it])}
-                  onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
-                  onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
-                  onSelect={(page, ids) => setSelection({ page, ids })}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="grid h-full place-items-center text-center text-ink-2">
-              <p>
-                Keine PDF geöffnet
-                <br />
-                <span className="text-sm text-ink-3">Strg+O oder Datei hierher ziehen</span>
-              </p>
-            </div>
-          )}
-        </main>
       </div>
     </div>
   );
