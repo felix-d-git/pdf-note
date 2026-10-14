@@ -13,7 +13,19 @@ pub struct Open {
     /// Stände für Undo von Seitenoperationen; `None` = wegen Speichergrenze verworfen.
     snaps: Vec<Option<Vec<u8>>>,
     rev: usize,
+    /// Änderungszeit + Größe beim Öffnen/letzten Speichern – Ersatz für eine Sperrdatei.
+    stamp: Option<FileStamp>,
 }
+
+type FileStamp = (std::time::SystemTime, u64);
+
+fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+/// Fehlertext, auf den das Frontend mit einer Nachfrage reagiert.
+pub const EXTERN_CHANGED: &str = "EXTERN_GEAENDERT";
 
 /// ponytail: ganze PDF je Seitenoperation im RAM; Deltas erst, wenn große PDFs das sprengen
 const SNAP_LIMIT: usize = 256 << 20;
@@ -21,21 +33,33 @@ const SNAP_LIMIT: usize = 256 << 20;
 impl Open {
     /// Öffnen: eigene Annotationen werden zu bearbeitbaren Objekten, fremde bleiben im Seitenbild.
     pub fn open(path: PathBuf) -> Result<(Self, PageState), String> {
+        let stamp = file_stamp(&path);
         let doc = pdf::open(&path)?;
+        // Rest eines abgebrochenen Speicherns (Absturz/Kill) wegräumen: keine Zusatzdatei neben der PDF
+        let _ = std::fs::remove_file(pdf::tmp_path(&path));
         let n = doc.page_count().map_err(|e| e.to_string())?;
         let items = pdf::take_own(&doc, 0..n).map_err(|e| e.to_string())?;
-        let open = Open { path, doc, snaps: Vec::new(), rev: 0 };
+        let open = Open { path, doc, snaps: Vec::new(), rev: 0, stamp };
         let sizes = open.sizes()?;
         Ok((open, PageState { sizes, rev: 0, inserted: 0, items }))
     }
 
     /// Kopie des Arbeitsdokuments + Objekte atomar schreiben. Ohne `target` in die offene PDF.
-    pub fn save(&self, items: &[pdf::Item], target: Option<&std::path::Path>, flat: bool) -> Result<(), String> {
+    /// Wurde die offene PDF seit dem Öffnen/Speichern extern geändert → `EXTERN_CHANGED`, außer `force`.
+    pub fn save(&mut self, items: &[pdf::Item], target: Option<&std::path::Path>, flat: bool, force: bool) -> Result<(), String> {
+        let own = target.is_none_or(|t| same_file(t, &self.path));
         // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + bearbeitbar)
-        if flat && target.is_none_or(|t| same_file(t, &self.path)) {
+        if flat && own {
             return Err("Flach nicht über die offene Datei speichern".into());
         }
-        pdf::save(&self.doc, items, target.unwrap_or(&self.path), flat)
+        if own && !force && file_stamp(&self.path) != self.stamp {
+            return Err(EXTERN_CHANGED.into());
+        }
+        pdf::save(&self.doc, items, target.unwrap_or(&self.path), flat)?;
+        if own {
+            self.stamp = file_stamp(&self.path);
+        }
+        Ok(())
     }
 
     pub fn page_op(&mut self, op: &pdf::PageOp) -> Result<PageState, String> {
@@ -177,8 +201,9 @@ async fn save_pdf(
     items: Vec<pdf::Item>,
     target: Option<PathBuf>,
     flat: bool,
+    force: bool,
 ) -> Result<(), String> {
-    w.run(move |d| doc(d, id)?.save(&items, target.as_deref(), flat)).await
+    w.run(move |d| doc(d, id)?.save(&items, target.as_deref(), flat, force)).await
 }
 
 #[tauri::command]
@@ -199,6 +224,11 @@ async fn goto_rev(w: tauri::State<'_, Worker>, id: u32, rev: usize) -> Result<Ve
 
 /// „Öffnen mit": Pfad aus der Kommandozeile.
 #[tauri::command]
+fn read_image(path: PathBuf) -> Result<String, String> {
+    pdf::image_b64(&std::fs::read(&path).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
 fn startup_path() -> Option<String> {
     std::env::args().nth(1).filter(|a| !a.starts_with('-'))
 }
@@ -207,7 +237,30 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, goto_rev, startup_path])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, goto_rev, read_image, startup_path])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extern_geaendert() {
+        let path = std::env::temp_dir().join("pdf-note-unit-extern.pdf");
+        let mut d = PdfDocument::new();
+        d.new_page(mupdf::Size::A4).unwrap();
+        pdf::save_atomic(&d, &path).unwrap();
+        let (mut open, _) = Open::open(path.clone()).unwrap();
+        open.save(&[], None, false, false).unwrap();
+        open.save(&[], None, false, false).expect("eigenes Speichern ist keine externe Änderung");
+        // anderes Programm schreibt die Datei
+        d.new_page(mupdf::Size::A4).unwrap();
+        pdf::save_atomic(&d, &path).unwrap();
+        assert_eq!(open.save(&[], None, false, false), Err(EXTERN_CHANGED.into()));
+        open.save(&[], None, false, true).unwrap();
+        open.save(&[], None, false, false).unwrap();
+        let _ = std::fs::remove_file(path);
+    }
 }
