@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Stift-Test</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #111; color: #eee; display: grid; grid-template-columns: 1fr 420px; height: 100vh; }
+  #pad { touch-action: none; background: #1c1c1c; cursor: crosshair; }
+  aside { padding: 12px; overflow: auto; border-left: 1px solid #333; }
+  ol { padding-left: 18px; } li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; font: 12px ui-monospace, monospace; }
+  td, th { border: 1px solid #333; padding: 3px 5px; text-align: left; }
+  button { margin: 8px 8px 8px 0; padding: 6px 10px; }
+  #live { font: 12px ui-monospace, monospace; white-space: pre; color: #0FB5A6; }
+</style>
+</head>
+<body>
+<canvas id="pad"></canvas>
+<aside>
+  <b>Nacheinander links auf der Fläche zeichnen:</b>
+  <ol>
+    <li>Stift normal, mal leicht, mal fest</li>
+    <li>untere Stifttaste halten + zeichnen</li>
+    <li>obere Stifttaste halten + zeichnen</li>
+    <li>Radierer-Ende (falls vorhanden)</li>
+    <li>Finger wischen</li>
+    <li>Maus links + rechts</li>
+  </ol>
+  <div id="live">–</div>
+  <button id="copy">Ergebnis kopieren</button><button id="clear">Zurücksetzen</button>
+  <table><thead><tr><th>Typ</th><th>button</th><th>buttons</th><th>Anz.</th><th>Druck min–max</th><th>Neigung</th></tr></thead><tbody id="tab"></tbody></table>
+</aside>
+<script>
+const pad = document.getElementById('pad'), ctx = pad.getContext('2d');
+const fit = () => { pad.width = pad.clientWidth; pad.height = pad.clientHeight; };
+fit(); addEventListener('resize', fit);
+let stats = {}, last = null, downButton = -1;
+const colors = { 0: '#eee', 2: '#0FB5A6', 5: '#e55', 32: '#e55' };
+
+pad.addEventListener('contextmenu', e => e.preventDefault());
+for (const t of ['pointerdown', 'pointermove', 'pointerup']) pad.addEventListener(t, e => {
+  if (t === 'pointerdown') { downButton = e.button; pad.setPointerCapture(e.pointerId); }
+  const key = `${e.pointerType}|${t === 'pointerdown' ? e.button : downButton}|${e.buttons}`;
+  const s = stats[key] ??= { n: 0, pmin: 1, pmax: 0, tilt: false };
+  s.n++;
+  if (e.buttons) { s.pmin = Math.min(s.pmin, e.pressure); s.pmax = Math.max(s.pmax, e.pressure); }
+  if (e.tiltX || e.tiltY) s.tilt = true;
+  document.getElementById('live').textContent =
+    `${t} typ=${e.pointerType} button=${e.button} buttons=${e.buttons}\npressure=${e.pressure.toFixed(3)} tilt=${e.tiltX}/${e.tiltY} twist=${e.twist}`;
+  if (e.buttons && last && t === 'pointermove') {
+    ctx.strokeStyle = colors[e.buttons] ?? colors[downButton] ?? '#fc0';
+    ctx.lineWidth = 1 + e.pressure * 8; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(e.offsetX, e.offsetY); ctx.stroke();
+  }
+  last = e.buttons ? { x: e.offsetX, y: e.offsetY } : null;
+  render();
+});
+
+function render() {
+  document.getElementById('tab').innerHTML = Object.entries(stats).map(([k, s]) => {
+    const [typ, b, bs] = k.split('|');
+    return `<tr><td>${typ}</td><td>${b}</td><td>${bs}</td><td>${s.n}</td><td>${s.pmax ? s.pmin.toFixed(2) + '–' + s.pmax.toFixed(2) : '–'}</td><td>${s.tilt ? 'ja' : 'nein'}</td></tr>`;
+  }).join('');
+}
+document.getElementById('copy').onclick = () => navigator.clipboard.writeText(
+  navigator.userAgent + '\n' + JSON.stringify(stats));
+document.getElementById('clear').onclick = () => { stats = {}; ctx.clearRect(0, 0, pad.width, pad.height); render(); };
+</script>
+</body>
+</html>
