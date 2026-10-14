@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@import "@fontsource-variable/manrope";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* Tokens aus App-Design1 (Vault). Dark = Default, Hell per data-theme="light" an <html>. Nur --accent ist projektspezifisch. */
+:root {
+  color-scheme: dark;
+  --accent: #0FB5A6;
+  --accent-deep: color-mix(in oklab, var(--accent), #000 26%);
+  --accent-lift: color-mix(in oklab, var(--accent), #fff 16%);
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 88%);
+  --accent-line: color-mix(in oklab, var(--accent), transparent 62%);
+  --on-accent: #041917;
+  --bg: #0A100F; --surface: #141C1A; --sunken: #0F1615; --raised: #1B2422;
+  --ink: #EBF2F0; --ink-2: #A3B3AF; --ink-3: #7A8985;
+  --line: rgba(255,255,255,.10); --line-2: rgba(255,255,255,.18);
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 18px 40px -20px rgba(0,0,0,.7);
+  --r-xs: 8px; --r-sm: 12px; --r-md: 16px; --r-lg: 22px; --r-xl: 28px; --r-pill: 999px;
+  --dur: 160ms; --ease: cubic-bezier(.2,.7,.3,1);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --on-accent: #05201D;
+  --bg: #F3F5F3; --surface: #FFFFFF; --sunken: #E8ECEA; --raised: #FFFFFF;
+  --ink: #0F1614; --ink-2: #4C5D58; --ink-3: #7C8D88;
+  --line: rgba(15,22,20,.10); --line-2: rgba(15,22,20,.16);
+  --shadow: 0 1px 2px rgba(15,22,20,.06), 0 8px 24px -12px rgba(15,22,20,.18);
+}
+
+/* Tailwind-Klassen auf die Tokens (bg-surface, text-ink-2, rounded-sm, …) */
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-bg: var(--bg); --color-surface: var(--surface); --color-sunken: var(--sunken); --color-raised: var(--raised);
+  --color-ink: var(--ink); --color-ink-2: var(--ink-2); --color-ink-3: var(--ink-3);
+  --color-line: var(--line); --color-line-2: var(--line-2);
+  --radius-xs: var(--r-xs); --radius-sm: var(--r-sm); --radius-md: var(--r-md); --radius-lg: var(--r-lg); --radius-xl: var(--r-xl);
+  --shadow-raised: var(--shadow);
+  --font-sans: "Manrope Variable", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --default-transition-duration: var(--dur);
+  --default-transition-timing-function: var(--ease);
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); }
