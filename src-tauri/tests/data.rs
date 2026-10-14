@@ -233,3 +233,56 @@ fn kill_waehrend_speichern() {
     assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1, "Temp-Rest nach dem Öffnen");
     println!("{}: 10 Kills, {mid} davon mitten im Schreiben, PDF heil", src.display());
 }
+
+/// Original-Objekte je Test-PDF (Kopie): erstes Objekt verschieben, letztes löschen → speichern → neu öffnen:
+/// Box verschoben, Anzahl −1, andere Seiten unverändert, keine Zusatzdatei, Original unverändert.
+#[test]
+#[ignore]
+fn original_objekte() {
+    use pdf::PageOp;
+    use pdf_note_lib::orig::{self, Edit};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-orig");
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let name = src.display();
+        let original = std::fs::read(&src).unwrap();
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let pages = doc.page_count().unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let Some((page, b)) = (0..pages).map(|i| (i, orig::boxes(&doc, i).unwrap())).find(|(_, b)| !b.is_empty()) else {
+            println!("{name}: keine Original-Objekte");
+            continue;
+        };
+        let mut edits = vec![Edit { index: 0, matrix: Some([1.0, 0.0, 0.0, 1.0, 5.0, 5.0]) }];
+        if b.len() > 1 {
+            edits.push(Edit { index: b.len() - 1, matrix: None });
+        }
+        pdf::page_op(&mut doc, &PageOp::Orig { page, edits }).unwrap();
+        pdf::save(&doc, &[], &copy, false).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = orig::boxes(&doc, page).unwrap();
+        assert_eq!(after.len(), b.len().max(2) - 1, "{name}: Anzahl");
+        let moved = [b[0][0] + 5.0, b[0][1] + 5.0, b[0][2] + 5.0, b[0][3] + 5.0];
+        assert!(after[0].iter().zip(moved).all(|(x, y)| (x - y).abs() < 0.05), "{name}: {:?} → {:?}", b[0], after[0]);
+        let t = page_texts(&doc).unwrap();
+        for i in (0..pages as usize).filter(|&i| i != page as usize) {
+            assert_eq!(texts[i], t[i], "{name}: Text Seite {i}");
+        }
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{name}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{name}: Original verändert");
+        println!("{name}: Seite {page}, {} Objekte OK", b.len());
+        n += 1;
+    }
+    assert!(n > 0, "keine PDFs mit Original-Objekten in {}", dir.display());
+}
