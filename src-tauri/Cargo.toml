@@ -17,6 +17,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 # ohne Default-Features: kein JavaScript in PDFs, keine XPS/EPUB/HTML-Formate
 mupdf = { version = "0.8.0", default-features = false }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
 
 [patch.crates-io]
 # mupdf 0.8.0 kompiliert unter MSVC nicht (max_align_t) -> vendor/mupdf/PATCH.md
