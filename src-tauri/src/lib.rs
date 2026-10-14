@@ -1,3 +1,4 @@
+pub mod orig;
 pub mod pdf;
 
 use mupdf::pdf::PdfDocument;
@@ -211,6 +212,12 @@ async fn page_op(w: tauri::State<'_, Worker>, id: u32, op: pdf::PageOp) -> Resul
     w.run(move |d| doc(d, id)?.page_op(&op)).await
 }
 
+/// Boxen der wählbaren Original-Objekte einer Seite.
+#[tauri::command]
+async fn orig_objects(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<[f32; 4]>, String> {
+    w.run(move |d| orig::boxes(&doc(d, id)?.doc, index)).await
+}
+
 /// Undo/Redo von Seitenoperationen: Stand `rev` laden.
 #[tauri::command]
 async fn goto_rev(w: tauri::State<'_, Worker>, id: u32, rev: usize) -> Result<Vec<[f32; 2]>, String> {
@@ -237,7 +244,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, goto_rev, read_image, startup_path])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, goto_rev, read_image, startup_path])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

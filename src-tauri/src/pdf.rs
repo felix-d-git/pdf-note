@@ -25,7 +25,10 @@ pub fn open(path: &Path) -> Result<PdfDocument, String> {
 
 pub fn to_bytes(doc: &PdfDocument) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
-    doc.write_to(&mut buf).map_err(|e| e.to_string())?;
+    // Garbage-Collect: durch Original-Objekt-Änderungen verwaiste alte Content-Streams fallen weg
+    let mut opts = mupdf::pdf::PdfWriteOptions::default();
+    opts.set_garbage_level(1).set_compress(true);
+    doc.write_to_with_options(&mut buf, opts).map_err(|e| e.to_string())?;
     Ok(buf)
 }
 
@@ -383,6 +386,8 @@ pub enum PageOp {
     Rotate { index: i32 },
     Delete { index: i32 },
     Move { from: i32, to: i32 },
+    /// Original-Objekte einer Seite verschieben/skalieren/löschen
+    Orig { page: i32, edits: Vec<crate::orig::Edit> },
 }
 
 /// Ergebnis einer Seitenoperation: eingefügte Seiten (für Objekt-Umnummerierung im Frontend)
@@ -458,6 +463,10 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
                 return Err("ungültige Seite".into());
             }
             doc.move_page(*from as usize, *to as usize).map_err(err)?;
+            Ok(OpResult::default())
+        }
+        PageOp::Orig { page, edits } => {
+            crate::orig::edit(doc, *page, edits)?;
             Ok(OpResult::default())
         }
     }
