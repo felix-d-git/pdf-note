@@ -10,7 +10,7 @@ import { toolFor, type Settings, type Tool } from "./settings";
  * Rendert die Seite nur, solange sie (± eine Bildschirmhöhe) sichtbar ist; sonst Bild freigeben.
  * Zoomwechsel: altes Bild wird per CSS gestreckt, Neu-Render gedrosselt.
  */
-function usePageImage(ref: RefObject<HTMLElement | null>, index: number, scale: number, version: number) {
+function usePageImage(ref: RefObject<HTMLElement | null>, doc: number, index: number, scale: number, version: number) {
   const [visible, setVisible] = useState(false);
   const [url, setUrl] = useState<string>();
 
@@ -30,7 +30,7 @@ function usePageImage(ref: RefObject<HTMLElement | null>, index: number, scale: 
     const t = setTimeout(async () => {
       if (!visible) return setUrl(undefined);
       try {
-        const buf = await invoke<ArrayBuffer>("render_page", { index, scale });
+        const buf = await invoke<ArrayBuffer>("render_page", { id: doc, index, scale });
         if (alive) setUrl(URL.createObjectURL(new Blob([buf], { type: "image/png" })));
       } catch (e) {
         console.error(e);
@@ -40,20 +40,20 @@ function usePageImage(ref: RefObject<HTMLElement | null>, index: number, scale: 
       alive = false;
       clearTimeout(t);
     };
-  }, [visible, index, scale, version]);
+  }, [visible, doc, index, scale, version]);
 
   useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url]);
   return [url, visible] as const;
 }
 
-export function Thumb({ index, size, version, active, dropMark, onPointerDown, onClick }: {
-  index: number; size: [number, number]; version: number; active: boolean; dropMark?: "before" | "after";
+export function Thumb({ doc, index, size, version, active, dropMark, onPointerDown, onClick }: {
+  doc: number; index: number; size: [number, number]; version: number; active: boolean; dropMark?: "before" | "after";
   onPointerDown: (e: React.PointerEvent) => void; onClick: () => void;
 }) {
   const mark = dropMark === "before" ? "border-t-accent" : dropMark === "after" ? "border-b-accent" : "";
   const ref = useRef<HTMLButtonElement>(null);
   const w = 120;
-  const [url] = usePageImage(ref, index, (w / size[0]) * devicePixelRatio, version);
+  const [url] = usePageImage(ref, doc, index, (w / size[0]) * devicePixelRatio, version);
   return (
     <button
       ref={ref}
@@ -90,7 +90,7 @@ type Gesture =
   | { t: "scale"; ox: number; oy: number; d0: number; s: number };
 
 export interface PageProps {
-  index: number; size: [number, number]; zoom: number; version: number;
+  doc: number; index: number; size: [number, number]; zoom: number; version: number;
   items: Item[]; selected: number[]; tool: Tool; preset: Preset; marker: Preset; settings: Settings;
   onAdd: (it: Item) => void;
   onRemove: (ids: number[]) => void;
@@ -99,7 +99,7 @@ export interface PageProps {
 }
 
 export function PageView(p: PageProps) {
-  const { index, size, zoom, version, items, selected, tool, preset, marker, settings } = p;
+  const { doc, index, size, zoom, version, items, selected, tool, preset, marker, settings } = p;
   const ref = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const g = useRef<Gesture>(null);
@@ -110,7 +110,7 @@ export function PageView(p: PageProps) {
   const rerender = () => setGs(g.current && { ...g.current });
   const [hover, setHover] = useState<{ x: number; y: number; tool: Tool }>();
   const [edit, setEdit] = useState<{ item: Item; isNew: boolean }>();
-  const [url, visible] = usePageImage(ref, index, zoom * devicePixelRatio, version);
+  const [url, visible] = usePageImage(ref, doc, index, zoom * devicePixelRatio, version);
   const [w, h] = [size[0] * zoom, size[1] * zoom];
 
   const sel = items.filter((it) => selected.includes(it.id));
