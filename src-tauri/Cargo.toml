@@ -1,0 +1,35 @@
+[package]
+name = "pdf-note"
+version = "0.0.1"
+description = "Lokaler PDF-Editor, offline"
+authors = ["felix-d-git"]
+license = "AGPL-3.0-only"
+edition = "2024"
+
+[lib]
+name = "pdf_note_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# ohne Default-Features: kein JavaScript in PDFs, keine XPS/EPUB/HTML-Formate
+mupdf = { version = "0.8.0", default-features = false }
+
+[patch.crates-io]
+# mupdf 0.8.0 kompiliert unter MSVC nicht (max_align_t) -> vendor/mupdf/PATCH.md
+mupdf = { path = "../vendor/mupdf" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# mupdf-sys baut sonst die MSVC-Debug-Konfiguration (/MDd, vcruntimed) -> Linkerkonflikt
+# mit der Release-CRT der übrigen Crates. Ab opt-level 2 wählt es "Release" (/MD).
+[profile.dev.package.mupdf-sys]
+opt-level = 3

@@ -1,0 +1,8 @@
+# Gilt für alle cargo-/tauri-Aufrufe unterhalb des Repos.
+[env]
+# bindgen (mupdf-sys) braucht libclang; LLVM per winget, nicht im PATH
+LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
+
+[build]
+# Build-Artefakte (GB) nie in den Nextcloud-Pfad; CI überschreibt per CARGO_TARGET_DIR
+target-dir = "C:/Users/lelif/AppData/Local/Temp/pdf-note-target"

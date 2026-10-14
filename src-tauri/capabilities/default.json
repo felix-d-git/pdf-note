@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Hauptfenster. Bewusst ohne http/Netzwerk-Rechte (GRUNDSAETZE.md, Privat).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
