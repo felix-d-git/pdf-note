@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
-  box, drawItems, FONT, hitTest, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, scaleItem,
+  box, drawItems, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, scaleItem,
   TEXT_SIZE, textRect, unionBox, type InkPoint, type Item, type Preset,
 } from "./ink";
 import { toolFor, type Settings, type Tool } from "./settings";
@@ -132,6 +132,11 @@ export function PageView(p: PageProps) {
     if (ctx) drawItems(ctx, shown(), zoom);
   };
   useEffect(redraw);
+  // Bilder laden asynchron → danach neu zeichnen
+  useEffect(() => {
+    addEventListener(IMAGE_LOADED, redraw);
+    return () => removeEventListener(IMAGE_LOADED, redraw);
+  });
 
   const pt = (e: PointerEvent | React.PointerEvent): InkPoint => {
     const r = ref.current?.getBoundingClientRect() ?? new DOMRect();

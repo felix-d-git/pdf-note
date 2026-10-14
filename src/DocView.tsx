@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { z } from "zod";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, ItemData, MARKERS, moveItem, newId,
-  PRESETS, toData, type Item, type Preset,
+  afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
+  moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
 } from "./ink";
 import { PageView, Thumb } from "./PageView";
 import { type Settings, type Tool } from "./settings";
@@ -27,14 +27,41 @@ const push = (h: History, s: Snap): History => {
 };
 export const toSnap = (r: z.infer<typeof PageState>): Snap => ({ items: r.items.map(fromData), rev: r.rev, sizes: r.sizes });
 
-/** Zwischenablage über alle Tabs: Kopieren in einer PDF, Einfügen in einer anderen. */
-const clip: { items: Item[] } = { items: [] };
+/**
+ * Zwischenablage über alle Tabs: Kopieren in einer PDF, Einfügen in einer anderen.
+ * `text` = was beim Kopieren als Text in die System-Zwischenablage ging; steht dort noch dasselbe → eigene Objekte einfügen.
+ */
+const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
-const TOOL_LABELS: [Tool, string, string][] = [
-  ["pen", "Stift", "Stift"], ["marker", "Marker", "Textmarker"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)"],
-  ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren"], ["text", "Text", "Textfeld"], ["line", "╱", "Linie"],
-  ["arrow", "→", "Pfeil"], ["rect", "▭", "Rechteck"], ["ellipse", "◯", "Kreis/Ellipse"],
+/** Werkzeug, Beschriftung, Tooltip, Kürzel */
+const TOOL_LABELS: [Tool, string, string, string][] = [
+  ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
+  ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren", "a"], ["text", "Text", "Textfeld", "t"], ["line", "╱", "Linie", "l"],
+  ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
 ];
+const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
+
+const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+const readUrl = (b: Blob) => new Promise<string>((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(String(r.result));
+  r.onerror = () => rej(r.error ?? new Error("Lesen fehlgeschlagen"));
+  r.readAsDataURL(b);
+});
+/** Bild aus der Zwischenablage → Base64; PNG/JPEG unverändert, andere Formate (GIF, SVG, BMP …) als PNG. */
+async function blobToB64(b: Blob): Promise<string> {
+  let url = await readUrl(b);
+  if (!imageMime(url.slice(url.indexOf(",") + 1))) {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const c = document.createElement("canvas");
+    [c.width, c.height] = [img.naturalWidth, img.naturalHeight];
+    c.getContext("2d")?.drawImage(img, 0, 0);
+    url = c.toDataURL("image/png");
+  }
+  return url.slice(url.indexOf(",") + 1);
+}
 
 /** Was App von einem Dokument braucht (Speichern-Nachfrage beim Schließen/Beenden). */
 export interface DocApi { save: () => Promise<void> }
@@ -76,16 +103,22 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     });
   const clearSel = () => setSelection({ page: -1, ids: [] });
 
-  async function save() {
+  async function save(force = false): Promise<void> {
     // während Seitenoperation/Undo passen die Objekte nicht zum Seitenstand im Backend
     if (!dirty || busy.current) return;
     const s = snap;
     try {
-      await invoke("save_pdf", { id, items: s.items.map(toData), target: null, flat: false });
+      await invoke("save_pdf", { id, items: s.items.map(toData), target: null, flat: false, force });
       setSaved(s);
       setError(undefined);
     } catch (e) {
-      setError(`Speichern fehlgeschlagen: ${String(e)}`);
+      if (!force && String(e) === "EXTERN_GEAENDERT") {
+        const r = await message("Die PDF wurde seit dem Öffnen außerhalb von PDF Note geändert. Beim Speichern gehen diese Änderungen verloren.", {
+          title: "PDF Note", kind: "warning", buttons: { ok: "Trotzdem speichern", cancel: "Abbrechen" },
+        });
+        if (r === "Trotzdem speichern") return save(true);
+        setError("Nicht gespeichert: Datei extern geändert");
+      } else setError(`Speichern fehlgeschlagen: ${String(e)}`);
       throw e;
     }
   }
@@ -98,7 +131,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + noch im Speicher)
     if (target.toLowerCase() === path.toLowerCase()) return setError("Flach nicht über die offene Datei speichern – anderen Namen wählen");
     try {
-      await invoke("save_pdf", { id, items: items.map(toData), target, flat: true });
+      await invoke("save_pdf", { id, items: items.map(toData), target, flat: true, force: false });
       setError(undefined);
     } catch (e) {
       setError(`Speichern unter fehlgeschlagen: ${String(e)}`);
@@ -176,13 +209,78 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     scroller.current?.querySelector(`[data-page="${i}"]`)?.scrollIntoView({ block: "start" });
   }
 
+  /** Neue Objekte hinzufügen, auswählen, Lasso aktiv → gleich verschiebbar. */
+  function place(added: Item[]) {
+    const page = added[0]?.page;
+    if (page === undefined) return;
+    edit((its) => [...its, ...added]);
+    setSelection({ page, ids: added.map((it) => it.id) });
+    setTool("lasso");
+  }
+
+  /** Mitte des sichtbaren Teils der aktuellen Seite in pt. */
+  function viewCenter(): [page: number, x: number, y: number, w: number, h: number] | null {
+    if (!sizes.length) return null;
+    const page = Math.min(current, sizes.length - 1);
+    const [w, h] = sizes[page] ?? A4;
+    const pr = scroller.current?.querySelector(`[data-page="${page}"]`)?.getBoundingClientRect();
+    const vr = scroller.current?.getBoundingClientRect();
+    if (!pr || !vr) return [page, w / 2, h / 2, w, h];
+    const clamp = (v: number, max: number) => Math.min(max * 0.9, Math.max(max * 0.1, v));
+    return [page, clamp(((vr.left + vr.right) / 2 - pr.left) / zoom, w), clamp(((vr.top + vr.bottom) / 2 - pr.top) / zoom, h), w, h];
+  }
+
   function paste() {
     if (!clip.items.length || !sizes.length) return;
     const page = Math.min(current, sizes.length - 1);
     const pasted = clip.items.map((it) => ({ ...moveItem(it, 10, 10), id: newId(), page }));
     clip.items = pasted; // nochmal einfügen → weiter versetzt
-    edit((its) => [...its, ...pasted]);
-    setSelection({ page, ids: pasted.map((it) => it.id) });
+    place(pasted);
+  }
+
+  async function insertImage(b64: string) {
+    const c = viewCenter();
+    if (!c) return;
+    const [page, x, y, w, h] = c;
+    const img = new Image();
+    img.src = `data:${imageMime(b64) ?? "image/png"};base64,${b64}`;
+    await img.decode();
+    // 1 px = 0,75 pt (96 dpi); höchstens 80 % der kürzeren Seitenkante
+    place([imageItem(page, b64, img.naturalWidth * 0.75, img.naturalHeight * 0.75, x, y, 0.8 * Math.min(w, h))]);
+  }
+
+  function insertText(text: string) {
+    const c = viewCenter();
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!c || !ctx) return;
+    const [page, x, y] = c;
+    const t = text.replace(/\r\n?/g, "\n").slice(0, 100_000);
+    const points = textRect(ctx, t, TEXT_SIZE, 0, 0);
+    const [, [bw, bh] = [0, 0]] = points;
+    place([moveItem({
+      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: TEXT_SIZE, simulated: false, points, text: t,
+    }, x - bw / 2, y - bh / 2)]);
+  }
+
+  function insertShape(kind: Item["kind"]) {
+    const c = viewCenter();
+    if (!c) return;
+    const [page, x, y] = c;
+    const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : [60, 40];
+    place([{
+      id: newId(), page, kind, color: preset.color, opacity: 1, size: preset.size, simulated: false,
+      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "",
+    }]);
+  }
+
+  async function insertImageFile() {
+    const p = await openDialog({ filters: [{ name: "Bild", extensions: ["png", "jpg", "jpeg"] }] });
+    if (typeof p !== "string") return;
+    try {
+      await insertImage(await invoke<string>("read_image", { path: p }));
+    } catch (e) {
+      setError(`Bild einfügen fehlgeschlagen: ${String(e)}`);
+    }
   }
 
   const removeSel = () => {
@@ -209,30 +307,66 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     if (visible) scroller.current?.scrollTo(scrollPos.current.left, scrollPos.current.top);
   }, [visible]);
 
-  // Tastatur nur für die aktive Hälfte: Strg+S/Strg+Umschalt+S, Strg+Z/Y, Strg+C/V, Entf, Esc, Strg +/− Zoom
+  // Tastatur nur für die aktive Hälfte: Strg+S/Strg+Umschalt+S, Strg+Z/Y, Strg+A, Entf, Esc, Strg +/− Zoom,
+  // Werkzeug-Kürzel ohne Strg. Strg+C/X/V laufen über die copy/cut/paste-Ereignisse unten (System-Zwischenablage).
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (inField(e.target) || e.altKey || e.metaKey) return;
       const k = e.key.toLowerCase();
       const act: Record<string, () => void> = e.ctrlKey ? {
         s: () => void (e.shiftKey ? saveAs() : save().catch(() => {})),
         z: () => void travel(e.shiftKey ? hist.at + 1 : hist.at - 1),
         y: () => void travel(hist.at + 1),
-        c: () => void (clip.items = selItems),
-        v: paste,
+        a: () => {
+          const page = Math.min(current, sizes.length - 1);
+          setSelection({ page, ids: items.filter((it) => it.page === page).map((it) => it.id) });
+          setTool("lasso");
+        },
         "+": () => applyZoom(zoom * 1.2),
         "=": () => applyZoom(zoom * 1.2),
         "-": () => applyZoom(zoom / 1.2),
-      } : { delete: removeSel, backspace: removeSel, escape: clearSel };
+      } : {
+        delete: removeSel, backspace: removeSel, escape: clearSel,
+        ...Object.fromEntries(TOOL_LABELS.map(([t, , , key]) => [key, () => setTool(t)])),
+      };
       const f = act[k];
       if (f) {
         e.preventDefault();
         f();
       }
     };
+    const onCopy = (e: ClipboardEvent) => {
+      if (inField(e.target) || !selItems.length || !e.clipboardData) return;
+      e.preventDefault();
+      clip.items = selItems;
+      clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
+      e.clipboardData.setData("text/plain", clip.text);
+      if (e.type === "cut") removeSel();
+    };
+    // Reihenfolge: Bild → eigene Objekte (Text unverändert seit dem Kopieren) → Text als Textfeld
+    const onPaste = (e: ClipboardEvent) => {
+      const d = e.clipboardData;
+      if (inField(e.target) || !d) return;
+      e.preventDefault();
+      const file = [...d.files].find((f) => f.type.startsWith("image/"));
+      if (file) {
+        return void blobToB64(file).then(insertImage).catch((err: unknown) => setError(`Bild einfügen fehlgeschlagen: ${String(err)}`));
+      }
+      const text = d.getData("text/plain");
+      if (clip.items.length && text === clip.text) return paste();
+      if (text.trim()) insertText(text);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("cut", onCopy);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("cut", onCopy);
+      document.removeEventListener("paste", onPaste);
+    };
   });
 
   // Strg+Mausrad zoomt (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche)
@@ -328,9 +462,26 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         <button className={btn} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} title="Strg+Z">↶</button>
         <button className={btn} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} title="Strg+Y">↷</button>
         {sep}
-        {TOOL_LABELS.map(([t, label, title]) => (
-          <button key={t} className={btn + on(tool === t)} onClick={() => setTool(t)} title={title}>{label}</button>
+        {TOOL_LABELS.map(([t, label, title, key]) => (
+          <button key={t} className={btn + on(tool === t)} onClick={() => setTool(t)} title={`${title} (${key.toUpperCase()})`}>{label}</button>
         ))}
+        <select
+          value=""
+          aria-label="Einfügen"
+          title="Einfügen (auch Strg+V aus der Zwischenablage)"
+          className="rounded-xs bg-transparent px-1.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink"
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "image") void insertImageFile();
+            else if (v === "text") insertText("Text");
+            else if (v) insertShape(v as Item["kind"]);
+          }}
+        >
+          <option value="" disabled hidden>Einfügen …</option>
+          <option value="image">Bild-Datei …</option>
+          <option value="text">Textfeld</option>
+          {SHAPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
         {sep}
         {palette.map((p) => (
           <button

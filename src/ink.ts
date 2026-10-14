@@ -5,7 +5,7 @@ import { z } from "zod";
 export type InkPoint = [x: number, y: number, p: number];
 export type Rgb = [number, number, number];
 
-export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text"] as const;
+export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image"] as const;
 export type Kind = (typeof KINDS)[number];
 
 /**
@@ -24,6 +24,8 @@ export interface Item {
   simulated: boolean;
   points: InkPoint[];
   text: string;
+  /** Bild (kind "image"): PNG/JPEG als Base64, ohne data:-Präfix */
+  image?: string;
 }
 export type Stroke = Item;
 
@@ -44,10 +46,11 @@ export const ItemData = z.object({
   simulated: z.boolean(),
   points: z.array(z.tuple([num, num, num])).min(1),
   text: z.string(),
+  image: z.string().optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
-  simulated: d.simulated, points: d.points, text: d.text,
+  simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
 });
 
 export interface Preset {
@@ -110,6 +113,7 @@ export function savedWidth(s: Item): number {
 export const toData = (it: Item) => ({
   page: it.page, kind: it.kind, color: it.color, opacity: it.opacity, size: it.size,
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
+  ...(it.image ? { image: it.image } : {}),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
@@ -119,7 +123,7 @@ const TEXT_PAD = 2;
 /** Rechteck aus zwei Punkten, normiert. */
 export function box(it: Item) {
   const xs = it.points.map((p) => p[0]), ys = it.points.map((p) => p[1]);
-  const pad = it.kind === "text" ? 0 : it.size / 2;
+  const pad = it.kind === "text" || it.kind === "image" ? 0 : it.size / 2;
   return { x0: Math.min(...xs) - pad, y0: Math.min(...ys) - pad, x1: Math.max(...xs) + pad, y1: Math.max(...ys) + pad };
 }
 
@@ -175,8 +179,43 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
       ctx.font = `${it.size}px ${FONT}`;
       ctx.textBaseline = "top";
       it.text.split("\n").forEach((l, i) => ctx.fillText(l, x0 + TEXT_PAD, y0 + TEXT_PAD + i * lineHeight(it.size)));
+      return;
+    }
+    case "image": {
+      const img = image(it.image ?? "");
+      const { x0, y0, x1, y1 } = box(it);
+      if (img.complete) ctx.drawImage(img, x0, y0, x1 - x0, y1 - y0);
     }
   }
+}
+
+/** Erkennt PNG/JPEG am Anfang der Base64-Daten (andere Formate kennt der Stamp nicht). */
+export const imageMime = (b64: string) =>
+  b64.startsWith("iVBORw0KGgo") ? "image/png" : b64.startsWith("/9j/") ? "image/jpeg" : null;
+
+/** Geladene Bilder je Base64; nach dem Laden feuert `IMAGE_LOADED` auf window → neu zeichnen. */
+export const IMAGE_LOADED = "pdfnote-image";
+const images = new Map<string, HTMLImageElement>();
+// ponytail: Cache wächst mit jedem Bild der Sitzung; bei Speicherproblemen LRU
+function image(b64: string) {
+  let img = images.get(b64);
+  if (!img) {
+    img = new Image();
+    img.onload = () => dispatchEvent(new Event(IMAGE_LOADED));
+    img.src = `data:${imageMime(b64) ?? "image/png"};base64,${b64}`;
+    images.set(b64, img);
+  }
+  return img;
+}
+
+/** Bild-Objekt mittig um (cx, cy), höchstens max pt groß, Seitenverhältnis bleibt. */
+export function imageItem(page: number, b64: string, w: number, h: number, cx: number, cy: number, max: number): Item {
+  const s = Math.min(1, max / Math.max(w, h, 1));
+  const hw = (w * s) / 2, hh = (h * s) / 2;
+  return {
+    id: newId(), page, kind: "image", color: [0, 0, 0], opacity: 1, size: 1, simulated: false,
+    points: [[cx - hw, cy - hh, 0.5], [cx + hw, cy + hh, 0.5]], text: "", image: b64,
+  };
 }
 
 export function drawItems(ctx: CanvasRenderingContext2D, items: Item[], zoom: number) {
@@ -229,7 +268,8 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
       const d = Math.hypot((x - cx) / rx, (y - cy) / ry);
       return Math.abs(d - 1) * Math.min(rx, ry) <= r;
     }
-    case "text": {
+    case "text":
+    case "image": {
       const bx = box(it);
       return x >= bx.x0 - tol && x <= bx.x1 + tol && y >= bx.y0 - tol && y <= bx.y1 + tol;
     }
@@ -273,6 +313,6 @@ export function movedIndex(p: number, from: number, to: number) {
 export const afterMove = (items: Item[], from: number, to: number) =>
   items.map((it) => ({ ...it, page: movedIndex(it.page, from, to) }));
 
-/** Seite k um 90° im Uhrzeigersinn gedreht; h = Höhe vor dem Drehen. Text bleibt waagrecht. */
+/** Seite k um 90° im Uhrzeigersinn gedreht; h = Höhe vor dem Drehen. Text und Bilder bleiben waagrecht. */
 export const afterRotate = (items: Item[], k: number, h: number) =>
   items.map((it) => (it.page === k ? mapItem(it, (x, y) => [h - y, x]) : it));
