@@ -125,3 +125,54 @@ fn alle_schreibpfade() {
     }
     assert!(n > 0, "keine PDFs in {}", dir.display());
 }
+
+/// Tabs: zwei Dokumente gleichzeitig im selben Thread; Seitenoperation + Undo in einem lässt das andere unberührt,
+/// beide speichern in ihre eigene Datei.
+#[test]
+#[ignore]
+fn zwei_dokumente_gleichzeitig() {
+    use pdf::{Kind, PageOp};
+    use pdf_note_lib::Open;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let mut srcs: Vec<_> = std::fs::read_dir(&dir)
+        .expect("testdata/pdfs/ fehlt")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "pdf"))
+        .collect();
+    srcs.sort();
+    let first = srcs.first().expect("keine PDFs").clone();
+    let second = srcs.get(1).unwrap_or(&first).clone();
+    let tmp = std::env::temp_dir().join("pdf-note-test-two");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let (pa, pb) = (tmp.join("a.pdf"), tmp.join("b.pdf"));
+    std::fs::copy(&first, &pa).unwrap();
+    std::fs::copy(&second, &pb).unwrap();
+
+    let (mut a, sa) = Open::open(pa.clone()).unwrap();
+    let (mut b, sb) = Open::open(pb.clone()).unwrap();
+    let (na, nb) = (sa.sizes.len(), sb.sizes.len());
+
+    // A: Seite einfügen und rückgängig; B: Seite einfügen und behalten
+    let r = a.page_op(&PageOp::Blank { at: 0, width: 595.0, height: 842.0 }).unwrap();
+    assert_eq!(r.sizes.len(), na + 1);
+    b.page_op(&PageOp::Blank { at: 0, width: 595.0, height: 842.0 }).unwrap();
+    a.load(0).unwrap();
+    assert_eq!(a.sizes().unwrap().len(), na, "A: Undo");
+    assert_eq!(b.sizes().unwrap().len(), nb + 1, "B: von Undo in A betroffen");
+
+    let mut items_a = sa.items.clone();
+    items_a.push(item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "nur A"));
+    a.save(&items_a, None, false).unwrap();
+    b.save(&sb.items, None, false).unwrap();
+    drop((a, b));
+
+    let (_, ra) = Open::open(pa).unwrap();
+    let (_, rb) = Open::open(pb).unwrap();
+    assert_eq!(ra.sizes.len(), na, "A: Seitenzahl");
+    assert_eq!(rb.sizes.len(), nb + 1, "B: Seitenzahl");
+    assert_eq!(ra.items.len(), items_a.len(), "A: Objekte");
+    assert_eq!(rb.items.len(), sb.items.len(), "B: Objekt aus A gelandet");
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 2, "Zusatzdatei neben den PDFs");
+    println!("{} + {}: zwei Dokumente OK", first.display(), second.display());
+}
