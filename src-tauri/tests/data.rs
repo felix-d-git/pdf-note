@@ -529,3 +529,33 @@ fn suche_und_links() {
     }
     assert!(n > 0);
 }
+
+/// OCR: Gescannt.pdf wird durchsuchbar (auch nach Speichern), Seiten mit Text bleiben unverändert.
+#[test]
+#[ignore]
+fn ocr_scan() {
+    use pdf::PageOp;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-ocr");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    for name in ["Gescannt.pdf", "word.pdf"] {
+        let copy = solo.join(name);
+        std::fs::copy(dir.join(name), &copy).unwrap();
+        let mut doc = pdf::open(&copy).unwrap();
+        let before = page_texts(&doc).unwrap();
+        let r = pdf::page_op(&mut doc, &PageOp::Ocr).unwrap();
+        pdf::save(&doc, &[], &copy, false).unwrap();
+        let doc = pdf::open(&copy).unwrap();
+        let after = page_texts(&doc).unwrap();
+        if before.iter().all(|t| t.trim().is_empty()) {
+            let word = after.iter().flat_map(|t| t.split_whitespace()).find(|w| w.chars().count() >= 4 && w.chars().all(char::is_alphanumeric));
+            let word = word.unwrap_or_else(|| panic!("{name}: nichts erkannt ({:?})", r.warning));
+            assert!(!pdf_note_lib::nav::search(&doc, word).unwrap().is_empty(), "{name}: „{word}“ nicht suchbar");
+        } else {
+            assert_eq!(after, before, "{name}: Seiten mit Text verändert");
+        }
+        println!("{name}: OK ({:?})", r.warning);
+    }
+    assert!(solo.join("Gescannt.pdf").is_file() && std::fs::read_dir(&solo).unwrap().count() == 2, "Fremddateien neben der PDF");
+}
