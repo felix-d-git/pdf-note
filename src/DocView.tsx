@@ -3,11 +3,11 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { z } from "zod";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
+  afterDelete, afterInsert, afterMove, afterRotate, box, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
   moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
 } from "./ink";
 import * as ol from "./outline";
-import { PageView, Thumb, type NewField, type OrigEdit, type TextEdit } from "./PageView";
+import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit } from "./PageView";
 import { type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -16,6 +16,12 @@ export const PageState = z.object({
   warning: z.string().nullish(),
 });
 const clampZoom = (z: number) => Math.min(6, Math.max(0.2, z));
+const SearchHit = z.object({ page: z.number().int(), rect: z.array(z.number()).length(4) });
+type SearchHit = z.infer<typeof SearchHit>;
+const NO_HITS: Hit[] = [];
+// ponytail: feste Handballen-Schwellen, je nach Gerät nachjustieren
+const PALM_MS = 500; // so lange nach dem letzten Stiftereignis zählt Finger als Handballen
+const PALM_PX = 40; // breitere Berührung = Handballen
 const A4: [number, number] = [595, 842];
 
 /** Ein Stand für Undo/Redo: Objekte + Seitenstand im Backend (rev) + Seitengrößen. */
@@ -42,6 +48,7 @@ const TOOL_LABELS: [Tool, string, string, string][] = [
   ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
   ["pdftext", "PDF-Text", "Text der PDF: Klick bearbeitet den Absatz, Ziehen verschiebt ihn", "b"],
   ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
+  ["link", "Link", "Anker-Links: Rechteck ziehen, dann Zielstelle anklicken; Klick auf Link springt", "g"],
 ];
 const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
 
@@ -89,6 +96,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
   const [error, setError] = useState<string>();
+  /** Suche: `null` = zu; Treffer gelten nur für den Stand `v`, `done` = zuletzt gesuchter Begriff */
+  const [find, setFind] = useState<{ q: string; done: string | null; hits: SearchHit[]; at: number; v: number } | null>(null);
+  const findInput = useRef<HTMLInputElement>(null);
+  /** Link-Werkzeug: gezogener Quell-Bereich, wartet auf Klick ins Ziel */
+  const [linkFrom, setLinkFrom] = useState<{ page: number; rect: [number, number, number, number] }>();
+  // Werkzeugwechsel bricht einen angefangenen Link ab
+  if (linkFrom && tool !== "link") setLinkFrom(undefined);
   const [drop, setDrop] = useState<{ from: number; to: number }>();
   const [side, setSide] = useState<"pages" | "marks">("pages");
   const [marks, setMarks] = useState<ol.Mark[]>([]);
@@ -270,9 +284,43 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     requestAnimationFrame(() => el.scrollTo(left * r, top * r));
   }
 
-  function goTo(i: number) {
-    scroller.current?.querySelector(`[data-page="${i}"]`)?.scrollIntoView({ block: "start" });
+  /** Zur Seite springen; mit `y` (pt) die Stelle ins obere Drittel holen. */
+  function goTo(i: number, y?: number) {
+    const el = scroller.current, pg = el?.querySelector(`[data-page="${i}"]`);
+    if (!el || !pg) return;
+    if (y === undefined) return pg.scrollIntoView({ block: "start" });
+    el.scrollTo({ top: el.scrollTop + pg.getBoundingClientRect().top - el.getBoundingClientRect().top + y * zoom - el.clientHeight / 3 });
   }
+
+  /** Volltextsuche ohne Index: PDF-Text im Backend, eigene Textfelder hier. */
+  async function search(q: string) {
+    const t = q.trim();
+    if (!t) return setFind({ q, done: q, hits: [], at: -1, v: version });
+    try {
+      const pdf = z.array(SearchHit).parse(await invoke("search", { id, query: t }));
+      const low = t.toLowerCase();
+      // ponytail: eigene Textfelder als ganze Box markiert, nicht das Wort
+      const own = items.filter((it) => it.kind === "text" && it.text.toLowerCase().includes(low)).map((it) => {
+        const b = box(it);
+        return { page: it.page, rect: [b.x0, b.y0, b.x1, b.y1] };
+      });
+      const hits = [...pdf, ...own].sort((a, b) => a.page - b.page || (a.rect[1] ?? 0) - (b.rect[1] ?? 0));
+      setFind({ q, done: q, hits, at: hits.length ? 0 : -1, v: version });
+      if (hits[0]) goTo(hits[0].page, hits[0].rect[1]);
+    } catch (e) {
+      setError(`Suche fehlgeschlagen: ${String(e)}`);
+    }
+  }
+  function step(d: number) {
+    if (find && find.v !== version) return void search(find.q);
+    if (!find?.hits.length) return;
+    const at = (find.at + d + find.hits.length) % find.hits.length;
+    const h = find.hits[at];
+    setFind({ ...find, at });
+    if (h) goTo(h.page, h.rect[1]);
+  }
+  // Treffer passen nach Seitenoperation/Undo nicht mehr → ausblenden; nach Objekt-Änderungen bleiben sie stehen (ponytail)
+  const hits = find && find.v === version ? find.hits : [];
 
   /** Neue Objekte hinzufügen, auswählen, Lasso aktiv → gleich verschiebbar. */
   function place(added: Item[]) {
@@ -406,8 +454,16 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         "+": () => applyZoom(zoom * 1.2),
         "=": () => applyZoom(zoom * 1.2),
         "-": () => applyZoom(zoom / 1.2),
+        f: () => {
+          setFind((f) => f ?? { q: "", done: null, hits: [], at: -1, v: version });
+          requestAnimationFrame(() => findInput.current?.select());
+        },
       } : {
-        delete: removeSel, backspace: removeSel, escape: clearSel,
+        delete: removeSel, backspace: removeSel,
+        escape: () => {
+          setLinkFrom(undefined);
+          clearSel();
+        },
         ...Object.fromEntries(TOOL_LABELS.map(([t, , , key]) => [key, () => setTool(t)])),
       };
       const f = act[k];
@@ -462,26 +518,51 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     return () => el.removeEventListener("wheel", onWheel);
   });
 
-  // Finger: 1 = scrollen, 2 = Pinch-Zoom. Stift/Maus zeichnen in PageView.
+  // Finger: 1 = scrollen, 2 = Pinch-Zoom um den Fingermittelpunkt + verschieben. Stift/Maus zeichnen in PageView.
+  // Palm-Rejection: solange der Stift aufliegt (und PALM_MS danach) und bei breiter Auflage zählen Finger nicht.
   const touches = useRef(new Map<number, { x: number; y: number }>());
-  const pinch = useRef<{ d: number; z: number }>(null);
+  /** Abstand und Zoom beim Aufsetzen, dazu der Inhaltspunkt (CSS-px bei Zoom 1) unter dem Mittelpunkt */
+  const pinch = useRef<{ d: number; z: number; cx: number; cy: number }>(null);
+  const pen = useRef({ down: false, at: -Infinity });
+  const fingers = () => [...touches.current.values()];
   const dist = () => {
-    const [a, b] = [...touches.current.values()];
+    const [a, b] = fingers();
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  };
+  /** Mittelpunkt der zwei Finger relativ zum Scroll-Container */
+  const mid = () => {
+    const [a, b] = fingers(), r = scroller.current?.getBoundingClientRect();
+    return a && b && r ? { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } : { x: 0, y: 0 };
+  };
+  const penEvent = (e: React.PointerEvent) => {
+    if (e.pointerType !== "pen") return;
+    if (e.type === "pointerdown") {
+      // Stift setzt auf → laufende Finger-Geste (Handballen) abbrechen
+      touches.current.clear();
+      pinch.current = null;
+    }
+    pen.current = { down: e.type === "pointerdown" || (pen.current.down && e.type === "pointermove"), at: performance.now() };
   };
   const touchDown = (e: React.PointerEvent) => {
     if (e.pointerType !== "touch") return;
+    if (pen.current.down || performance.now() - pen.current.at < PALM_MS || e.width > PALM_PX) return;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    pinch.current = touches.current.size === 2 ? { d: dist(), z: zoom } : null;
+    const el = scroller.current, m = mid();
+    pinch.current = touches.current.size === 2 && el
+      ? { d: dist(), z: zoom, cx: (el.scrollLeft + m.x) / zoom, cy: (el.scrollTop + m.y) / zoom } : null;
   };
   const touchMove = (e: React.PointerEvent) => {
     const t = touches.current.get(e.pointerId);
     if (!t) return;
     const dx = e.clientX - t.x, dy = e.clientY - t.y;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    // ponytail: Pinch zoomt um die Scroll-Position, nicht um den Fingermittelpunkt
-    if (pinch.current && pinch.current.d > 0) applyZoom((pinch.current.z * dist()) / pinch.current.d);
-    else if (touches.current.size === 1) scroller.current?.scrollBy(-dx, -dy);
+    const pc = pinch.current, el = scroller.current;
+    if (pc && pc.d > 0 && el) {
+      // ponytail: Seitenränder/Abstände skalieren nicht mit → Punkt unter den Fingern wandert leicht
+      const nz = clampZoom((pc.z * dist()) / pc.d), m = mid();
+      setZoom(nz);
+      requestAnimationFrame(() => el.scrollTo(pc.cx * nz - m.x, pc.cy * nz - m.y));
+    } else if (touches.current.size === 1) el?.scrollBy(-dx, -dy);
   };
   const touchUp = (e: React.PointerEvent) => {
     touches.current.delete(e.pointerId);
@@ -622,6 +703,37 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           />
           / {sizes.length}
         </form>
+        {find && (
+          <form
+            className="flex items-center gap-1 text-sm text-ink-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (find.done !== find.q || find.v !== version) void search(find.q);
+              else step(1);
+            }}
+          >
+            <input
+              ref={findInput}
+              autoFocus
+              value={find.q}
+              onChange={(e) => setFind({ ...find, q: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setFind(null);
+                else if (e.key === "Enter" && e.shiftKey) {
+                  e.preventDefault();
+                  step(-1);
+                }
+              }}
+              placeholder="Suchen …"
+              aria-label="Suchen"
+              title="Enter = nächster, Umschalt+Enter = vorheriger Treffer, Esc = schließen"
+              className="w-40 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-xs text-ink"
+            />
+            <span className="w-14 font-mono text-xs">{find.done === null ? "" : `${find.at + 1}/${hits.length}`}</span>
+            <button type="button" className={btn} onClick={() => setFind(null)} title="Suche schließen (Esc)">×</button>
+          </form>
+        )}
+        {tool === "link" && linkFrom && <span className="text-sm text-accent">Ziel anklicken (Esc bricht ab)</span>}
         {error && <span className="ml-auto text-sm text-red-400">{error}</span>}
       </div>
       <div className="relative flex min-h-0 flex-1">
@@ -745,6 +857,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           className="flex-1 overflow-auto"
           style={{ touchAction: "none" }}
           onScroll={onScroll}
+          onPointerDownCapture={penEvent}
+          onPointerMoveCapture={penEvent}
+          onPointerUpCapture={penEvent}
+          onPointerCancelCapture={penEvent}
           onPointerDown={touchDown}
           onPointerMove={touchMove}
           onPointerUp={touchUp}
@@ -774,6 +890,16 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 onText={(edit: TextEdit) => void pageOp({ op: "text", page: i, edit }, (its) => its)}
                 onField={(xref, value) => setField(i, xref, value)}
                 onNewField={(field: NewField) => void pageOp({ op: "newField", page: i, field }, (its) => its)}
+                hits={hits.length ? hits.flatMap((h, k) => h.page === i ? [{ rect: h.rect, active: k === find?.at }] : []) : NO_HITS}
+                linking={tool === "link" && !!linkFrom}
+                onLinkFrom={(rect) => setLinkFrom({ page: i, rect })}
+                onLinkTo={(x, y) => {
+                  if (!linkFrom) return;
+                  setLinkFrom(undefined);
+                  void pageOp({ op: "link", from: linkFrom.page, rect: linkFrom.rect, to: i, x, y }, (its) => its);
+                }}
+                onJump={goTo}
+                onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
               />
             ))}
           </div>
