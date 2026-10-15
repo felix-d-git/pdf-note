@@ -90,7 +90,13 @@ type Gesture =
   | { t: "move"; x: number; y: number; dx: number; dy: number }
   | { t: "scale"; ox: number; oy: number; d0: number; s: number }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
-  | { t: "field"; x: number; y: number; dx: number; dy: number };
+  | { t: "field" | "link"; x: number; y: number; dx: number; dy: number };
+
+/** Anker-Link der Seite (Backend `links`); `page` −1 = externer Link, nur Platzhalter für die Nummerierung */
+const Anchor = z.object({ rect: z.tuple([z.number(), z.number(), z.number(), z.number()]), page: z.number(), y: z.number() });
+type Anchor = z.infer<typeof Anchor>;
+/** Suchtreffer auf dieser Seite, pt */
+export interface Hit { rect: number[]; active: boolean }
 
 /** Erkannter Textabsatz der PDF (Backend `text_paragraphs`), Koordinaten in pt wie die Objekte. */
 const Para = z.object({
@@ -128,6 +134,13 @@ export interface PageProps {
   onText: (edit: TextEdit) => void;
   onField: (xref: number, value: string) => void;
   onNewField: (f: NewField) => void;
+  hits: Hit[];
+  /** Link-Werkzeug wartet auf das Ziel */
+  linking: boolean;
+  onLinkFrom: (rect: [number, number, number, number]) => void;
+  onLinkTo: (x: number, y: number) => void;
+  onJump: (page: number, y: number) => void;
+  onUnlink: (n: number) => void;
 }
 
 export interface OrigEdit { index: number; matrix?: number[] }
@@ -186,6 +199,19 @@ export function PageView(p: PageProps) {
     return () => void (live = false);
   }, [doc, index, version, formOn]);
   const flist = formOn ? fields : [];
+  // Anker-Links (nur Link-Werkzeug), je Stand
+  const [anchors, setAnchors] = useState<{ v: number; list: Anchor[] }>({ v: -1, list: [] });
+  const linkOn = tool === "link" && visible;
+  useEffect(() => {
+    if (!linkOn) return;
+    let live = true;
+    invoke("links", { id: doc, index }).then(
+      (r) => live && setAnchors({ v: version, list: z.array(Anchor).parse(r) }),
+      () => live && setAnchors({ v: version, list: [] }),
+    );
+    return () => void (live = false);
+  }, [doc, index, version, linkOn]);
+  const alist = linkOn && anchors.v === version ? anchors.list : [];
   const paraAt = (x: number, y: number) => plist.findIndex(({ bbox: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
 
   const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
@@ -265,6 +291,11 @@ export function PageView(p: PageProps) {
       g.current = { t: "field", x, y, dx: 0, dy: 0 };
       return rerender();
     }
+    if (t === "link") {
+      if (p.linking) return p.onLinkTo(x, y);
+      g.current = { t: "link", x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
     if (t === "pdftext") {
       const i = paraAt(x, y);
       setPedit(undefined);
@@ -331,6 +362,7 @@ export function PageView(p: PageProps) {
       case "move":
       case "para":
       case "field":
+      case "link":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
       case "scale":
@@ -386,6 +418,16 @@ export function PageView(p: PageProps) {
           setNewf([Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
         }
         break;
+      case "link": {
+        const r: [number, number, number, number] = [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)];
+        if (Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3) p.onLinkFrom(r);
+        else {
+          // Klick auf vorhandenen Link → springen (nur interne Ziele, externe sind nie in der Liste)
+          const a = alist.findLast(({ page, rect: [x0, y0, x1, y1] }) => page >= 0 && c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1);
+          if (a) p.onJump(a.page, a.y);
+        }
+        break;
+      }
       case "scale":
         if (c.s !== 1) commit((it) => scaleItem(it, c.ox, c.oy, c.s), [c.s, 0, 0, c.s, c.ox * (1 - c.s), c.oy * (1 - c.s)]);
         break;
@@ -439,7 +481,7 @@ export function PageView(p: PageProps) {
     const options = String(d.get("options") ?? "").split("\n").map((o) => o.trim()).filter(Boolean);
     if (newf && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect: newf, options });
   };
-  const fieldBox = gs?.t === "field" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
+  const fieldBox = gs?.t === "field" || gs?.t === "link" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
 
   const sb = sel.length ? unionBox(sel.map(transform)) : null;
   const lasso = gs?.t === "lasso" ? gs.poly : null;
@@ -451,7 +493,7 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : tool === "form" ? "cell" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
@@ -537,6 +579,18 @@ export function PageView(p: PageProps) {
             }} />
         );
       })}
+      {p.hits.map(({ rect: [x0 = 0, y0 = 0, x1 = 0, y1 = 0], active }, i) => (
+        <div key={`h${i}`} className={`pointer-events-none absolute rounded-xs bg-accent/25 ${active ? "ring-2 ring-accent" : ""}`}
+          style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }} />
+      ))}
+      {alist.map(({ rect: [x0, y0, x1, y1], page }, n) => page >= 0 && (
+        <div key={`l${n}`} className="pointer-events-none absolute border border-dashed border-accent bg-accent/10"
+          style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }}>
+          <span className="absolute -top-4 left-0 font-mono text-[10px] whitespace-nowrap text-accent">→ S. {page + 1}</span>
+          <button data-pedit title="Link löschen" onClick={() => p.onUnlink(n)}
+            className="pointer-events-auto absolute -top-2 -right-2 h-4 w-4 rounded-full bg-accent text-[10px] leading-4 text-white">×</button>
+        </div>
+      ))}
       {fieldBox && (
         <div className="pointer-events-none absolute border border-dashed border-accent"
           style={fieldBox} />

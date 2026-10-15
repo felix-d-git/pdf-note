@@ -480,3 +480,52 @@ fn notizbuch() {
     assert_eq!(files, n, "Zusatzdateien neben den PDFs");
     assert!(n > 0);
 }
+
+/// Suche findet vorhandenen Text; Link-Paar auf Notizseite ↔ Seite 1 überlebt Speichern, vorhandene Links bleiben.
+#[test]
+#[ignore]
+fn suche_und_links() {
+    use pdf::PageOp;
+    use pdf_note_lib::nav::{links, search};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-nav");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let count = texts.len() as i32;
+        let word = texts.iter().enumerate().find_map(|(i, t)| {
+            t.split_whitespace().find(|w| w.chars().count() >= 4 && w.chars().all(char::is_alphanumeric)).map(|w| (i as i32, w.to_string()))
+        });
+        if let Some((page, w)) = &word {
+            let hits = search(&doc, w).unwrap();
+            assert!(hits.iter().any(|h| h.page == *page), "{}: „{w}“ nicht gefunden", src.display());
+        }
+        let old = links(&doc, 0).unwrap();
+        pdf::page_op(&mut doc, &PageOp::Blank { at: count, width: 595.0, height: 842.0, template: None }).unwrap();
+        pdf::page_op(&mut doc, &PageOp::Link { from: count, rect: [50.0, 50.0, 200.0, 70.0], to: 0, x: 40.0, y: 100.0 }).unwrap();
+        pdf::save(&doc, &[], &copy, false).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        assert_eq!(page_texts(&doc).unwrap()[..texts.len()], texts[..], "{}: Original-Seiten", src.display());
+        let hin = links(&doc, count).unwrap();
+        assert_eq!(hin.len(), 1, "{}: Link", src.display());
+        assert!(hin[0].page == 0 && (hin[0].y - 100.0).abs() < 0.5, "{}: Ziel {hin:?}", src.display());
+        let back = links(&doc, 0).unwrap();
+        assert_eq!(back[..old.len()], old[..], "{}: vorhandene Links", src.display());
+        assert_eq!(back.len(), old.len() + 1, "{}: Rücksprung", src.display());
+        pdf::page_op(&mut doc, &PageOp::Unlink { page: 0, n: old.len() }).unwrap();
+        assert_eq!(links(&doc, 0).unwrap(), old, "{}: Rücksprung gelöscht", src.display());
+        println!("{}: OK ({} Links, Suche {:?})", src.display(), old.len(), word.map(|w| w.1));
+        n += 1;
+    }
+    assert!(n > 0);
+}
