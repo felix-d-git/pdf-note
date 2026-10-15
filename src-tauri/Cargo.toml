@@ -1,6 +1,6 @@
 [package]
 name = "pdf-note"
-version = "0.0.1"
+version = "1.0.0"
 description = "Lokaler PDF-Editor, offline"
 authors = ["felix-d-git"]
 license = "AGPL-3.0-only"
@@ -17,10 +17,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 # ohne Default-Features: kein JavaScript in PDFs, keine XPS/EPUB/HTML-Formate.
 # base14-fonts: Standardschriften (Helvetica …) für Textfelder und PDFs ohne eingebettete Schriften
-mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts"] }
+# tesseract: OCR (Tesseract + Leptonica aus MuPDF-thirdparty; unter MSVC ohnehin in libmupdf gebaut)
+mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "tesseract"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 
 [patch.crates-io]
 # mupdf 0.8.0 kompiliert unter MSVC nicht (max_align_t) -> vendor/mupdf/PATCH.md

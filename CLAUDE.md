@@ -15,6 +15,8 @@ Plan + TODO: `C:\Users\lelif\Dokumente\AI\MEMORY\Wiki\Privates\Projekte\PDF-Note
   - `npm run check` – tsc + eslint + vitest
   - `cargo test --manifest-path src-tauri/Cargo.toml`
   - `npm run test:data` – Speichern → Neu-Öffnen gegen `testdata/pdfs/` (gitignored, fehlt in CI → dort nicht lauffähig)
+- Vor Release zusätzlich `npm run check:laufzeit` (nach `tauri build`): echte exe 60 s, keine TCP-Verbindung nach außen (inkl. WebView2-Kinder), keine Zusatzdatei neben der PDF.
+- CI: `.github/workflows/windows.yml` (check + cargo test + tauri build, kein Upload).
 - `cargo` ist in Git Bash/PowerShell nicht im PATH → `$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"` bzw. `export PATH="$HOME/.cargo/bin:$PATH"`.
 
 ## Laufzeitfallen
@@ -24,6 +26,7 @@ Plan + TODO: `C:\Users\lelif\Dokumente\AI\MEMORY\Wiki\Privates\Projekte\PDF-Note
 - `[profile.dev.package.mupdf-sys] opt-level = 3` nicht entfernen: sonst baut mupdf-sys die MSVC-Debug-CRT (`vcruntimed`) → LNK2005 `__CxxFrameHandler3` bei `cargo test`/`tauri dev`.
 - `mupdf` ohne Default-Features: kein PDF-JavaScript, nur PDF/Bilder. Features nicht ohne Grund aktivieren (GRUNDSAETZE 2).
 - CSP in `tauri.conf.json`: `default-src 'self' ipc: http://ipc.localhost` – `ipc.localhost` ist Tauris interner Kanal, kein Netzwerk. Keine externen URLs, Schriften/Icons nur aus `node_modules` bündeln.
+- `additionalBrowserArgs` in `tauri.conf.json` ersetzt Tauris Default-Flags komplett und sperrt WebView2-Eigenverkehr (Microsoft-Konto-Abfrage per OneAuth/WAM an outlook.office.com, edge.microsoft.com). Nicht kürzen; nach WebView2-Updates `npm run check:laufzeit` erneut.
 - Capabilities (`src-tauri/capabilities/default.json`): nur `core:default`. Neue Rechte (Dialog, FS) einzeln und eng; nie `http`/`shell`.
 - TypeScript 6: CSS-Imports brauchen `"types": ["vite/client"]` in `tsconfig.json`.
 - Bash-Heredocs halbieren Backslashes → Windows-Pfade in TOML als Literal-String `'C:\…'`.
