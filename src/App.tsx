@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
 import { captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
@@ -78,6 +78,19 @@ export default function App() {
   async function pickFile() {
     const p = await openDialog({ filters: [{ name: "PDF", extensions: ["pdf"] }] });
     if (typeof p === "string") await openPath(p);
+  }
+
+  /** Neue Notiz-PDF (eine leere A4-Seite) anlegen und öffnen. */
+  async function newFile() {
+    let p;
+    try {
+      p = await saveDialog({ defaultPath: "Notizen.pdf", filters: [{ name: "PDF", extensions: ["pdf"] }] });
+      if (!p) return;
+      await invoke("new_pdf", { path: p });
+    } catch (e) {
+      return setError(`Anlegen fehlgeschlagen: ${String(e)}`);
+    }
+    await openPath(p);
   }
 
   const updateSettings = (s: Settings) => {
@@ -192,6 +205,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
+        <button className={btn} onClick={() => void newFile()} title="Neue Notiz-PDF anlegen">Neu</button>
         <button className={btn} onClick={() => void pickFile()} title="Strg+O">Öffnen</button>
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
           {tabs.map((t, i) => {

@@ -173,13 +173,16 @@ fn check_page(doc: &PdfDocument, index: i32) -> Result<(), String> {
     if crate::pdf::is_scan(doc, index).map_err(err)? {
         return Err("Scan-Seite: kein Text".into());
     }
+    if crate::notebook::markdown(doc, index)?.is_some() {
+        return Err("Markdown-Seite: Text im Markdown-Editor ändern".into());
+    }
     Ok(())
 }
 
-/// Absätze einer Seite in Lesereihenfolge. Scan-Seiten: keine.
+/// Absätze einer Seite in Lesereihenfolge. Scan- und Markdown-Seiten: keine.
 pub fn paragraphs(doc: &PdfDocument, index: i32) -> Result<Vec<Para>, String> {
     match check_page(doc, index) {
-        Err(e) if e.starts_with("Scan") => return Ok(Vec::new()),
+        Err(e) if e.starts_with("Scan") || e.starts_with("Markdown") => return Ok(Vec::new()),
         r => r?,
     }
     Ok(group(lines(&doc.load_pdf_page(index).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?))
@@ -211,10 +214,10 @@ pub struct TextEdit {
 
 /// Glyph einer Schrift: Fontressource, Code-Bytes, Breite in 1/1000 em.
 #[derive(Clone)]
-struct Glyph {
-    key: usize,
-    code: Vec<u8>,
-    width: f32,
+pub(crate) struct Glyph {
+    pub(crate) key: usize,
+    pub(crate) code: Vec<u8>,
+    pub(crate) width: f32,
 }
 
 /// Zeichen → Glyph je Fontressource. MuPDF dekodiert dazu jeden Code selbst (ToUnicode, Encoding/Differences,
@@ -338,9 +341,9 @@ const SUBSTITUTES: [[&str; 4]; 3] = [
 ];
 
 /// Schrift für den Neusatz: Ressourcenschlüssel je `Glyph.key` + Zeichentabelle.
-struct Fonts {
-    keys: Vec<String>,
-    map: HashMap<char, Glyph>,
+pub(crate) struct Fonts {
+    pub(crate) keys: Vec<String>,
+    pub(crate) map: HashMap<char, Glyph>,
 }
 
 /// Stufe 1: Original-Fontressourcen gleichen Namens, nur wenn sie alle Zeichen (außer Leerzeichen) haben.
@@ -364,7 +367,7 @@ fn original_fonts(page: &PdfPage, name: &str, text: &str) -> Result<Option<Fonts
 
 /// Stufe 2: URW-Ersatzschrift, eingebettet (CID, Identity-H). Pro Dokument nur einmal: vorhandene eigene Ressource
 /// (`PNF…` mit gleichem BaseFont) auf irgendeiner Seite wird wiederverwendet. Fehlende Zeichen → `missing`.
-fn substitute(doc: &mut PdfDocument, page: &PdfPage, name: &str, text: &str, missing: &mut Vec<char>) -> Result<Fonts, Error> {
+pub(crate) fn substitute(doc: &mut PdfDocument, page: &PdfPage, name: &str, text: &str, missing: &mut Vec<char>) -> Result<Fonts, Error> {
     let font = Font::new(name)?;
     let mut obj = None;
     'pages: for i in 0..doc.page_count()? {
@@ -441,16 +444,16 @@ fn put_font(doc: &mut PdfDocument, page: &PdfPage, font: PdfObject) -> Result<St
 }
 
 /// Gesetzte Zeile: Wörter mit Abstand dazwischen (pt), Breite in pt.
-struct SetLine {
-    words: Vec<String>,
-    gap: f32,
-    x: f32,
-    base: f32,
+pub(crate) struct SetLine {
+    pub(crate) words: Vec<String>,
+    pub(crate) gap: f32,
+    pub(crate) x: f32,
+    pub(crate) base: f32,
 }
 
 /// Umbruch: Zeilenbreite `width`, erste Zeile um `indent` eingerückt; `\n` erzwingt Umbruch.
 /// Blocksatz verteilt den Rest auf die Wortabstände (nicht in der letzten Zeile eines Absatzes).
-fn reflow(text: &str, width: f32, indent: f32, space: f32, justify: bool, measure: impl Fn(&str) -> f32) -> Vec<(Vec<String>, f32, f32)> {
+pub(crate) fn reflow(text: &str, width: f32, indent: f32, space: f32, justify: bool, measure: impl Fn(&str) -> f32) -> Vec<(Vec<String>, f32, f32)> {
     let mut out = Vec::new();
     for hard in text.split('\n') {
         let words: Vec<&str> = hard.split_whitespace().collect();
@@ -484,7 +487,7 @@ fn hex(b: &[u8]) -> String {
 }
 
 /// Neusatz als Content-Stream-Stück: je Zeile `Tm` + TJ-Läufe je Fontressource; Abstände über TJ-Zahlen.
-fn emit(lines: &[SetLine], f: &Fonts, size: f32, color: [f32; 3], inv_base: &Matrix) -> String {
+pub(crate) fn emit(lines: &[SetLine], f: &Fonts, size: f32, color: [f32; 3], inv_base: &Matrix) -> String {
     let mut s = format!("BT\n{} {} {} rg\n", color[0], color[1], color[2]);
     let space = f.map.get(&' ');
     for l in lines {

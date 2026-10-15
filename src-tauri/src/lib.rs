@@ -1,4 +1,5 @@
 pub mod form;
+pub mod notebook;
 pub mod orig;
 pub mod pdf;
 pub mod text;
@@ -233,6 +234,24 @@ async fn form_fields(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result
     w.run(move |d| form::fields(&doc(d, id)?.doc, index)).await
 }
 
+/// Neue Notiz-PDF anlegen (danach öffnet das Frontend sie als Tab).
+#[tauri::command]
+fn new_pdf(path: PathBuf) -> Result<(), String> {
+    notebook::new_pdf(&path)
+}
+
+/// Lesezeichen (flach, mit Ebene).
+#[tauri::command]
+async fn outline(w: tauri::State<'_, Worker>, id: u32) -> Result<Vec<notebook::Mark>, String> {
+    w.run(move |d| notebook::outline(&doc(d, id)?.doc)).await
+}
+
+/// Markdown-Quelltext einer Seite (`None` = keine Markdown-Seite).
+#[tauri::command]
+async fn page_markdown(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Option<String>, String> {
+    w.run(move |d| notebook::markdown(&doc(d, id)?.doc, index)).await
+}
+
 /// Undo/Redo von Seitenoperationen: Stand `rev` laden.
 #[tauri::command]
 async fn goto_rev(w: tauri::State<'_, Worker>, id: u32, rev: usize) -> Result<Vec<[f32; 2]>, String> {
@@ -259,7 +278,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, goto_rev, read_image, startup_path])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }
