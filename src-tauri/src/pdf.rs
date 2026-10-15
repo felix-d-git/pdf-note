@@ -381,7 +381,14 @@ pub fn save_atomic(doc: &PdfDocument, path: &Path) -> Result<(), String> {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum PageOp {
-    Blank { at: i32, width: f32, height: f32 },
+    Blank {
+        at: i32,
+        width: f32,
+        height: f32,
+        /// Notizseiten-Vorlage; fehlt = leer
+        #[serde(default)]
+        template: Option<crate::notebook::Template>,
+    },
     InsertFile { at: i32, path: std::path::PathBuf },
     Rotate { index: i32 },
     Delete { index: i32 },
@@ -394,6 +401,10 @@ pub enum PageOp {
     Field { page: i32, xref: i32, value: String },
     /// Formularfeld anlegen
     NewField { page: i32, field: crate::form::NewField },
+    /// Markdown-Seite einfügen (`insert`) oder neu setzen
+    Markdown { page: i32, source: String, insert: bool },
+    /// Lesezeichen komplett ersetzen
+    Outline { marks: Vec<crate::notebook::Mark> },
 }
 
 /// Ergebnis einer Seitenoperation: eingefügte Seiten (für Objekt-Umnummerierung im Frontend)
@@ -414,12 +425,15 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
     let idx_ok = |i: i32| (0..count).contains(&i);
     let err = |e: Error| e.to_string();
     match op {
-        PageOp::Blank { at, width, height } => {
+        PageOp::Blank { at, width, height, template } => {
             let ok = at_ok(*at) && [width, height].iter().all(|v| v.is_finite() && (10.0..=14_400.0).contains(*v));
             if !ok {
                 return Err("ungültige Seite".into());
             }
             doc.new_page_at(*at, Size::new(*width, *height)).map_err(err)?;
+            if let Some(t) = template {
+                crate::notebook::template(doc, *at, *t)?;
+            }
             Ok(OpResult { inserted: 1, ..Default::default() })
         }
         PageOp::InsertFile { at, path } => {
@@ -477,6 +491,11 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             crate::orig::edit(doc, *page, edits)?;
             Ok(OpResult::default())
         }
+        PageOp::Markdown { page, source, insert } => {
+            let warning = crate::notebook::render(doc, *page, source, *insert)?;
+            Ok(OpResult { inserted: *insert as i32, warning, ..Default::default() })
+        }
+        PageOp::Outline { marks } => crate::notebook::set_outline(doc, marks).map(|_| OpResult::default()),
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
@@ -703,7 +722,7 @@ mod tests {
     fn seitenoperationen() {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
-        let blank = |at| PageOp::Blank { at, width: 300.0, height: 200.0 };
+        let blank = |at| PageOp::Blank { at, width: 300.0, height: 200.0, template: None };
         assert_eq!(page_op(&mut doc, &blank(1)).unwrap().inserted, 1);
         assert_eq!(page_sizes(&doc).unwrap(), vec![[595.0, 842.0], [300.0, 200.0]]);
         page_op(&mut doc, &PageOp::Move { from: 1, to: 0 }).unwrap();
@@ -714,7 +733,7 @@ mod tests {
         assert_eq!(page_sizes(&doc).unwrap(), vec![[595.0, 842.0]]);
         assert!(page_op(&mut doc, &PageOp::Delete { index: 0 }).is_err(), "letzte Seite bleibt");
         assert!(page_op(&mut doc, &blank(5)).is_err());
-        assert!(page_op(&mut doc, &PageOp::Blank { at: 0, width: f32::NAN, height: 1.0 }).is_err());
+        assert!(page_op(&mut doc, &PageOp::Blank { at: 0, width: f32::NAN, height: 1.0, template: None }).is_err());
 
         // PDF mit eigenen Objekten einfügen → Objekte kommen als Items zurück, Seiten sauber
         let mut other = PdfDocument::new();

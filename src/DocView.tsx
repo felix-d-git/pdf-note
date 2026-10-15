@@ -6,6 +6,7 @@ import {
   afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
   moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
 } from "./ink";
+import * as ol from "./outline";
 import { PageView, Thumb, type NewField, type OrigEdit, type TextEdit } from "./PageView";
 import { type Settings, type Tool } from "./settings";
 
@@ -89,6 +90,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [jump, setJump] = useState("");
   const [error, setError] = useState<string>();
   const [drop, setDrop] = useState<{ from: number; to: number }>();
+  const [side, setSide] = useState<"pages" | "marks">("pages");
+  const [marks, setMarks] = useState<ol.Mark[]>([]);
+  const [markSel, setMarkSel] = useState(-1);
+  const [renaming, setRenaming] = useState(-1);
+  /** Markdown-Quelltext der aktuellen Seite (`null` = keine Markdown-Seite) und offener Editor. */
+  const [md, setMd] = useState<string | null>(null);
+  const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
   const scroller = useRef<HTMLDivElement>(null);
   const scrollPos = useRef({ left: 0, top: 0 });
   const busy = useRef(false);
@@ -142,8 +150,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   }
 
   /** Seitenoperation im Backend; Objekte werden mit umnummeriert, Objekte einer eingefügten PDF kommen dazu. */
-  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[]) {
-    if (busy.current) return;
+  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[]): Promise<boolean> {
+    if (busy.current) return false;
     busy.current = true;
     try {
       const r = PageState.parse(await invoke("page_op", { id, op }));
@@ -153,8 +161,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       setVersion((v) => v + 1);
       clearSel();
       setError(r.warning ? `Hinweis: ${r.warning}` : undefined);
+      return true;
     } catch (e) {
       setError(`Seitenoperation fehlgeschlagen: ${String(e)}`);
+      return false;
     } finally {
       busy.current = false;
     }
@@ -184,10 +194,38 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     void save().catch(() => {});
   });
 
-  const insertBlank = () => {
+  const insertBlank = (template?: string) => {
     const at = Math.min(current + 1, sizes.length);
     const [width, height] = sizes[current] ?? A4;
-    void pageOp({ op: "blank", at, width, height }, (its) => afterInsert(its, at, 1));
+    void pageOp({ op: "blank", at, width, height, template }, (its) => afterInsert(its, at, 1));
+  };
+  const saveMarkdown = async () => {
+    if (!mdEdit) return;
+    const { page, source, insert } = mdEdit;
+    // Fehler → Editor bleibt offen, Text geht nicht verloren
+    if (!(await pageOp({ op: "markdown", page, source, insert }, (its) => (insert ? afterInsert(its, page, 1) : its)))) return;
+    setMdEdit(undefined);
+    if (insert) requestAnimationFrame(() => goTo(page));
+  };
+
+  // Lesezeichen + Markdown-Quelltext nach jeder Seitenoperation/Undo neu lesen
+  useEffect(() => {
+    let live = true;
+    invoke("outline", { id }).then((r) => live && setMarks(z.array(ol.Mark).parse(r)), (e: unknown) => live && setError(`Lesezeichen: ${String(e)}`));
+    return () => void (live = false);
+  }, [id, version]);
+  useEffect(() => {
+    let live = true;
+    invoke("page_markdown", { id, index: current }).then((r) => live && setMd(z.string().nullable().parse(r)), () => live && setMd(null));
+    return () => void (live = false);
+  }, [id, version, current]);
+  /** Geänderte Liste als Seitenoperation (Undo-fähig); `sel` = danach gewählter Eintrag. */
+  const setOutline = async (next: ol.Mark[], sel = markSel) => {
+    if (next === marks) return false;
+    setMarkSel(sel);
+    const ok = await pageOp({ op: "outline", marks: next }, (its) => its);
+    if (ok) setMarks(next); // sofort, nicht erst nach dem Neulesen (Umbenennen-Feld direkt danach)
+    return ok;
   };
   const insertFile = async (at: number, name: string, extensions: string[]) => {
     const p = await openDialog({ filters: [{ name, extensions }] });
@@ -536,7 +574,27 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           </button>
         ))}
         {sep}
-        <button className={btn} onClick={insertBlank} title="Leere Seite nach der aktuellen">Seite +</button>
+        <select
+          value=""
+          aria-label="Seite einfügen"
+          title="Neue Seite nach der aktuellen"
+          className="rounded-xs bg-transparent px-1.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink"
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "markdown") setMdEdit({ page: Math.min(current + 1, sizes.length), source: "# Titel\n\n", insert: true });
+            else if (v) insertBlank(v === "blank" ? undefined : v);
+          }}
+        >
+          <option value="" disabled hidden>Seite + …</option>
+          <option value="blank">Leer</option>
+          <option value="lined">Liniert</option>
+          <option value="grid">Kariert</option>
+          <option value="dots">Punkte</option>
+          <option value="markdown">Markdown-Seite</option>
+        </select>
+        {md !== null && (
+          <button className={btn} onClick={() => setMdEdit({ page: current, source: md, insert: false })} title="Markdown der aktuellen Seite bearbeiten">Markdown ✎</button>
+        )}
         <button className={btn} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} title="PDF hinten anhängen">PDF anhängen</button>
         <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} title="Bild als Seite nach der aktuellen">Bild</button>
         <button className={btn} onClick={rotate} title="Aktuelle Seite 90° drehen">⟳</button>
@@ -566,10 +624,78 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         </form>
         {error && <span className="ml-auto text-sm text-red-400">{error}</span>}
       </div>
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+        <div className="flex shrink-0 flex-col border-r border-line bg-sunken">
+        <div className="flex gap-1 border-b border-line p-1">
+          <button className={btn + on(side === "pages") + " flex-1"} onClick={() => setSide("pages")}>Seiten</button>
+          <button className={btn + on(side === "marks") + " flex-1"} onClick={() => setSide("marks")}>Lesezeichen</button>
+        </div>
+        {side === "marks" ? (
+          <div className="flex min-h-0 w-56 flex-1 flex-col">
+            <div className="flex flex-wrap gap-0.5 border-b border-line p-1">
+              <button
+                className={btn}
+                title="Lesezeichen auf die aktuelle Seite"
+                onClick={() => {
+                  const [next, i] = ol.add(marks, `Seite ${current + 1}`, current);
+                  void setOutline(next, i).then((ok) => ok && setRenaming(i));
+                }}
+              >+</button>
+              <button className={btn} disabled={markSel < 0} title="Nach oben" onClick={() => void setOutline(...ol.moveUp(marks, markSel))}>↑</button>
+              <button className={btn} disabled={markSel < 0} title="Nach unten" onClick={() => void setOutline(...ol.moveDown(marks, markSel))}>↓</button>
+              <button className={btn} disabled={markSel < 0} title="Ausrücken" onClick={() => void setOutline(...ol.outdent(marks, markSel))}>←</button>
+              <button className={btn} disabled={markSel < 0} title="Einrücken" onClick={() => void setOutline(ol.indent(marks, markSel))}>→</button>
+              <button
+                className={btn}
+                disabled={markSel < 0}
+                title="Ziel = aktuelle Seite"
+                onClick={() => void setOutline(marks.map((m, k) => (k === markSel ? { ...m, page: current } : m)))}
+              >⇥</button>
+              <button className={btn} disabled={markSel < 0} title="Löschen (Unterpunkte rücken hoch)" onClick={() => void setOutline(ol.remove(marks, markSel), -1)}>×</button>
+            </div>
+            <ul data-scroll className="flex-1 overflow-y-auto py-1 text-sm">
+              {marks.length === 0 && <li className="px-3 py-2 text-ink-2">Keine Lesezeichen</li>}
+              {marks.map((m, i) => (
+                <li key={i} style={{ paddingLeft: 8 + 14 * m.level }} className={`pr-2 ${i === markSel ? "bg-accent-soft" : ""}`}>
+                  {renaming === i ? (
+                    <input
+                      autoFocus
+                      defaultValue={m.title}
+                      aria-label="Titel"
+                      className="w-full rounded-xs border border-line bg-surface px-1 text-ink"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        // Esc: alten Titel zurück, dann blur → onBlur speichert nichts
+                        if (e.key === "Escape") {
+                          e.currentTarget.value = m.title;
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const t = e.currentTarget.value.trim();
+                        setRenaming(-1);
+                        if (t && t !== m.title) void setOutline(marks.map((x, k) => (k === i ? { ...x, title: t } : x)));
+                      }}
+                    />
+                  ) : (
+                    <button
+                      className="w-full truncate py-0.5 text-left text-ink-2 hover:text-ink"
+                      title={m.page >= 0 ? `${m.title} – Seite ${m.page + 1} (Doppelklick: umbenennen)` : `${m.title} – ohne Ziel`}
+                      onClick={() => {
+                        setMarkSel(i);
+                        if (m.page >= 0) goTo(m.page);
+                      }}
+                      onDoubleClick={() => setRenaming(i)}
+                    >{m.title || "–"}</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
         <nav
           data-scroll
-          className="flex w-40 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
+          className="flex w-40 min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
           onPointerMove={navMove}
           onPointerUp={navUp}
           onPointerCancel={navUp}
@@ -588,6 +714,31 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
             />
           ))}
         </nav>
+        )}
+        </div>
+        {mdEdit && (
+          <div className="absolute inset-4 z-20 flex flex-col gap-2 rounded-xs border border-line bg-surface p-3">
+            <div className="text-sm text-ink-2">
+              {mdEdit.insert ? `Neue Markdown-Seite nach Seite ${mdEdit.page}` : `Markdown-Seite ${mdEdit.page + 1}`} – # Überschrift, - Liste, 1. Liste, &gt; Zitat, ``` Code, ---
+            </div>
+            <textarea
+              autoFocus
+              value={mdEdit.source}
+              aria-label="Markdown"
+              spellCheck={false}
+              className="flex-1 resize-none rounded-xs border border-line bg-sunken p-2 font-mono text-sm text-ink"
+              onChange={(e) => setMdEdit({ ...mdEdit, source: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && e.ctrlKey) void saveMarkdown();
+                if (e.key === "Escape") setMdEdit(undefined);
+              }}
+            />
+            <div className="flex justify-end gap-2">
+              <button className={btn} onClick={() => setMdEdit(undefined)}>Abbrechen (Esc)</button>
+              <button className={btn + on(true)} onClick={() => void saveMarkdown()}>Übernehmen (Strg+Enter)</button>
+            </div>
+          </div>
+        )}
         <main
           ref={scroller}
           data-scroll

@@ -157,11 +157,18 @@ fn scan(s: &[u8], base: Matrix, xobject: impl Fn(&[u8]) -> Option<Rect>) -> Vec<
     // laufender Pfad: Start-Byte, Punkte, Clip (`W`) → kein Objekt
     let mut path: Option<(usize, Vec<(f32, f32)>, bool)> = None;
     let mut out = Vec::new();
+    // Marked Content: `/PDFNoteFix BMC … EMC` (Vorlage, Markdown-Satz) ist fester Seiteninhalt, nicht wählbar
+    let mut marks: Vec<bool> = Vec::new();
     for op in ops(s) {
+        let fixed = marks.contains(&true);
         let n: Vec<f32> = op.args.iter().filter_map(|a| if let Arg::Num(v) = a { Some(*v) } else { None }).collect();
         let pts = |k: usize| n.chunks_exact(2).take(k).map(|p| (p[0], p[1])).collect::<Vec<_>>();
         let mut add_pts = |p: Vec<(f32, f32)>| path.get_or_insert((op.start, Vec::new(), false)).1.extend(p);
         match op.name {
+            b"BMC" | b"BDC" => marks.push(matches!(op.args.first(), Some(Arg::Name(n)) if n == crate::notebook::FIXED.as_bytes())),
+            b"EMC" => {
+                marks.pop();
+            }
             b"q" => stack.push((ctm.clone(), lw)),
             b"Q" => {
                 if let Some((m, w)) = stack.pop() {
@@ -189,7 +196,7 @@ fn scan(s: &[u8], base: Matrix, xobject: impl Fn(&[u8]) -> Option<Rect>) -> Vec<
             }
             b"S" | b"s" | b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" | b"n" => {
                 if let Some((start, pts, clip)) = path.take() {
-                    if !clip && op.name != b"n" && !pts.is_empty() {
+                    if !clip && !fixed && op.name != b"n" && !pts.is_empty() {
                         let stroke = matches!(op.name, b"S" | b"s" | b"B" | b"B*" | b"b" | b"b*");
                         let scale = (ctm.a * ctm.d - ctm.b * ctm.c).abs().sqrt();
                         let pad = if stroke { (lw * scale / 2.0).max(0.5) } else { 0.0 };
@@ -199,12 +206,12 @@ fn scan(s: &[u8], base: Matrix, xobject: impl Fn(&[u8]) -> Option<Rect>) -> Vec<
             }
             b"Do" => {
                 let name = op.args.iter().find_map(|a| if let Arg::Name(v) = a { Some(v.as_slice()) } else { None });
-                if let Some(r) = name.and_then(&xobject) {
+                if let Some(r) = name.and_then(&xobject).filter(|_| !fixed) {
                     let bbox = bounds(&[(r.x0, r.y0), (r.x1, r.y0), (r.x0, r.y1), (r.x1, r.y1)], &ctm, 0.0);
                     out.push(Found { start: op.start, end: op.end, bbox, ctm: ctm.clone() });
                 }
             }
-            b"BI" => {
+            b"BI" if !fixed => {
                 let bbox = bounds(&[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)], &ctm, 0.0);
                 out.push(Found { start: op.start, end: op.end, bbox, ctm: ctm.clone() });
             }
