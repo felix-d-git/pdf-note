@@ -4,7 +4,8 @@
 
 | Komponente | Version | Lizenz | Verwendung |
 |---|---|---|---|
-| MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex) | 0.8.0 | AGPL-3.0 | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/`: FreeType (FTL), HarfBuzz (MIT), jbig2dec (AGPL-3.0), lcms2 (MIT), libjpeg (IJG), OpenJPEG (BSD-2-Clause), zlib (Zlib); Feature `base14-fonts`: URW-Base-14-Schriften (Nimbus Sans/Roman/Mono, Standard Symbols, D050000L; AGPL-3.0 in der MuPDF-Distribution); beim Bearbeiten von PDF-Text als Ersatzschrift vollständig in die bearbeitete PDF eingebettet |
+| MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex) | 0.8.0 | AGPL-3.0 | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/`: FreeType (FTL), HarfBuzz (MIT), jbig2dec (AGPL-3.0), lcms2 (MIT), libjpeg (IJG), OpenJPEG (BSD-2-Clause), zlib (Zlib); Feature `tesseract`: Tesseract OCR (Apache-2.0), Leptonica (BSD-2-Clause); Feature `base14-fonts`: URW-Base-14-Schriften (Nimbus Sans/Roman/Mono, Standard Symbols, D050000L; AGPL-3.0 in der MuPDF-Distribution); beim Bearbeiten von PDF-Text als Ersatzschrift vollständig in die bearbeitete PDF eingebettet |
+| Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`) |
 | Tauri (`tauri`, `tauri-build`, `@tauri-apps/api`, `@tauri-apps/cli`) | 2.x | MIT OR Apache-2.0 | Desktop-Shell (WebView2) |
 | Tauri Dialog-Plugin (`tauri-plugin-dialog`, `@tauri-apps/plugin-dialog`), darunter `rfd` 0.16 (MIT) | 2.8 | MIT OR Apache-2.0 | Datei-Öffnen-Dialog, Nachfrage beim Schließen |
 | serde | 1.0 | MIT OR Apache-2.0 | Objekte vom Frontend deserialisieren |

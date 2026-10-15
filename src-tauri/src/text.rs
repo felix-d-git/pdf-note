@@ -56,7 +56,7 @@ fn font_name(n: &str) -> String {
 }
 
 /// Seitenraum der PDF → App-Koordinaten (wie `orig`).
-fn base_matrix(page: &PdfPage) -> Result<Matrix, Error> {
+pub(crate) fn base_matrix(page: &PdfPage) -> Result<Matrix, Error> {
     let b = page.bounds()?;
     Ok(mul(&page.ctm()?, &Matrix::new_translate(-b.x0, -b.y0)))
 }

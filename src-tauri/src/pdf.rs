@@ -409,6 +409,8 @@ pub enum PageOp {
     Link { from: i32, rect: [f32; 4], to: i32, x: f32, y: f32 },
     /// `n`-ten Link einer Seite löschen
     Unlink { page: i32, n: usize },
+    /// Text auf allen Seiten ohne Text erkennen (OCR), unsichtbar einbetten
+    Ocr,
 }
 
 /// Ergebnis einer Seitenoperation: eingefügte Seiten (für Objekt-Umnummerierung im Frontend)
@@ -501,6 +503,7 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         }
         PageOp::Outline { marks } => crate::notebook::set_outline(doc, marks).map(|_| OpResult::default()),
         PageOp::Link { from, rect, to, x, y } => crate::nav::link(doc, *from, *rect, *to, *x, *y).map(|_| OpResult::default()),
+        PageOp::Ocr => Ok(OpResult { warning: crate::ocr::ocr(doc)?, ..Default::default() }),
         PageOp::Unlink { page, n } if idx_ok(*page) => crate::nav::unlink(doc, *page, *n).map(|_| OpResult::default()),
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),

@@ -679,6 +679,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         <button className={btn} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} title="PDF hinten anhängen">PDF anhängen</button>
         <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} title="Bild als Seite nach der aktuellen">Bild</button>
         <button className={btn} onClick={rotate} title="Aktuelle Seite 90° drehen">⟳</button>
+        <button className={btn} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} title="Text gescannter Seiten erkennen (lokal, macht sie durchsuchbar)">OCR</button>
         <button className={btn} onClick={deletePage} disabled={sizes.length < 2} title="Aktuelle Seite löschen">Seite −</button>
         {sep}
         <button className={btn} onClick={() => applyZoom(zoom / 1.2)}>−</button>
