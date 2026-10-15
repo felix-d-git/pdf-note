@@ -390,6 +390,10 @@ pub enum PageOp {
     Orig { page: i32, edits: Vec<crate::orig::Edit> },
     /// Original-Textabsatz ändern/verschieben
     Text { page: i32, edit: crate::text::TextEdit },
+    /// Formularfeld ausfüllen
+    Field { page: i32, xref: i32, value: String },
+    /// Formularfeld anlegen
+    NewField { page: i32, field: crate::form::NewField },
 }
 
 /// Ergebnis einer Seitenoperation: eingefügte Seiten (für Objekt-Umnummerierung im Frontend)
@@ -474,6 +478,9 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             Ok(OpResult::default())
         }
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
+        PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
+        PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
+        PageOp::Field { .. } | PageOp::NewField { .. } => Err("ungültige Seite".into()),
     }
 }
 

@@ -1,3 +1,4 @@
+pub mod form;
 pub mod orig;
 pub mod pdf;
 pub mod text;
@@ -226,6 +227,12 @@ async fn text_paragraphs(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Re
     w.run(move |d| text::paragraphs(&doc(d, id)?.doc, index)).await
 }
 
+/// Formularfelder einer Seite.
+#[tauri::command]
+async fn form_fields(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<form::Field>, String> {
+    w.run(move |d| form::fields(&doc(d, id)?.doc, index)).await
+}
+
 /// Undo/Redo von Seitenoperationen: Stand `rev` laden.
 #[tauri::command]
 async fn goto_rev(w: tauri::State<'_, Worker>, id: u32, rev: usize) -> Result<Vec<[f32; 2]>, String> {
@@ -252,7 +259,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, goto_rev, read_image, startup_path])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, goto_rev, read_image, startup_path])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }
