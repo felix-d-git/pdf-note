@@ -1,0 +1,33 @@
+# Windows-Build + Checks. Kein Release-Upload, keine Secrets.
+# npm run test:data fehlt bewusst: testdata/pdfs/ ist gitignored.
+name: windows
+
+on:
+  push:
+    branches: [second, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # .cargo/config.toml zeigt auf den lokalen Temp-Pfad; LIBCLANG_PATH passt (LLVM ist im Runner-Image)
+      CARGO_TARGET_DIR: ${{ github.workspace }}\target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> ../target
+      - run: npm ci
+      - run: npm run check
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: npm run tauri build
