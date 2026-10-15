@@ -1,7 +1,7 @@
 {
   "name": "pdf-note",
   "private": true,
-  "version": "0.0.1",
+  "version": "1.0.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "check": "tsc && tsc -p tsconfig.node.json && eslint . && vitest run --passWithNoTests",
     "test:data": "cargo test --manifest-path src-tauri/Cargo.toml --test data -- --ignored --nocapture",
+    "check:laufzeit": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/laufzeit-check.ps1",
     "tauri": "tauri"
   },
   "dependencies": {
