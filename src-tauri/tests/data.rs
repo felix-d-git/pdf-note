@@ -112,7 +112,7 @@ fn alle_schreibpfade() {
         // Seitenoperationen
         let mut d = pdf::open(&copy).unwrap();
         pdf::take_own(&d, 0..pages).unwrap();
-        pdf::page_op(&mut d, &PageOp::Blank { at: 0, width: 595.0, height: 842.0 }).unwrap();
+        pdf::page_op(&mut d, &PageOp::Blank { at: 0, width: 595.0, height: 842.0, template: None }).unwrap();
         pdf::page_op(&mut d, &PageOp::Rotate { index: 1 }).unwrap();
         pdf::page_op(&mut d, &PageOp::Move { from: 0, to: pages }).unwrap();
         let r = pdf::page_op(&mut d, &PageOp::InsertFile { at: pages + 1, path: copy.clone() }).unwrap();
@@ -160,9 +160,9 @@ fn zwei_dokumente_gleichzeitig() {
     let (na, nb) = (sa.sizes.len(), sb.sizes.len());
 
     // A: Seite einfügen und rückgängig; B: Seite einfügen und behalten
-    let r = a.page_op(&PageOp::Blank { at: 0, width: 595.0, height: 842.0 }).unwrap();
+    let r = a.page_op(&PageOp::Blank { at: 0, width: 595.0, height: 842.0, template: None }).unwrap();
     assert_eq!(r.sizes.len(), na + 1);
-    b.page_op(&PageOp::Blank { at: 0, width: 595.0, height: 842.0 }).unwrap();
+    b.page_op(&PageOp::Blank { at: 0, width: 595.0, height: 842.0, template: None }).unwrap();
     a.load(0).unwrap();
     assert_eq!(a.sizes().unwrap().len(), na, "A: Undo");
     assert_eq!(b.sizes().unwrap().len(), nb + 1, "B: von Undo in A betroffen");
@@ -422,4 +422,61 @@ fn formular() {
     assert_eq!(original, std::fs::read(&src).unwrap(), "Original verändert");
     let extra: Vec<_> = std::fs::read_dir(&solo).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(extra.len(), 1, "Zusatzdatei neben der PDF: {extra:?}");
+}
+
+/// Notizbuch an jeder Test-PDF: Vorlagenseiten + Markdown-Seite + Lesezeichen anhängen, speichern, neu öffnen.
+/// Original-Seiten unverändert, vorhandene Gliederung bleibt beim Neuschreiben gleich, keine Zusatzdatei.
+#[test]
+#[ignore]
+fn notizbuch() {
+    use pdf::PageOp;
+    use pdf_note_lib::notebook::{markdown, outline, Mark, Template};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-notebook");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let count = texts.len() as i32;
+        // vorhandene Gliederung unverändert zurückschreiben
+        let old = outline(&doc).unwrap();
+        if !old.is_empty() {
+            pdf::page_op(&mut doc, &PageOp::Outline { marks: old.clone() }).unwrap();
+            assert_eq!(outline(&doc).unwrap(), old, "{}: Gliederung", src.display());
+        }
+        for (i, t) in [Template::Lined, Template::Grid, Template::Dots].into_iter().enumerate() {
+            pdf::page_op(&mut doc, &PageOp::Blank { at: count + i as i32, width: 595.0, height: 842.0, template: Some(t) }).unwrap();
+        }
+        let md = "# Notiz\n\nText mit **fett** und Ümlaut.\n\n- eins\n- zwei\n";
+        pdf::page_op(&mut doc, &PageOp::Markdown { page: count + 3, source: md.into(), insert: true }).unwrap();
+        let mut marks = old.clone();
+        marks.push(Mark { title: "Notizen".into(), page: count, level: 0 });
+        marks.push(Mark { title: "Markdown".into(), page: count + 3, level: 1 });
+        pdf::page_op(&mut doc, &PageOp::Outline { marks: marks.clone() }).unwrap();
+        pdf::save(&doc, &[], &copy, false).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = page_texts(&doc).unwrap();
+        assert_eq!(after.len() as i32, count + 4, "{}: Seitenzahl", src.display());
+        assert_eq!(after[..texts.len()], texts[..], "{}: Original-Seiten", src.display());
+        assert!(after[count as usize + 3].contains("Ümlaut"), "{}: Markdown-Text", src.display());
+        assert_eq!(markdown(&doc, count + 3).unwrap().as_deref(), Some(md));
+        assert_eq!(outline(&doc).unwrap(), marks, "{}: Lesezeichen", src.display());
+        for i in count..count + 4 {
+            assert!(pdf_note_lib::orig::boxes(&doc, i).unwrap().is_empty(), "{}: Seite {i} wählbar", src.display());
+        }
+        println!("{}: OK", src.display());
+        n += 1;
+    }
+    let files = std::fs::read_dir(&solo).unwrap().count();
+    assert_eq!(files, n, "Zusatzdateien neben den PDFs");
+    assert!(n > 0);
 }
