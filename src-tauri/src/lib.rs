@@ -1,4 +1,5 @@
 pub mod form;
+pub mod nav;
 pub mod notebook;
 pub mod orig;
 pub mod pdf;
@@ -246,6 +247,16 @@ async fn outline(w: tauri::State<'_, Worker>, id: u32) -> Result<Vec<notebook::M
     w.run(move |d| notebook::outline(&doc(d, id)?.doc)).await
 }
 
+#[tauri::command]
+async fn search(w: tauri::State<'_, Worker>, id: u32, query: String) -> Result<Vec<nav::Hit>, String> {
+    w.run(move |d| nav::search(&doc(d, id)?.doc, &query)).await
+}
+
+#[tauri::command]
+async fn links(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<nav::Anchor>, String> {
+    w.run(move |d| nav::links(&doc(d, id)?.doc, index)).await
+}
+
 /// Markdown-Quelltext einer Seite (`None` = keine Markdown-Seite).
 #[tauri::command]
 async fn page_markdown(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Option<String>, String> {
@@ -278,7 +289,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path, search, links])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }
