@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, hitTest, inPolygon, ItemData, fromData, movedIndex, normPressure,
+  afterDelete, afterInsert, afterMove, afterRotate, box, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, movedIndex, normPressure,
   savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -75,4 +75,14 @@ test("Speicherform passt zur Lade-Prüfung", () => {
   expect(back.points).toEqual(d.points);
   expect(() => ItemData.parse({ ...d, kind: "bogus" })).toThrow();
   expect(() => ItemData.parse({ ...d, points: [[NaN, 0, 0]] })).toThrow();
+});
+
+test("Bild-Objekt: mittig, Seitenverhältnis bleibt, auf max begrenzt; Format am Base64-Anfang", () => {
+  const it = imageItem(2, "iVBORw0KGgoAAA", 400, 200, 100, 100, 100);
+  expect(it.points.map(([x, y]) => [x, y])).toEqual([[50, 75], [150, 125]]);
+  expect(box(it)).toEqual({ x0: 50, y0: 75, x1: 150, y1: 125 });
+  expect(toData(it).image).toBe("iVBORw0KGgoAAA");
+  expect(imageMime(it.image ?? "")).toBe("image/png");
+  expect(imageMime("/9j/4AAQ")).toBe("image/jpeg");
+  expect(imageMime("R0lGOD")).toBeNull();
 });
