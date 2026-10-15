@@ -1,6 +1,7 @@
 pub mod form;
 pub mod nav;
 pub mod notebook;
+pub mod ocr;
 pub mod orig;
 pub mod pdf;
 pub mod text;
@@ -289,6 +290,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
+        .setup(|app| {
+            use tauri::Manager;
+            let _ = ocr::TESSDATA.set(app.path().resource_dir()?.join("tessdata"));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path, search, links])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
