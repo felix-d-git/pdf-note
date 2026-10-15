@@ -133,7 +133,7 @@ struct Found {
     ctm: Matrix,
 }
 
-fn mul(a: &Matrix, b: &Matrix) -> Matrix {
+pub(crate) fn mul(a: &Matrix, b: &Matrix) -> Matrix {
     let mut m = a.clone();
     m.concat(b.clone());
     m
@@ -216,7 +216,7 @@ fn scan(s: &[u8], base: Matrix, xobject: impl Fn(&[u8]) -> Option<Rect>) -> Vec<
 }
 
 /// Alle Content-Streams der Seite hintereinander.
-fn contents(page: &PdfPage) -> Result<Vec<u8>, Error> {
+pub(crate) fn contents(page: &PdfPage) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
     let Some(c) = page.object().get_dict("Contents")? else { return Ok(out) };
     if c.is_array()? {
