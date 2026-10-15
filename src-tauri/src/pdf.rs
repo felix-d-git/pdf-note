@@ -388,6 +388,8 @@ pub enum PageOp {
     Move { from: i32, to: i32 },
     /// Original-Objekte einer Seite verschieben/skalieren/löschen
     Orig { page: i32, edits: Vec<crate::orig::Edit> },
+    /// Original-Textabsatz ändern/verschieben
+    Text { page: i32, edit: crate::text::TextEdit },
 }
 
 /// Ergebnis einer Seitenoperation: eingefügte Seiten (für Objekt-Umnummerierung im Frontend)
@@ -396,6 +398,8 @@ pub enum PageOp {
 pub struct OpResult {
     pub inserted: i32,
     pub items: Vec<Item>,
+    /// Hinweis ans Frontend (Überlauf, Ersatzschrift, fehlende Zeichen)
+    pub warning: Option<String>,
 }
 
 const IMAGE_LONG_SIDE: f32 = 842.0; // Bildseite: lange Seite = A4-Höhe, Seitenverhältnis bleibt
@@ -427,7 +431,7 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
                 let n = doc.insert_pdf(&src, opts).map_err(err)?.page_count as i32;
                 copy_annots(doc, *at, &annots).map_err(err)?;
                 let items = take_own(doc, *at..*at + n).map_err(err)?;
-                Ok(OpResult { inserted: n, items })
+                Ok(OpResult { inserted: n, items, warning: None })
             } else {
                 let img = Image::from_bytes(&bytes).map_err(err)?;
                 let (w, h) = (img.width() as f32, img.height() as f32);
@@ -469,6 +473,7 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             crate::orig::edit(doc, *page, edits)?;
             Ok(OpResult::default())
         }
+        PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
     }
 }
 

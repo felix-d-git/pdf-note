@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { z } from "zod";
 import {
   box, drawItems, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, scaleItem,
   TEXT_SIZE, textRect, unionBox, type InkPoint, type Item, type Preset,
@@ -87,7 +88,17 @@ type Gesture =
   | { t: "erase"; ids: Set<number> }
   | { t: "lasso"; poly: [number, number][] }
   | { t: "move"; x: number; y: number; dx: number; dy: number }
-  | { t: "scale"; ox: number; oy: number; d0: number; s: number };
+  | { t: "scale"; ox: number; oy: number; d0: number; s: number }
+  | { t: "para"; i: number; x: number; y: number; dx: number; dy: number };
+
+/** Erkannter Textabsatz der PDF (Backend `text_paragraphs`), Koordinaten in pt wie die Objekte. */
+const Para = z.object({
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]), text: z.string(), font: z.string(), size: z.number(),
+  color: z.tuple([z.number(), z.number(), z.number()]),
+});
+type Para = z.infer<typeof Para>;
+/** Änderung an Absatz `para`; `size`/`font` nur, wenn gewählt (erzwingt Ersatzschrift). */
+export interface TextEdit { para: number; text: string; dx?: number; dy?: number; size?: number; font?: "sans" | "serif" | "mono" }
 
 /** Kleinstes Objekt, dessen Box den Punkt enthält (Klick auf überlappende Original-Objekte). */
 function smallestAt(its: Item[], x: number, y: number) {
@@ -105,6 +116,7 @@ export interface PageProps {
   onSelect: (page: number, ids: number[]) => void;
   /** Original-Objekte der PDF ändern (matrix fehlt → löschen), dazu eigene Objekte – ein Schritt */
   onOrig: (edits: OrigEdit[], next: Item[]) => void;
+  onText: (edit: TextEdit) => void;
 }
 
 export interface OrigEdit { index: number; matrix?: number[] }
@@ -138,6 +150,22 @@ export function PageView(p: PageProps) {
     id: -1 - i, page: index, kind: "image", color: [0, 0, 0], opacity: 1, size: 0, simulated: false,
     points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
   })) : [];
+  // Textabsätze der PDF (nur PDF-Text-Werkzeug), ebenfalls je Stand
+  const [paras, setParas] = useState<{ v: number; list: Para[] }>({ v: -1, list: [] });
+  const [pedit, setPedit] = useState<number>();
+  const textOn = tool === "pdftext" && visible;
+  useEffect(() => {
+    if (!textOn) return;
+    let live = true;
+    invoke("text_paragraphs", { id: doc, index }).then(
+      (r) => live && setParas({ v: version, list: z.array(Para).parse(r) }),
+      () => live && setParas({ v: version, list: [] }),
+    );
+    return () => void (live = false);
+  }, [doc, index, version, textOn]);
+  const plist = textOn && paras.v === version ? paras.list : [];
+  const paraAt = (x: number, y: number) => plist.findIndex(({ bbox: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
+
   const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
   const transform = (it: Item) =>
     !selected.includes(it.id) ? it
@@ -196,7 +224,7 @@ export function PageView(p: PageProps) {
 
   // Stift-Spitze/linke Maustaste nach Werkzeug, gebundene Stifttasten temporär; Finger geht an den Scroll-Container.
   const down = (e: React.PointerEvent) => {
-    if (e.pointerType === "touch" || (e.target as Element).closest("textarea")) return;
+    if (e.pointerType === "touch" || (e.target as Element).closest("textarea, [data-pedit]")) return;
     const t = toolFor(e, tool, settings);
     if (!t || g.current) return;
     owner.current = e.pointerId;
@@ -210,6 +238,12 @@ export function PageView(p: PageProps) {
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (t === "pdftext") {
+      const i = paraAt(x, y);
+      setPedit(undefined);
+      if (i >= 0) g.current = { t: "para", i, x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
     if (t === "pen" || t === "marker") {
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, q, e.pointerType !== "pen");
       g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
@@ -268,6 +302,7 @@ export function PageView(p: PageProps) {
         c.poly.push([x, y]);
         break;
       case "move":
+      case "para":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
       case "scale":
@@ -311,6 +346,13 @@ export function PageView(p: PageProps) {
       case "move":
         if (c.dx || c.dy) commit((it) => moveItem(it, c.dx, c.dy), [1, 0, 0, 1, c.dx, c.dy]);
         break;
+      case "para": {
+        const para = plist[c.i];
+        // kurzes Zucken = Klick → bearbeiten
+        if (para && Math.hypot(c.dx, c.dy) * zoom > 3) p.onText({ para: c.i, text: para.text, dx: c.dx, dy: c.dy });
+        else setPedit(c.i);
+        break;
+      }
       case "scale":
         if (c.s !== 1) commit((it) => scaleItem(it, c.ox, c.oy, c.s), [c.s, 0, 0, c.s, c.ox * (1 - c.s), c.oy * (1 - c.s)]);
         break;
@@ -343,6 +385,20 @@ export function PageView(p: PageProps) {
     else p.onReplace([next]);
   };
 
+  const submitPara = (f: HTMLFormElement) => {
+    const para = pedit === undefined ? undefined : plist[pedit];
+    setPedit(undefined);
+    if (!para || pedit === undefined) return;
+    const d = new FormData(f);
+    const text = String(d.get("text") ?? "");
+    const font = String(d.get("font") ?? "");
+    const size = Number(d.get("size"));
+    const edit: TextEdit = { para: pedit, text };
+    if (font === "sans" || font === "serif" || font === "mono") edit.font = font;
+    if (Number.isFinite(size) && Math.abs(size - para.size) > 0.05) edit.size = size;
+    if (text !== para.text || edit.font || edit.size) p.onText(edit);
+  };
+
   const sb = sel.length ? unionBox(sel.map(transform)) : null;
   const lasso = gs?.t === "lasso" ? gs.poly : null;
   const hoverD = hover && (hover.tool === "eraser" ? 2 * ERASER_PX
@@ -353,7 +409,7 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" ? "text" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : "crosshair" }}
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
@@ -395,6 +451,48 @@ export function PageView(p: PageProps) {
           }}
         />
       ) : null}
+      {plist.map(({ bbox: [x0, y0, x1, y1] }, i) => {
+        const m = gs?.t === "para" && gs.i === i ? gs : { dx: 0, dy: 0 };
+        return (
+          <div
+            key={i}
+            className={`pointer-events-none absolute border border-dashed ${m.dx || m.dy || pedit === i ? "border-accent" : "border-accent/30"}`}
+            style={{ left: (x0 + m.dx) * zoom - 2, top: (y0 + m.dy) * zoom - 2, width: (x1 - x0) * zoom + 4, height: (y1 - y0) * zoom + 4 }}
+          />
+        );
+      })}
+      {pedit !== undefined && plist[pedit] && (() => {
+        const { bbox: [x0, , x1, y1], text, size } = plist[pedit];
+        return (
+          <form
+            data-pedit
+            className="absolute z-10 flex flex-col gap-1 rounded-xs bg-surface p-2 text-sm shadow-raised"
+            style={{ left: x0 * zoom, top: y1 * zoom + 6, width: Math.max(260, (x1 - x0) * zoom) }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitPara(e.currentTarget);
+            }}
+            onKeyDown={(e) => {
+              e.stopPropagation(); // Strg+Z, Werkzeug-Kürzel gehören dem Formular
+              if (e.key === "Escape") setPedit(undefined);
+              if (e.key === "Enter" && e.ctrlKey) e.currentTarget.requestSubmit();
+            }}
+          >
+            <textarea name="text" autoFocus defaultValue={text} rows={Math.min(12, Math.ceil(text.length / 60) + 1)} className="resize-y rounded-xs border border-line bg-transparent p-1" />
+            <div className="flex items-center gap-2">
+              <select name="font" defaultValue="" title="Schrift" className="rounded-xs border border-line bg-transparent">
+                <option value="">Original</option>
+                <option value="sans">Sans</option>
+                <option value="serif">Serif</option>
+                <option value="mono">Mono</option>
+              </select>
+              <input name="size" type="number" min={2} max={500} step={0.5} defaultValue={Math.round(size * 10) / 10} title="Größe (pt)" className="w-16 rounded-xs border border-line bg-transparent" />
+              <button type="button" className="ml-auto" onClick={() => setPedit(undefined)}>Abbrechen</button>
+              <button type="submit" className="text-accent" title="Strg+Enter">OK</button>
+            </div>
+          </form>
+        );
+      })()}
       {edit && (() => {
         const { x0, y0 } = box(edit.item);
         const fs = edit.item.size * zoom;

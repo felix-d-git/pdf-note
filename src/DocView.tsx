@@ -6,12 +6,13 @@ import {
   afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
   moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
 } from "./ink";
-import { PageView, Thumb, type OrigEdit } from "./PageView";
+import { PageView, Thumb, type OrigEdit, type TextEdit } from "./PageView";
 import { type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
   sizes: Sizes, rev: z.number().int().nonnegative(), inserted: z.number().int().nonnegative(), items: z.array(ItemData),
+  warning: z.string().nullish(),
 });
 const clampZoom = (z: number) => Math.min(6, Math.max(0.2, z));
 const A4: [number, number] = [595, 842];
@@ -38,6 +39,7 @@ const TOOL_LABELS: [Tool, string, string, string][] = [
   ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
   ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren", "a"], ["text", "Text", "Textfeld", "t"], ["line", "╱", "Linie", "l"],
   ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
+  ["pdftext", "PDF-Text", "Text der PDF: Klick bearbeitet den Absatz, Ziehen verschiebt ihn", "b"],
 ];
 const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
 
@@ -149,7 +151,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       }));
       setVersion((v) => v + 1);
       clearSel();
-      setError(undefined);
+      setError(r.warning ? `Hinweis: ${r.warning}` : undefined);
     } catch (e) {
       setError(`Seitenoperation fehlgeschlagen: ${String(e)}`);
     } finally {
@@ -586,6 +588,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
                 onSelect={(page, ids) => setSelection({ page, ids })}
                 onOrig={(edits, next) => origOp(i, edits, next)}
+                onText={(edit: TextEdit) => void pageOp({ op: "text", page: i, edit }, (its) => its)}
               />
             ))}
           </div>

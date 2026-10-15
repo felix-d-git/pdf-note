@@ -286,3 +286,59 @@ fn original_objekte() {
     }
     assert!(n > 0, "keine PDFs mit Original-Objekten in {}", dir.display());
 }
+
+#[test]
+#[ignore]
+fn text_bearbeiten() {
+    use pdf::PageOp;
+    use pdf_note_lib::text::{paragraphs, TextEdit};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-text");
+    let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    for f in ["latex.pdf", "word.pdf"] {
+        let src = dir.join(f);
+        let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(f);
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let annots = |d: &PdfDocument| d.load_pdf_page(0).unwrap().annotations().count();
+        let n_annots = annots(&doc);
+        let before = paragraphs(&doc, 0).unwrap();
+        // Fließtext-Absatz (≥ 2 Zeilen, ≥ 8 Wörter): zwei Wörter mehr; einzeiliger Absatz: Sonderzeichen dazu
+        let body = before.iter().position(|p| p.text.split_whitespace().count() >= 8 && p.bbox[3] - p.bbox[1] > 1.8 * p.size).unwrap();
+        let single = before.iter().position(|p| p.bbox[3] - p.bbox[1] < 1.6 * p.size && p.text.len() > 3).unwrap();
+        let new_body = format!("{} zwei mehr", before[body].text);
+        let new_single = format!("{} Maß 5 €", before[single].text);
+        let mut warnings = Vec::new();
+        for (para, text) in [(body, &new_body), (single, &new_single)] {
+            // Absatzreihenfolge ändert sich nach jeder Änderung → Index neu bestimmen
+            let old = if para == body { &before[body].text } else { &before[single].text };
+            let i = paragraphs(&doc, 0).unwrap().iter().position(|p| &p.text == old).unwrap();
+            let edit = TextEdit { para: i, text: text.clone(), dx: 0.0, dy: 0.0, size: None, font: None };
+            warnings.push(pdf::page_op(&mut doc, &PageOp::Text { page: 0, edit }).unwrap().warning);
+        }
+        pdf::save(&doc, &[], &copy, false).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = paragraphs(&doc, 0).unwrap();
+        let all = words(&page_texts(&doc).unwrap()[0]);
+        for t in [&new_body, &new_single] {
+            assert!(all.contains(&words(t)), "{f}: neuer Text fehlt: {t}\n{all}");
+        }
+        for (i, p) in before.iter().enumerate().filter(|(i, _)| ![body, single].contains(i)) {
+            assert!(after.iter().any(|q| q.text == p.text), "{f}: Absatz {i} verändert: {}", p.text);
+        }
+        let t = page_texts(&doc).unwrap();
+        for i in 1..texts.len() {
+            assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
+        }
+        assert_eq!(annots(&doc), n_annots, "{f}: Annotationen");
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
+        println!("{f}: Absätze {body}+{single} geändert, Hinweise {warnings:?}, {} → {} Bytes", original.len(), std::fs::metadata(&copy).unwrap().len());
+    }
+}

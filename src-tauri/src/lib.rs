@@ -1,5 +1,6 @@
 pub mod orig;
 pub mod pdf;
+pub mod text;
 
 use mupdf::pdf::PdfDocument;
 use std::collections::HashMap;
@@ -42,7 +43,7 @@ impl Open {
         let items = pdf::take_own(&doc, 0..n).map_err(|e| e.to_string())?;
         let open = Open { path, doc, snaps: Vec::new(), rev: 0, stamp };
         let sizes = open.sizes()?;
-        Ok((open, PageState { sizes, rev: 0, inserted: 0, items }))
+        Ok((open, PageState { sizes, rev: 0, inserted: 0, items, warning: None }))
     }
 
     /// Kopie des Arbeitsdokuments + Objekte atomar schreiben. Ohne `target` in die offene PDF.
@@ -93,7 +94,7 @@ impl Open {
             }
             total -= s.take().map_or(0, |b| b.len());
         }
-        Ok(PageState { sizes: self.sizes()?, rev: self.rev, inserted: r.inserted, items: r.items })
+        Ok(PageState { sizes: self.sizes()?, rev: self.rev, inserted: r.inserted, items: r.items, warning: r.warning })
     }
 
     pub fn load(&mut self, rev: usize) -> Result<(), String> {
@@ -114,6 +115,7 @@ pub struct PageState {
     pub rev: usize,
     pub inserted: i32,
     pub items: Vec<pdf::Item>,
+    pub warning: Option<String>,
 }
 
 /// Offene PDFs nach Tab-ID (vergibt das Frontend).
@@ -218,6 +220,12 @@ async fn orig_objects(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Resul
     w.run(move |d| orig::boxes(&doc(d, id)?.doc, index)).await
 }
 
+/// Erkannte Textabsätze einer Seite (Original-Text bearbeiten).
+#[tauri::command]
+async fn text_paragraphs(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<text::Para>, String> {
+    w.run(move |d| text::paragraphs(&doc(d, id)?.doc, index)).await
+}
+
 /// Undo/Redo von Seitenoperationen: Stand `rev` laden.
 #[tauri::command]
 async fn goto_rev(w: tauri::State<'_, Worker>, id: u32, rev: usize) -> Result<Vec<[f32; 2]>, String> {
@@ -244,7 +252,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, goto_rev, read_image, startup_path])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, goto_rev, read_image, startup_path])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }
