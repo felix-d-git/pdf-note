@@ -89,7 +89,8 @@ type Gesture =
   | { t: "lasso"; poly: [number, number][] }
   | { t: "move"; x: number; y: number; dx: number; dy: number }
   | { t: "scale"; ox: number; oy: number; d0: number; s: number }
-  | { t: "para"; i: number; x: number; y: number; dx: number; dy: number };
+  | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
+  | { t: "field"; x: number; y: number; dx: number; dy: number };
 
 /** Erkannter Textabsatz der PDF (Backend `text_paragraphs`), Koordinaten in pt wie die Objekte. */
 const Para = z.object({
@@ -97,6 +98,14 @@ const Para = z.object({
   color: z.tuple([z.number(), z.number(), z.number()]),
 });
 type Para = z.infer<typeof Para>;
+/** Formularfeld der PDF (Backend `form_fields`); Wert `on` = angehakt, sonst „Off". */
+const Field = z.object({
+  xref: z.number(), kind: z.enum(["text", "check", "radio", "combo", "list"]), name: z.string(),
+  rect: z.tuple([z.number(), z.number(), z.number(), z.number()]), value: z.string(), on: z.string(),
+  options: z.array(z.tuple([z.string(), z.string()])), readonly: z.boolean(), multiline: z.boolean(),
+});
+type Field = z.infer<typeof Field>;
+export interface NewField { kind: "text" | "check" | "combo"; name: string; rect: [number, number, number, number]; options: string[] }
 /** Änderung an Absatz `para`; `size`/`font` nur, wenn gewählt (erzwingt Ersatzschrift). */
 export interface TextEdit { para: number; text: string; dx?: number; dy?: number; size?: number; font?: "sans" | "serif" | "mono" }
 
@@ -117,6 +126,8 @@ export interface PageProps {
   /** Original-Objekte der PDF ändern (matrix fehlt → löschen), dazu eigene Objekte – ein Schritt */
   onOrig: (edits: OrigEdit[], next: Item[]) => void;
   onText: (edit: TextEdit) => void;
+  onField: (xref: number, value: string) => void;
+  onNewField: (f: NewField) => void;
 }
 
 export interface OrigEdit { index: number; matrix?: number[] }
@@ -164,6 +175,17 @@ export function PageView(p: PageProps) {
     return () => void (live = false);
   }, [doc, index, version, textOn]);
   const plist = textOn && paras.v === version ? paras.list : [];
+  // Formularfelder: alte Liste bleibt bis zur neuen stehen, sonst verlieren die Eingaben nach jedem Wert den Fokus (Tab)
+  const [fields, setFields] = useState<Field[]>([]);
+  const [newf, setNewf] = useState<NewField["rect"]>();
+  const formOn = tool === "form" && visible;
+  useEffect(() => {
+    if (!formOn) return;
+    let live = true;
+    invoke("form_fields", { id: doc, index }).then((r) => live && setFields(z.array(Field).parse(r)), () => live && setFields([]));
+    return () => void (live = false);
+  }, [doc, index, version, formOn]);
+  const flist = formOn ? fields : [];
   const paraAt = (x: number, y: number) => plist.findIndex(({ bbox: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
 
   const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
@@ -224,7 +246,7 @@ export function PageView(p: PageProps) {
 
   // Stift-Spitze/linke Maustaste nach Werkzeug, gebundene Stifttasten temporär; Finger geht an den Scroll-Container.
   const down = (e: React.PointerEvent) => {
-    if (e.pointerType === "touch" || (e.target as Element).closest("textarea, [data-pedit]")) return;
+    if (e.pointerType === "touch" || (e.target as Element).closest("textarea, [data-pedit], [data-field]")) return;
     const t = toolFor(e, tool, settings);
     if (!t || g.current) return;
     owner.current = e.pointerId;
@@ -238,6 +260,11 @@ export function PageView(p: PageProps) {
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (t === "form") {
+      setNewf(undefined);
+      g.current = { t: "field", x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
     if (t === "pdftext") {
       const i = paraAt(x, y);
       setPedit(undefined);
@@ -303,6 +330,7 @@ export function PageView(p: PageProps) {
         break;
       case "move":
       case "para":
+      case "field":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
       case "scale":
@@ -353,6 +381,11 @@ export function PageView(p: PageProps) {
         else setPedit(c.i);
         break;
       }
+      case "field":
+        if (Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3) {
+          setNewf([Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
+        }
+        break;
       case "scale":
         if (c.s !== 1) commit((it) => scaleItem(it, c.ox, c.oy, c.s), [c.s, 0, 0, c.s, c.ox * (1 - c.s), c.oy * (1 - c.s)]);
         break;
@@ -399,6 +432,15 @@ export function PageView(p: PageProps) {
     if (text !== para.text || edit.font || edit.size) p.onText(edit);
   };
 
+  const submitField = (f: HTMLFormElement) => {
+    setNewf(undefined);
+    const d = new FormData(f);
+    const kind = String(d.get("kind"));
+    const options = String(d.get("options") ?? "").split("\n").map((o) => o.trim()).filter(Boolean);
+    if (newf && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect: newf, options });
+  };
+  const fieldBox = gs?.t === "field" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
+
   const sb = sel.length ? unionBox(sel.map(transform)) : null;
   const lasso = gs?.t === "lasso" ? gs.poly : null;
   const hoverD = hover && (hover.tool === "eraser" ? 2 * ERASER_PX
@@ -409,7 +451,7 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : tool === "form" ? "cell" : "crosshair" }}
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
@@ -461,6 +503,75 @@ export function PageView(p: PageProps) {
           />
         );
       })}
+      {/* Felder in PDF-Reihenfolge → Tab springt zum nächsten; Haken/Punkt zeigt das Seitenbild, Eingabe liegt unsichtbar darüber */}
+      {flist.map((f) => {
+        const [x0, y0, x1, y1] = f.rect;
+        const style = { left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom, fontSize: Math.min(12 * zoom, (y1 - y0) * zoom * 0.7) };
+        const cls = "absolute rounded-xs outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed";
+        const key = `${f.xref}:${f.value}`;
+        const commit = (v: string) => v !== f.value && p.onField(f.xref, v);
+        if (f.kind === "check" || f.kind === "radio") {
+          return (
+            // gesteuert + Key ohne Wert: Radio-Gruppe teilt den Wert, sonst verlöre jeder Knopf der Gruppe den Fokus
+            <input key={f.xref} data-field type={f.kind === "check" ? "checkbox" : "radio"} name={`f${doc}-${index}-${f.name}`} title={f.name}
+              checked={f.value === f.on} disabled={f.readonly} className={`${cls} cursor-pointer appearance-none bg-accent/10`} style={style}
+              onChange={(e) => commit(e.currentTarget.checked ? f.on : "Off")} />
+          );
+        }
+        if (f.kind === "combo" || f.kind === "list") {
+          return (
+            <select key={key} data-field title={f.name} defaultValue={f.value} disabled={f.readonly} className={`${cls} bg-white text-black`} style={style}
+              onChange={(e) => commit(e.currentTarget.value)}>
+              {!f.options.some(([v]) => v === f.value) && <option value={f.value}>{f.value}</option>}
+              {f.options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+          );
+        }
+        const Tag = f.multiline ? "textarea" : "input";
+        return (
+          <Tag key={key} data-field title={f.name} defaultValue={f.value} disabled={f.readonly} className={`${cls} resize-none bg-white px-0.5 text-black`} style={style}
+            onBlur={(e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => commit(e.currentTarget.value)}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+              if (e.key === "Escape") e.currentTarget.value = f.value;
+              if (e.key === "Escape" || (e.key === "Enter" && (!f.multiline || e.ctrlKey))) e.currentTarget.blur();
+            }} />
+        );
+      })}
+      {fieldBox && (
+        <div className="pointer-events-none absolute border border-dashed border-accent"
+          style={fieldBox} />
+      )}
+      {newf && (
+        <>
+          <div className="pointer-events-none absolute border border-dashed border-accent"
+            style={{ left: newf[0] * zoom, top: newf[1] * zoom, width: (newf[2] - newf[0]) * zoom, height: (newf[3] - newf[1]) * zoom }} />
+          <form
+            data-pedit
+            className="absolute z-10 flex w-64 flex-col gap-1 rounded-xs bg-surface p-2 text-sm shadow-raised"
+            style={{ left: newf[0] * zoom, top: newf[3] * zoom + 6 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitField(e.currentTarget);
+            }}
+            onKeyDown={(e) => {
+              e.stopPropagation(); // Werkzeug-Kürzel gehören dem Formular
+              if (e.key === "Escape") setNewf(undefined);
+            }}
+          >
+            <select name="kind" defaultValue="text" className="rounded-xs border border-line bg-transparent">
+              <option value="text">Textfeld</option>
+              <option value="check">Checkbox</option>
+              <option value="combo">Auswahlliste</option>
+            </select>
+            <input name="name" required autoFocus placeholder="Name (eindeutig, ohne Punkt)" className="rounded-xs border border-line bg-transparent p-1" />
+            <textarea name="options" rows={3} placeholder="Optionen der Auswahlliste, eine je Zeile" className="resize-y rounded-xs border border-line bg-transparent p-1" />
+            <div className="flex gap-2">
+              <button type="button" className="ml-auto" onClick={() => setNewf(undefined)}>Abbrechen</button>
+              <button type="submit" className="text-accent">Anlegen</button>
+            </div>
+          </form>
+        </>
+      )}
       {pedit !== undefined && plist[pedit] && (() => {
         const { bbox: [x0, , x1, y1], text, size } = plist[pedit];
         return (

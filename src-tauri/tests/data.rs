@@ -342,3 +342,84 @@ fn text_bearbeiten() {
         println!("{f}: Absätze {body}+{single} geändert, Hinweise {warnings:?}, {} → {} Bytes", original.len(), std::fs::metadata(&copy).unwrap().len());
     }
 }
+
+/// Formular (Kopie von formular.pdf): vorhandene Felder ausfüllen + neue anlegen → speichern → neu öffnen:
+/// Werte da, neue Felder in AcroForm, Erscheinungsbild vorhanden; Text der Seiten unverändert.
+#[test]
+#[ignore]
+fn formular() {
+    use pdf::PageOp;
+    use pdf_note_lib::form::{fields, NewField};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-form");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let src = dir.join("formular.pdf");
+    let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+    let copy = solo.join("formular.pdf");
+    std::fs::copy(&src, &copy).unwrap();
+
+    let mut doc = pdf::open(&copy).unwrap();
+    let texts = page_texts(&doc).unwrap();
+    let all = fields(&doc, 0).unwrap();
+    for f in &all {
+        println!("{:?}", f);
+    }
+    // je Art das erste beschreibbare Feld ausfüllen
+    let mut want = Vec::new();
+    for kind in ["text", "check", "radio", "combo", "list"] {
+        let Some(f) = all.iter().find(|f| f.kind == kind && !f.readonly) else { continue };
+        let value = match kind {
+            "text" => "Grüße – Maß 5 €".to_string(),
+            "check" | "radio" => f.on.clone(),
+            _ => f.options.last().unwrap()[0].clone(),
+        };
+        pdf::page_op(&mut doc, &PageOp::Field { page: 0, xref: f.xref, value: value.clone() }).unwrap();
+        want.push((f.xref, value));
+    }
+    assert!(want.len() >= 2, "formular.pdf: zu wenige Feldarten");
+    let new = [("text", "Neu Text", vec![]), ("check", "Neu Haken", vec![]), ("combo", "Neu Liste", vec!["Eins".into(), "Zwei".into()])];
+    for (i, (kind, name, options)) in new.iter().enumerate() {
+        let y = 20.0 + 30.0 * i as f32;
+        let field = NewField { kind: kind.to_string(), name: name.to_string(), rect: [20.0, y, 160.0, y + 20.0], options: options.clone() };
+        pdf::page_op(&mut doc, &PageOp::NewField { page: 0, field }).unwrap();
+    }
+    // doppelter Name wird abgelehnt
+    let dup = NewField { kind: "text".into(), name: "Neu Text".into(), rect: [20.0, 200.0, 160.0, 220.0], options: vec![] };
+    assert!(pdf::page_op(&mut doc, &PageOp::NewField { page: 0, field: dup }).is_err());
+    pdf::save(&doc, &[], &copy, false).unwrap();
+
+    let mut doc = pdf::open(&copy).unwrap();
+    assert_eq!(page_texts(&doc).unwrap(), texts, "Seitentext verändert");
+    let after = fields(&doc, 0).unwrap();
+    for (xref, value) in &want {
+        let f = after.iter().find(|f| f.xref == *xref).unwrap();
+        assert_eq!(&f.value, value, "{}: Wert", f.name);
+        assert!(f.kind == "radio" || f.kind == "check" || doc.load_pdf_page(0).unwrap().load_widget(*xref).unwrap().unwrap().annotation().object().get_dict("AP").unwrap().is_some());
+    }
+    for (kind, name, _) in &new {
+        let f = after.iter().find(|f| f.name == *name).unwrap_or_else(|| panic!("{name} fehlt"));
+        assert_eq!(f.kind, *kind);
+        let o = doc.load_pdf_page(0).unwrap().load_widget(f.xref).unwrap().unwrap().annotation().object();
+        assert!(o.get_dict("AP").unwrap().is_some(), "{name}: kein Erscheinungsbild");
+    }
+    let acro = doc.catalog().unwrap().get_dict("AcroForm").unwrap().unwrap().get_dict("Fields").unwrap().unwrap();
+    let in_acro = (0..acro.len().unwrap() as i32).filter_map(|i| acro.get_array(i).unwrap()).filter_map(|o| o.get_dict("T").unwrap()).map(|t| t.as_string().unwrap()).collect::<Vec<_>>();
+    for (_, name, _) in &new {
+        assert!(in_acro.iter().any(|t| t == name), "{name} nicht in AcroForm/Fields");
+    }
+    // neues Feld ausfüllbar: Haken setzen, Liste wählen
+    let check = after.iter().find(|f| f.name == "Neu Haken").unwrap().clone();
+    assert_ne!(check.on, "Off");
+    pdf::page_op(&mut doc, &PageOp::Field { page: 0, xref: check.xref, value: check.on.clone() }).unwrap();
+    let combo = after.iter().find(|f| f.name == "Neu Liste").unwrap().clone();
+    assert_eq!(combo.options.len(), 2);
+    pdf::page_op(&mut doc, &PageOp::Field { page: 0, xref: combo.xref, value: "Zwei".into() }).unwrap();
+    let again = fields(&doc, 0).unwrap();
+    assert_eq!(again.iter().find(|f| f.xref == check.xref).unwrap().value, check.on);
+    assert_eq!(again.iter().find(|f| f.xref == combo.xref).unwrap().value, "Zwei");
+
+    assert_eq!(original, std::fs::read(&src).unwrap(), "Original verändert");
+    let extra: Vec<_> = std::fs::read_dir(&solo).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(extra.len(), 1, "Zusatzdatei neben der PDF: {extra:?}");
+}
