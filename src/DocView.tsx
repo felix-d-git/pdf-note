@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { z } from "zod";
 import {
   afterDelete, afterInsert, afterMove, afterRotate, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
   moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
 } from "./ink";
-import { PageView, Thumb, type OrigEdit, type TextEdit } from "./PageView";
+import { PageView, Thumb, type NewField, type OrigEdit, type TextEdit } from "./PageView";
 import { type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -40,10 +40,11 @@ const TOOL_LABELS: [Tool, string, string, string][] = [
   ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren", "a"], ["text", "Text", "Textfeld", "t"], ["line", "╱", "Linie", "l"],
   ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
   ["pdftext", "PDF-Text", "Text der PDF: Klick bearbeitet den Absatz, Ziehen verschiebt ihn", "b"],
+  ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
 ];
 const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
 
-const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
 const readUrl = (b: Blob) => new Promise<string>((res, rej) => {
   const r = new FileReader();
   r.onload = () => res(String(r.result));
@@ -158,6 +159,30 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       busy.current = false;
     }
   }
+
+  // Feldwerte nacheinander: pageOp verwirft Aufrufe, solange eine Operation läuft (Tab → nächstes Feld)
+  const fieldQ = useRef(Promise.resolve());
+  const fieldN = useRef(0);
+  // Strg+S im Feld: erst Wert übernehmen, gespeichert wird im ersten Render mit dem neuen Stand
+  const saveSoon = useRef(false);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  const setField = (page: number, xref: number, value: string) => {
+    fieldN.current++;
+    fieldQ.current = fieldQ.current
+      .then(async () => {
+        // Undo/Einfügen läuft noch → warten statt den Wert zu verwerfen
+        while (busy.current) await new Promise((r) => setTimeout(r, 50));
+        await pageOp({ op: "field", page, xref, value }, (its) => its);
+      })
+      .finally(() => {
+        if (--fieldN.current === 0 && saveSoon.current) rerender();
+      });
+  };
+  useEffect(() => {
+    if (!saveSoon.current || fieldN.current || busy.current) return;
+    saveSoon.current = false;
+    void save().catch(() => {});
+  });
 
   const insertBlank = () => {
     const at = Math.min(current + 1, sizes.length);
@@ -322,6 +347,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "s" && e.target instanceof HTMLElement && e.target.closest("[data-field]")) {
+        e.preventDefault();
+        e.target.blur(); // übernimmt den Wert (blur → setField, synchron)
+        if (fieldN.current || busy.current) saveSoon.current = true;
+        else void save().catch(() => {});
+        return;
+      }
       if (inField(e.target) || e.altKey || e.metaKey) return;
       const k = e.key.toLowerCase();
       const act: Record<string, () => void> = e.ctrlKey ? {
@@ -589,6 +621,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 onSelect={(page, ids) => setSelection({ page, ids })}
                 onOrig={(edits, next) => origOp(i, edits, next)}
                 onText={(edit: TextEdit) => void pageOp({ op: "text", page: i, edit }, (its) => its)}
+                onField={(xref, value) => setField(i, xref, value)}
+                onNewField={(field: NewField) => void pageOp({ op: "newField", page: i, field }, (its) => its)}
               />
             ))}
           </div>
