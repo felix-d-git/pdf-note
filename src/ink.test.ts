@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   afterDelete, afterInsert, afterMove, afterRotate, box, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
-  savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
+  rotateItem, savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
 const s = (p: number, simulated = false): Item => ({
@@ -94,4 +94,26 @@ test("Bild-Objekt: mittig, Seitenverhältnis bleibt, auf max begrenzt; Format am
   expect(imageMime(it.image ?? "")).toBe("image/png");
   expect(imageMime("/9j/4AAQ")).toBe("image/jpeg");
   expect(imageMime("R0lGOD")).toBeNull();
+});
+
+const round = (b: object) => Object.fromEntries(Object.entries(b).map(([k, v]) => [k, Math.round(v as number) + 0]));
+
+test("Bild drehen: Box umschließt die gedrehten Ecken, Mitte wandert mit", () => {
+  const img = { ...it("image", [[0, 0], [40, 20]]), image: "x" };
+  const r = rotateItem(img, 20, 10, 90); // um die eigene Mitte
+  expect(r.rot).toBe(90);
+  expect(round(box(r))).toEqual({ x0: 10, y0: -10, x1: 30, y1: 30 });
+  const o = rotateItem(img, 0, 0, -90); // um den Ursprung: Mitte (20,10) → (10,-20)
+  expect(o.rot).toBe(270);
+  expect(round(box({ ...o, rot: 0 }))).toEqual({ x0: -10, y0: -30, x1: 30, y1: -10 });
+  expect(hitTest(r, 20, 28, 1)).toBe(true);
+  // nicht-uniform skalieren: Breite mit geometrischem Mittel
+  expect(scaleItem(it("rect", [[0, 0], [10, 10]]), 0, 0, 4, 1).size).toBeCloseTo(2 * 2);
+});
+
+test("Highlight trifft nur seine Zeilenrechtecke", () => {
+  const h = it("highlight", [[0, 0], [100, 10], [0, 20], [30, 30]]);
+  expect(hitTest(h, 50, 5, 0)).toBe(true);
+  expect(hitTest(h, 80, 25, 0)).toBe(false);
+  expect(layerOf(h)).toBe(3);
 });

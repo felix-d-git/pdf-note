@@ -5,12 +5,13 @@ import { z } from "zod";
 export type InkPoint = [x: number, y: number, p: number];
 export type Rgb = [number, number, number];
 
-export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image"] as const;
+export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight"] as const;
 export type Kind = (typeof KINDS)[number];
 
 /**
  * Eigenes Objekt. Formen/Text: zwei Punkte (Ecken bzw. Anfang/Ende), damit Verschieben,
  * Skalieren und Seitendrehung für alle Arten gleich über die Punkte laufen.
+ * Highlight (Marker auf PDF-Text): Punkte paarweise = ein Rechteck je Textzeile.
  */
 export interface Item {
   id: number;
@@ -28,11 +29,13 @@ export interface Item {
   image?: string;
   /** Ebene 2 = Eingefügtes, 3 = Geschriebenes; fehlt → nach Art (`layerOf`) */
   layer?: 2 | 3;
+  /** Bild: Drehung in Grad im Uhrzeigersinn um die Mitte; Punkte = ungedrehtes Rechteck */
+  rot?: number;
 }
 
 /** Ebene 1 = PDF-Inhalt (keine eigenen Objekte), 2 = Elemente, 3 = Notizen */
 export type Layer = 1 | 2 | 3;
-export const kindLayer = (k: Kind): 2 | 3 => (k === "ink" || k === "marker" || k === "text" ? 3 : 2);
+export const kindLayer = (k: Kind): 2 | 3 => (k === "ink" || k === "marker" || k === "text" || k === "highlight" ? 3 : 2);
 export const layerOf = (it: Item): 2 | 3 => it.layer ?? kindLayer(it.kind);
 export type Stroke = Item;
 
@@ -55,11 +58,12 @@ export const ItemData = z.object({
   text: z.string(),
   image: z.string().optional(),
   layer: z.number().optional(),
+  rot: num.optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
   simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
-  layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind),
+  layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind), ...(d.rot ? { rot: d.rot } : {}),
 });
 
 export interface Preset {
@@ -122,19 +126,30 @@ export function savedWidth(s: Item): number {
 export const toData = (it: Item) => ({
   page: it.page, kind: it.kind, color: it.color, opacity: it.opacity, size: it.size,
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
-  ...(it.image ? { image: it.image } : {}), layer: layerOf(it),
+  ...(it.image ? { image: it.image } : {}), layer: layerOf(it), ...(it.rot ? { rot: it.rot } : {}),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
 export const lineHeight = (size: number) => size * 1.2;
 const TEXT_PAD = 2;
 
-/** Rechteck aus zwei Punkten, normiert. */
+/** Umschließendes Rechteck, normiert (gedrehtes Bild: um die gedrehten Ecken). */
 export function box(it: Item) {
   const xs = it.points.map((p) => p[0]), ys = it.points.map((p) => p[1]);
-  const pad = it.kind === "text" || it.kind === "image" ? 0 : it.size / 2;
-  return { x0: Math.min(...xs) - pad, y0: Math.min(...ys) - pad, x1: Math.max(...xs) + pad, y1: Math.max(...ys) + pad };
+  const pad = it.kind === "text" || it.kind === "image" || it.kind === "highlight" ? 0 : it.size / 2;
+  const b = { x0: Math.min(...xs) - pad, y0: Math.min(...ys) - pad, x1: Math.max(...xs) + pad, y1: Math.max(...ys) + pad };
+  if (!it.rot) return b;
+  const r = (it.rot * Math.PI) / 180, [c, s] = [Math.abs(Math.cos(r)), Math.abs(Math.sin(r))];
+  const [cx, cy, hw, hh] = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.x1 - b.x0) / 2, (b.y1 - b.y0) / 2];
+  const [ex, ey] = [hw * c + hh * s, hw * s + hh * c];
+  return { x0: cx - ex, y0: cy - ey, x1: cx + ex, y1: cy + ey };
 }
+
+/** Zeilenrechtecke eines Highlights */
+const pairs = (it: Item) => it.points.flatMap((a, i) => {
+  const b = it.points[i + 1];
+  return i % 2 === 0 && b ? [{ x0: Math.min(a[0], b[0]), y0: Math.min(a[1], b[1]), x1: Math.max(a[0], b[0]), y1: Math.max(a[1], b[1]) }] : [];
+});
 
 export function unionBox(items: Item[]) {
   const bs = items.map(box);
@@ -192,9 +207,16 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
     }
     case "image": {
       const img = image(it.image ?? "");
-      const { x0, y0, x1, y1 } = box(it);
-      if (img.complete) ctx.drawImage(img, x0, y0, x1 - x0, y1 - y0);
+      const { x0, y0, x1, y1 } = box({ ...it, rot: 0 });
+      if (!img.complete) return;
+      ctx.save();
+      ctx.translate((x0 + x1) / 2, (y0 + y1) / 2);
+      ctx.rotate(((it.rot ?? 0) * Math.PI) / 180);
+      ctx.drawImage(img, (x0 - x1) / 2, (y0 - y1) / 2, x1 - x0, y1 - y0);
+      return ctx.restore();
     }
+    case "highlight":
+      for (const r of pairs(it)) ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
   }
 }
 
@@ -278,10 +300,10 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
       return Math.abs(d - 1) * Math.min(rx, ry) <= r;
     }
     case "text":
-    case "image": {
-      const bx = box(it);
-      return x >= bx.x0 - tol && x <= bx.x1 + tol && y >= bx.y0 - tol && y <= bx.y1 + tol;
-    }
+    case "image":
+    case "highlight":
+      return (it.kind === "highlight" ? pairs(it) : [box(it)])
+        .some((bx) => x >= bx.x0 - tol && x <= bx.x1 + tol && y >= bx.y0 - tol && y <= bx.y1 + tol);
   }
 }
 
@@ -302,9 +324,23 @@ export const mapItem = (it: Item, f: (x: number, y: number) => [number, number],
 });
 
 export const moveItem = (it: Item, dx: number, dy: number) => mapItem(it, (x, y) => [x + dx, y + dy]);
-/** Gleichmäßig um (ox, oy) skalieren. */
-export const scaleItem = (it: Item, ox: number, oy: number, s: number) =>
-  mapItem(it, (x, y) => [ox + (x - ox) * s, oy + (y - oy) * s], s);
+/** Um (ox, oy) skalieren; Breite/Schriftgröße mit dem geometrischen Mittel. */
+export const scaleItem = (it: Item, ox: number, oy: number, sx: number, sy = sx) =>
+  mapItem(it, (x, y) => [ox + (x - ox) * sx, oy + (y - oy) * sy], Math.sqrt(sx * sy));
+/** Abbildung als PDF-Matrix [a, b, c, d, e, f] (x' = a·x + c·y + e) für Original-Objekte */
+export const scaleMatrix = (ox: number, oy: number, sx: number, sy: number) => [sx, 0, 0, sy, ox * (1 - sx), oy * (1 - sy)];
+export function rotMatrix(cx: number, cy: number, deg: number) {
+  const r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  return [c, s, -s, c, cx - c * cx + s * cy, cy - s * cx - c * cy];
+}
+/** Bild um (cx, cy) drehen: Mitte wandert mit, Bild dreht in sich (`rot`). */
+export function rotateItem(it: Item, cx: number, cy: number, deg: number): Item {
+  const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = rotMatrix(cx, cy, deg), bx = box({ ...it, rot: 0 });
+  const [mx, my] = [(bx.x0 + bx.x1) / 2, (bx.y0 + bx.y1) / 2];
+  const [nx, ny] = [a * mx + c * my + e, b * mx + d * my + f];
+  const rot = (((it.rot ?? 0) + deg) % 360 + 360) % 360;
+  return { ...moveItem(it, nx - mx, ny - my), rot };
+}
 
 // Seitenoperationen: Objekte mitnehmen
 export const afterInsert = (items: Item[], at: number, n: number) =>
