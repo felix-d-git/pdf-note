@@ -172,6 +172,10 @@ mod tests {
         }
         assert!(!crate::nav::search(&d, "Rechnung").unwrap().is_empty());
         assert_eq!(crate::pdf::render_png(&d, 0, 0.5).unwrap(), before, "Text muss unsichtbar sein");
+        // unsichtbarer OCR-Text: Seite bleibt Scan (Bild nicht wählbar), Text aber markierbar
+        assert!(crate::pdf::is_scan(&d, 0).unwrap());
+        let chars: String = crate::text::chars(&d, 0).unwrap().into_iter().map(|l| l.text).collect();
+        assert!(chars.contains("4711"), "{chars:?}");
         // zweiter Lauf: Seite hat jetzt Text → nichts doppelt
         assert!(ocr(&mut d).unwrap().unwrap().contains("bereits Text"));
     }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { PRESSURE_MAX } from "./ink";
 
-export const TOOLS = ["pen", "marker", "eraser", "lasso", "text", "line", "arrow", "rect", "ellipse", "pdftext", "form", "link"] as const;
+export const TOOLS = ["pen", "marker", "eraser", "lasso", "text", "line", "arrow", "rect", "ellipse", "form", "link"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Stifttaste: Zeigerart + Bitmaske aus PointerEvent.buttons (2 = Seitentaste, 32 = Radierer-Ende). */

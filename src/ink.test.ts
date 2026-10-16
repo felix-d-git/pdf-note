@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, movedIndex, normPressure,
+  afterDelete, afterInsert, afterMove, afterRotate, box, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
   savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -75,6 +75,15 @@ test("Speicherform passt zur Lade-Prüfung", () => {
   expect(back.points).toEqual(d.points);
   expect(() => ItemData.parse({ ...d, kind: "bogus" })).toThrow();
   expect(() => ItemData.parse({ ...d, points: [[NaN, 0, 0]] })).toThrow();
+});
+
+test("Ebene: gespeichert, alte Objekte ohne Angabe nach Art", () => {
+  expect(toData(it("arrow", [[1, 2], [3, 4]])).layer).toBe(2);
+  expect(toData({ ...it("arrow", [[1, 2], [3, 4]]), layer: 3 }).layer).toBe(3);
+  const old = { ...toData(it("marker", [[1, 2], [3, 4]])), layer: undefined };
+  expect(fromData(ItemData.parse(old)).layer).toBe(3);
+  expect(fromData(ItemData.parse({ ...old, kind: "rect", layer: 7 })).layer).toBe(2);
+  expect([layerOf(it("ink", [[0, 0]])), layerOf(it("text", [[0, 0]])), layerOf(it("image", [[0, 0]]))]).toEqual([3, 3, 2]);
 });
 
 test("Bild-Objekt: mittig, Seitenverhältnis bleibt, auf max begrenzt; Format am Base64-Anfang", () => {

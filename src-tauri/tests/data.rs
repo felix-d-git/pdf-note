@@ -40,7 +40,7 @@ fn b64(bytes: &[u8]) -> String {
 }
 
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new() }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0 }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -580,10 +580,61 @@ fn ocr_scan() {
             let word = after.iter().flat_map(|t| t.split_whitespace()).find(|w| w.chars().count() >= 4 && w.chars().all(char::is_alphanumeric));
             let word = word.unwrap_or_else(|| panic!("{name}: nichts erkannt ({:?})", r.warning));
             assert!(!pdf_note_lib::nav::search(&doc, word).unwrap().is_empty(), "{name}: „{word}“ nicht suchbar");
+            // Ebene 1: Scan-Bild bleibt unwählbar, OCR-Text ist markierbar
+            assert!(pdf::is_scan(&doc, 0).unwrap(), "{name}: nach OCR kein Scan mehr");
+            let chars: String = pdf_note_lib::text::chars(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+            assert!(chars.contains(word), "{name}: OCR-Text nicht markierbar");
         } else {
             assert_eq!(after, before, "{name}: Seiten mit Text verändert");
         }
         println!("{name}: OK ({:?})", r.warning);
     }
     assert!(solo.join("Gescannt.pdf").is_file() && std::fs::read_dir(&solo).unwrap().count() == 2, "Fremddateien neben der PDF");
+}
+
+/// Ebenen als echte PDF-Ebenen (OCGs): `/OC` je Annotation, nach Neu-Öffnen richtig, keine doppelten OCGs,
+/// flach ohne Ebenen.
+#[test]
+#[ignore]
+fn ebenen() {
+    use pdf::{Kind, LAYER_NAMES};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-ebenen");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let copy = solo.join("word.pdf");
+    std::fs::copy(dir.join("word.pdf"), &copy).unwrap();
+    let doc = pdf::open(&copy).unwrap();
+    let foreign = pdf::annotations(&doc, 0).unwrap().len();
+    let two = vec![[30.0, 30.0, 0.5], [120.0, 90.0, 0.5]];
+    let items = vec![
+        item(0, Kind::Ink, vec![[20.0, 20.0, 0.2], [60.0, 45.0, 0.5]], ""),
+        item(0, Kind::Rect, two.clone(), ""),
+        pdf::Item { layer: 3, ..item(0, Kind::Ellipse, two.clone(), "") },
+        item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz"),
+    ];
+    let want = [3, 2, 3, 3];
+    for round in 0..3 {
+        let d = pdf::open(&copy).unwrap();
+        let mut back = pdf::take_own(&d, 0..1).unwrap();
+        if round == 0 {
+            back = items.clone();
+        } else {
+            assert_eq!(back.iter().map(|it| it.layer).collect::<Vec<_>>(), want, "Ebenen nach Neu-Öffnen (Runde {round})");
+        }
+        pdf::save(&d, &back, &copy, false).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        assert_eq!(pdf::layer_names(&d).unwrap(), LAYER_NAMES.to_vec(), "doppelte/fehlende OCGs (Runde {round})");
+        let oc = pdf::annotation_layers(&d, 0).unwrap();
+        let own = &oc[oc.len() - items.len()..];
+        let exp: Vec<_> = want.iter().map(|l| Some(LAYER_NAMES[*l as usize - 2].to_string())).collect();
+        assert_eq!(own, &exp[..], "/OC je Annotation (Runde {round})");
+        assert!(oc[..foreign].iter().all(Option::is_none), "fremde Annotationen bekommen kein /OC");
+    }
+    let flat = solo.join("flach.pdf");
+    let d = pdf::open(&copy).unwrap();
+    let back = pdf::take_own(&d, 0..1).unwrap();
+    pdf::save(&d, &back, &flat, true).unwrap();
+    assert!(pdf::layer_names(&pdf::open(&flat).unwrap()).unwrap().is_empty(), "flach: Ebenen bleiben");
+    println!("word.pdf: Ebenen OK");
 }

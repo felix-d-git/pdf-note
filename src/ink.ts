@@ -26,7 +26,14 @@ export interface Item {
   text: string;
   /** Bild (kind "image"): PNG/JPEG als Base64, ohne data:-Präfix */
   image?: string;
+  /** Ebene 2 = Eingefügtes, 3 = Geschriebenes; fehlt → nach Art (`layerOf`) */
+  layer?: 2 | 3;
 }
+
+/** Ebene 1 = PDF-Inhalt (keine eigenen Objekte), 2 = Elemente, 3 = Notizen */
+export type Layer = 1 | 2 | 3;
+export const kindLayer = (k: Kind): 2 | 3 => (k === "ink" || k === "marker" || k === "text" ? 3 : 2);
+export const layerOf = (it: Item): 2 | 3 => it.layer ?? kindLayer(it.kind);
 export type Stroke = Item;
 
 const ORIGIN: InkPoint = [0, 0, 0];
@@ -47,10 +54,12 @@ export const ItemData = z.object({
   points: z.array(z.tuple([num, num, num])).min(1),
   text: z.string(),
   image: z.string().optional(),
+  layer: z.number().optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
   simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
+  layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind),
 });
 
 export interface Preset {
@@ -113,7 +122,7 @@ export function savedWidth(s: Item): number {
 export const toData = (it: Item) => ({
   page: it.page, kind: it.kind, color: it.color, opacity: it.opacity, size: it.size,
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
-  ...(it.image ? { image: it.image } : {}),
+  ...(it.image ? { image: it.image } : {}), layer: layerOf(it),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;

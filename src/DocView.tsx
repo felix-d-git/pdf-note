@@ -3,11 +3,11 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { z } from "zod";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
-  moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
+  afterDelete, afterInsert, afterMove, afterRotate, box, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
+  layerOf, MARKERS, moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Layer, type Preset,
 } from "./ink";
 import * as ol from "./outline";
-import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit } from "./PageView";
+import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
 import { type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -46,10 +46,17 @@ const TOOL_LABELS: [Tool, string, string, string][] = [
   ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
   ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren", "a"], ["text", "Text", "Textfeld", "t"], ["line", "╱", "Linie", "l"],
   ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
-  ["pdftext", "PDF-Text", "Text der PDF: Klick bearbeitet den Absatz, Ziehen verschiebt ihn", "b"],
   ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
   ["link", "Link", "Anker-Links: Rechteck ziehen, dann Zielstelle anklicken; Klick auf Link springt", "g"],
 ];
+/** Ebene, Symbol, Tooltip; Kürzel = Nummer */
+const LAYERS: [Layer, string, string][] = [
+  [1, "▤", "Ebene 1: PDF-Inhalt – Bilder wählen, Text markieren (Strg+C), Klick in Absatz bearbeitet ihn"],
+  [2, "◇", "Ebene 2: Elemente – Bilder, Formen, Linien"],
+  [3, "✎", "Ebene 3: Notizen – Stift, Marker, Textfelder"],
+];
+/** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, text: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, form: 1 };
 const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
 
 const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
@@ -90,6 +97,9 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [version, setVersion] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [tool, setTool] = useState<Tool>("pen");
+  const [layer, setLayer] = useState<Layer>(3);
+  /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
+  const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
   const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
   const [marker, setMarker] = useState<Preset>(MARKERS[0] ?? DEFAULT_PRESET);
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
@@ -127,6 +137,17 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       return push(h, { ...s, items: f(s.items) });
     });
   const clearSel = () => setSelection({ page: -1, ids: [] });
+  const switchLayer = (l: Layer) => {
+    if (l === layer) return;
+    setLayer(l);
+    clearSel();
+    setTextSel(null);
+  };
+  const chooseTool = (t: Tool) => {
+    setTool(t);
+    const l = TOOL_LAYER[t] ?? (t === "eraser" && layer === 1 ? 3 : undefined);
+    if (l) switchLayer(l);
+  };
 
   async function save(force = false): Promise<void> {
     // während Seitenoperation/Undo passen die Objekte nicht zum Seitenstand im Backend
@@ -322,11 +343,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   // Treffer passen nach Seitenoperation/Undo nicht mehr → ausblenden; nach Objekt-Änderungen bleiben sie stehen (ponytail)
   const hits = find && find.v === version ? find.hits : [];
 
-  /** Neue Objekte hinzufügen, auswählen, Lasso aktiv → gleich verschiebbar. */
+  /** Neue Objekte hinzufügen, auswählen, Lasso auf ihrer Ebene aktiv → gleich verschiebbar. */
   function place(added: Item[]) {
-    const page = added[0]?.page;
-    if (page === undefined) return;
+    const [first] = added;
+    if (!first) return;
+    const page = first.page;
     edit((its) => [...its, ...added]);
+    switchLayer(layerOf(first));
     setSelection({ page, ids: added.map((it) => it.id) });
     setTool("lasso");
   }
@@ -403,8 +426,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
 
   const removeSel = (ownOnly = false) => {
     const orig = selection.ids.filter((i) => i < 0).map((i) => ({ index: -1 - i }));
-    // Original-Objekte nur im Lasso: sonst unsichtbar ausgewählt
-    if (orig.length && !ownOnly && tool === "lasso") return origOp(selection.page, orig, [], selItems.map((it) => it.id));
+    // Original-Objekte nur auf Ebene 1: sonst unsichtbar ausgewählt
+    if (orig.length && !ownOnly && layer === 1) return origOp(selection.page, orig, [], selItems.map((it) => it.id));
     if (!selItems.length) return;
     const ids = new Set(selItems.map((it) => it.id));
     edit((its) => its.filter((it) => !ids.has(it.id)));
@@ -448,8 +471,11 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         y: () => void travel(hist.at + 1),
         a: () => {
           const page = Math.min(current, sizes.length - 1);
-          setSelection({ page, ids: items.filter((it) => it.page === page).map((it) => it.id) });
           setTool("lasso");
+          if (layer !== 1) return setSelection({ page, ids: items.filter((it) => it.page === page && layerOf(it) === layer).map((it) => it.id) });
+          const v = version;
+          invoke<number[][]>("orig_objects", { id, index: page }).then(
+            (b) => v === version && setSelection({ page, ids: b.map((_, i) => -1 - i) }), () => {});
         },
         "+": () => applyZoom(zoom * 1.2),
         "=": () => applyZoom(zoom * 1.2),
@@ -463,8 +489,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         escape: () => {
           setLinkFrom(undefined);
           clearSel();
+          setTextSel(null);
         },
-        ...Object.fromEntries(TOOL_LABELS.map(([t, , , key]) => [key, () => setTool(t)])),
+        ...Object.fromEntries(TOOL_LABELS.map(([t, , , key]) => [key, () => chooseTool(t)])),
+        ...Object.fromEntries(LAYERS.map(([l]) => [String(l), () => switchLayer(l)])),
       };
       const f = act[k];
       if (f) {
@@ -473,7 +501,14 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       }
     };
     const onCopy = (e: ClipboardEvent) => {
-      if (inField(e.target) || !selItems.length || !e.clipboardData) return;
+      if (inField(e.target) || !e.clipboardData) return;
+      // markierter PDF-Text (auch OCR) → nur Text; Ausschneiden geht nicht
+      if (!selItems.length && textSel?.text && textSel.v === version) {
+        e.preventDefault();
+        clip.text = null;
+        return e.clipboardData.setData("text/plain", textSel.text);
+      }
+      if (!selItems.length) return;
       e.preventDefault();
       clip.items = selItems;
       clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
@@ -624,7 +659,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         <button className={btn} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} title="Strg+Y">↷</button>
         {sep}
         {TOOL_LABELS.map(([t, label, title, key]) => (
-          <button key={t} className={btn + on(tool === t)} onClick={() => setTool(t)} title={`${title} (${key.toUpperCase()})`}>{label}</button>
+          <button key={t} className={btn + on(tool === t)} onClick={() => chooseTool(t)} title={`${title} (${key.toUpperCase()})`}>{label}</button>
+        ))}
+        {sep}
+        {LAYERS.map(([l, icon, title]) => (
+          <button key={l} className={btn + on(layer === l)} onClick={() => switchLayer(l)} title={`${title} (${l})`} aria-pressed={layer === l}>
+            {icon}<sub className="ml-0.5 font-mono">{l}</sub>
+          </button>
         ))}
         <select
           value=""
@@ -883,10 +924,19 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 preset={preset}
                 marker={marker}
                 settings={settings}
-                onAdd={(it) => edit((all) => [...all, it])}
+                layer={layer}
+                textSel={textSel?.page === i && textSel.v === version ? textSel : null}
+                onTextSel={(t) => {
+                  clearSel();
+                  setTextSel(t && { ...t, page: i, v: version });
+                }}
+                onAdd={(it) => edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }])}
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
-                onSelect={(page, ids) => setSelection({ page, ids })}
+                onSelect={(page, ids) => {
+                  setTextSel(null);
+                  setSelection({ page, ids });
+                }}
                 onOrig={(edits, next) => origOp(i, edits, next)}
                 onText={(edit: TextEdit) => void pageOp({ op: "text", page: i, edit }, (its) => its)}
                 onField={(xref, value) => setField(i, xref, value)}
