@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
-  box, drawItems, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, scaleItem,
-  layerOf, TEXT_SIZE, textRect, unionBox, type InkPoint, type Item, type Layer, type Preset,
+  box, drawItems, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
+  rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type InkPoint, type Item, type Layer, type Preset,
 } from "./ink";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
@@ -90,7 +90,11 @@ type Gesture =
   | { t: "lasso"; poly: [number, number][]; rect: boolean }
   | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean }
   | { t: "move"; x: number; y: number; dx: number; dy: number }
-  | { t: "scale"; ox: number; oy: number; d0: number; s: number }
+  /** Griff `h` (Himmelsrichtung): Gegenseite (ox, oy) bleibt stehen */
+  | { t: "scale"; h: string; x: number; y: number; w: number; hh: number; ox: number; oy: number; sx: number; sy: number }
+  | { t: "rot"; cx: number; cy: number; a0: number; deg: number }
+  /** Marker auf PDF-Text: folgt den Zeilen von a bis b */
+  | { t: "hl"; a: Pos; b: Pos; item: Item }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
   | { t: "field" | "link"; x: number; y: number; dx: number; dy: number };
 
@@ -117,6 +121,14 @@ export interface NewField { kind: "text" | "check" | "combo"; name: string; rect
 /** Änderung an Absatz `para`; `size`/`font` nur, wenn gewählt (erzwingt Ersatzschrift). */
 export interface TextEdit { para: number; text: string; dx?: number; dy?: number; size?: number; font?: "sans" | "serif" | "mono" }
 
+const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
+const HANDLE_CURSOR: Record<string, string> = { nw: "nwse", se: "nwse", ne: "nesw", sw: "nesw", n: "ns", s: "ns", e: "ew", w: "ew" };
+const inBox = (b: { x0: number; y0: number; x1: number; y1: number }, x: number, y: number) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+const deg = (r: number) => (r * 180) / Math.PI;
+/** Zeilenrechtecke als Punktpaare (Highlight) */
+const hlPoints = (lines: CharLine[], a: Pos, b: Pos): InkPoint[] =>
+  selRange(lines, a, b).rects.flatMap(([x0, y0, x1, y1]): InkPoint[] => [[x0, y0, 0.5], [x1, y1, 0.5]]);
+
 /** Kleinstes Objekt, dessen Box den Punkt enthält (Klick auf überlappende Original-Objekte). */
 function smallestAt(its: Item[], x: number, y: number) {
   const area = (it: Item) => { const b = box(it); return (b.x1 - b.x0) * (b.y1 - b.y0); };
@@ -129,7 +141,7 @@ export interface TextSel { a: Pos; b: Pos; text: string }
 
 export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
-  items: Item[]; selected: number[]; tool: Tool; preset: Preset; marker: Preset; settings: Settings;
+  items: Item[]; selected: number[]; tool: Tool; preset: Preset; marker: Preset; textSize: number; settings: Settings;
   /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
   layer: Layer;
   textSel: TextSel | null;
@@ -169,6 +181,8 @@ export function PageView(p: PageProps) {
   const [gs, setGs] = useState<Gesture | null>(null);
   const rerender = () => setGs(g.current && { ...g.current });
   const [hover, setHover] = useState<{ x: number; y: number; tool: Tool }>();
+  // Zeiger über der Auswahl → Verschiebe-Cursor
+  const [overSel, setOverSel] = useState(false);
   const [edit, setEdit] = useState<{ item: Item; isNew: boolean }>();
   const [url, visible] = usePageImage(ref, doc, index, zoom * devicePixelRatio, version);
   const [w, h] = [size[0] * zoom, size[1] * zoom];
@@ -188,7 +202,8 @@ export function PageView(p: PageProps) {
     id: -1 - i, page: index, kind: "image", color: [0, 0, 0], opacity: 1, size: 0, simulated: false,
     points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
   })) : [];
-  // Textabsätze (Klick bearbeitet) und Zeichen inkl. OCR-Text (Ziehen markiert), je Stand
+  // Textabsätze (Klick bearbeitet) und Zeichen inkl. OCR-Text (Ziehen markiert, Marker rastet ein), je Stand
+  const textOn = visible && (p.layer === 1 || tool === "marker");
   const [paras, setParas] = useState<{ v: number; list: Para[]; chars: CharLine[] }>({ v: -1, list: [], chars: [] });
   const [pedit, setPedit] = useState<number>();
   // Index gilt nur für Stand + Ebene: nach Undo/Seitenoperation/Ebenenwechsel Editor schließen
@@ -198,16 +213,16 @@ export function PageView(p: PageProps) {
     setPedit(undefined);
   }
   useEffect(() => {
-    if (!lassoOn) return;
+    if (!textOn) return;
     let live = true;
     Promise.all([invoke("text_paragraphs", { id: doc, index }), invoke("text_chars", { id: doc, index })]).then(
       ([r, c]) => live && setParas({ v: version, list: z.array(Para).parse(r), chars: z.array(CharLine).parse(c) }),
       () => live && setParas({ v: version, list: [], chars: [] }),
     );
     return () => void (live = false);
-  }, [doc, index, version, lassoOn]);
+  }, [doc, index, version, textOn]);
   const plist = lassoOn && paras.v === version ? paras.list : [];
-  const clist = lassoOn && paras.v === version ? paras.chars : [];
+  const clist = textOn && paras.v === version ? paras.chars : [];
   // Formularfelder: alte Liste bleibt bis zur neuen stehen, sonst verlieren die Eingaben nach jedem Wert den Fokus (Tab)
   const [fields, setFields] = useState<Field[]>([]);
   const [newf, setNewf] = useState<NewField["rect"]>();
@@ -235,17 +250,20 @@ export function PageView(p: PageProps) {
   const paraAt = (x: number, y: number) => plist.findIndex(({ bbox: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
 
   const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
+  // Drehgriff nur für Bilder (Original-Objekte zählen als Bild)
+  const rotatable = sel.length > 0 && sel.every((it) => it.kind === "image");
   const transform = (it: Item) =>
     !selected.includes(it.id) ? it
     : gs?.t === "move" ? moveItem(it, gs.dx, gs.dy)
-    : gs?.t === "scale" ? scaleItem(it, gs.ox, gs.oy, gs.s)
+    : gs?.t === "scale" ? scaleItem(it, gs.ox, gs.oy, gs.sx, gs.sy)
+    : gs?.t === "rot" ? rotateItem(it, gs.cx, gs.cy, gs.deg)
     : it;
   const shown = () => {
     const c = g.current;
     const out = items
       .filter((it) => !(c?.t === "erase" && c.ids.has(it.id)) && it.id !== edit?.item.id)
       .map(transform);
-    return c?.t === "draw" || c?.t === "shape" ? [...out, c.item] : out;
+    return c?.t === "draw" || c?.t === "shape" || c?.t === "hl" ? [...out, c.item] : out;
   };
 
   const redraw = () => {
@@ -291,8 +309,8 @@ export function PageView(p: PageProps) {
   };
 
   const make = (kind: Item["kind"], pr: Preset, q: InkPoint, simulated: boolean): Item => ({
-    id: newId(), page: index, kind, color: pr.color, opacity: kind === "marker" ? MARKER_OPACITY : 1,
-    size: kind === "text" ? TEXT_SIZE : pr.size, simulated, points: [q], text: "",
+    id: newId(), page: index, kind, color: pr.color, opacity: kind === "marker" || kind === "highlight" ? MARKER_OPACITY : 1,
+    size: kind === "text" ? p.textSize : pr.size, simulated, points: [q], text: "",
   });
 
   // Stift-Spitze/linke Maustaste nach Werkzeug, gebundene Stifttasten temporär; Finger geht an den Scroll-Container.
@@ -304,6 +322,21 @@ export function PageView(p: PageProps) {
     e.stopPropagation();
     const q = pt(e);
     const [x, y] = q;
+    // Auswahl hat Vorrang vor dem Werkzeug: Griff → Größe/Drehen, Rahmen → verschieben, außerhalb → aufheben
+    // ponytail: nur die Auswahl dieser Seite; Druck auf einer anderen Seite lässt sie stehen (Esc hebt auf)
+    if (sel.length) {
+      const b = unionBox(sel);
+      const h = (e.target as Element).closest<HTMLElement>("[data-handle]")?.dataset.handle;
+      if (h || inBox(b, x, y)) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        const [cx, cy] = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
+        g.current = h === "rot" ? { t: "rot", cx, cy, a0: Math.atan2(y - cy, x - cx), deg: 0 }
+          : h ? { t: "scale", h, x, y, w: b.x1 - b.x0, hh: b.y1 - b.y0, ox: h.includes("w") ? b.x1 : b.x0, oy: h.includes("n") ? b.y1 : b.y0, sx: 1, sy: 1 }
+          : { t: "move", x, y, dx: 0, dy: 0 };
+        return rerender();
+      }
+      p.onSelect(index, []);
+    }
     if (t === "text") {
       const hit = items.findLast((it) => it.kind === "text" && hitTest(it, x, y, 0));
       // Klick während des Bearbeitens schließt erst das offene Feld (Blur speichert)
@@ -329,7 +362,10 @@ export function PageView(p: PageProps) {
       g.current = { t: "para", i: pedit, x, y, dx: 0, dy: 0 };
       return rerender();
     }
-    if (t === "pen" || t === "marker") {
+    const at = t === "marker" ? posAt(clist, x, y) : null;
+    if (at) {
+      g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [] } };
+    } else if (t === "pen" || t === "marker") {
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, q, e.pointerType !== "pen");
       g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
       armHold(x, y);
@@ -338,17 +374,10 @@ export function PageView(p: PageProps) {
       eraseAt(x, y);
       redraw();
     } else if (t === "lasso") {
-      const b = sel.length ? unionBox(sel) : null;
-      if (b && (e.target as Element).closest("[data-handle]")) {
-        g.current = { t: "scale", ox: b.x0, oy: b.y0, d0: Math.max(1, Math.hypot(x - b.x0, y - b.y0)), s: 1 };
-      } else if (b && x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) {
-        g.current = { t: "move", x, y, dx: 0, dy: 0 };
-      } else {
-        const at = p.layer === 1 ? posAt(clist, x, y) : null;
-        setPedit(undefined);
-        // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck
-        g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen" };
-      }
+      const at = p.layer === 1 ? posAt(clist, x, y) : null;
+      setPedit(undefined);
+      // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck, Stift ein Lasso
+      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen" };
       rerender();
     } else {
       g.current = { t: "shape", item: { ...make(t, preset, q, false), points: [q, q] } };
@@ -359,10 +388,12 @@ export function PageView(p: PageProps) {
     const c = g.current;
     if (c && e.pointerId !== owner.current) return;
     if (!c) {
+      const [x, y] = pt(e);
+      const over = sel.length > 0 && inBox(unionBox(sel), x, y);
+      setOverSel(over);
       if (e.pointerType === "pen") {
         const t = toolFor({ pointerType: "pen", buttons: e.buttons | 1 }, tool, settings);
-        const [x, y] = pt(e);
-        setHover(t ? { x, y, tool: t } : undefined);
+        setHover(t && !over ? { x, y, tool: t } : undefined);
       }
       return;
     }
@@ -402,9 +433,26 @@ export function PageView(p: PageProps) {
       case "link":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
-      case "scale":
-        c.s = Math.max(0.05, Math.hypot(x - c.ox, y - c.oy) / c.d0);
+      case "scale": {
+        // Bilder: Ecke proportional, Umschalt frei; andere umgekehrt. Kanten: eine Achse.
+        const fx = c.h.includes("w") ? -1 : c.h.includes("e") ? 1 : 0, fy = c.h.includes("n") ? -1 : c.h.includes("s") ? 1 : 0;
+        const sx = fx ? Math.max(0.05, 1 + (fx * (x - c.x)) / Math.max(0.01, c.w)) : 1;
+        const sy = fy ? Math.max(0.05, 1 + (fy * (y - c.y)) / Math.max(0.01, c.hh)) : 1;
+        // gedrehte Bilder nur proportional (sonst verzerrt das Rechteck in Seitenachsen)
+        const prop = (fx && fy && rotatable !== e.shiftKey) || sel.some((it) => it.rot);
+        const s = fx && fy ? Math.max(sx, sy) : fx ? sx : sy;
+        [c.sx, c.sy] = prop ? [s, s] : [sx, sy];
         break;
+      }
+      case "rot": {
+        const d = deg(Math.atan2(y - c.cy, x - c.cx) - c.a0);
+        c.deg = e.shiftKey ? Math.round(d / 15) * 15 : d;
+        break;
+      }
+      case "hl":
+        c.b = posAt(clist, x, y, true) ?? c.b;
+        c.item.points = hlPoints(clist, c.a, c.b);
+        return schedule();
     }
     if (hover) setHover(undefined);
     rerender();
@@ -479,7 +527,13 @@ export function PageView(p: PageProps) {
         break;
       }
       case "scale":
-        if (c.s !== 1) commit((it) => scaleItem(it, c.ox, c.oy, c.s), [c.s, 0, 0, c.s, c.ox * (1 - c.s), c.oy * (1 - c.s)]);
+        if (c.sx !== 1 || c.sy !== 1) commit((it) => scaleItem(it, c.ox, c.oy, c.sx, c.sy), scaleMatrix(c.ox, c.oy, c.sx, c.sy));
+        break;
+      case "rot":
+        if (c.deg % 360) commit((it) => rotateItem(it, c.cx, c.cy, c.deg), rotMatrix(c.cx, c.cy, c.deg));
+        break;
+      case "hl":
+        if (c.item.points.length) p.onAdd(c.item);
         break;
     }
     rerender();
@@ -545,7 +599,7 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor: overSel || gs?.t === "move" ? "move" : tool === "text" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
       onPointerDown={down}
       onMouseDown={(e) => {
         if (textDown.current) e.preventDefault();
@@ -554,7 +608,10 @@ export function PageView(p: PageProps) {
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={up}
-      onPointerLeave={() => setHover(undefined)}
+      onPointerLeave={() => {
+        setHover(undefined);
+        setOverSel(false);
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {url && <img src={url} alt="" draggable={false} className="absolute inset-0 h-full w-full select-none" />}
@@ -572,7 +629,18 @@ export function PageView(p: PageProps) {
           className="pointer-events-none absolute border border-dashed border-accent"
           style={{ left: sb.x0 * zoom - 3, top: sb.y0 * zoom - 3, width: (sb.x1 - sb.x0) * zoom + 6, height: (sb.y1 - sb.y0) * zoom + 6 }}
         >
-          <span data-handle className="pointer-events-auto absolute -right-2 -bottom-2 h-4 w-4 cursor-nwse-resize rounded-xs bg-accent" />
+          {HANDLES.map((k) => (
+            <span key={k} data-handle={k}
+              className="pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-xs border border-white bg-accent"
+              style={{
+                left: k.includes("w") ? 0 : k.includes("e") ? "100%" : "50%", top: k.includes("n") ? 0 : k.includes("s") ? "100%" : "50%",
+                cursor: `${HANDLE_CURSOR[k] ?? "move"}-resize`,
+              }} />
+          ))}
+          {rotatable && (
+            <span data-handle="rot" title="Drehen (Umschalt: 15°-Schritte)"
+              className="pointer-events-auto absolute -top-6 left-1/2 h-3 w-3 -translate-x-1/2 cursor-grab rounded-full border border-white bg-accent" />
+          )}
         </div>
       )}
       {lasso && (

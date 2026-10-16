@@ -1,7 +1,7 @@
 use mupdf::color::AnnotationColor;
 use mupdf::pdf::{InsertPdfOptions, InsertPosition, LineEndingStyle, PdfAnnotation, PdfDocument, PdfObject, PdfPage};
 use mupdf::pdf::page::{InsertImageOptions, PageImageSource};
-use mupdf::{Colorspace, Document, Error, Image, ImageFormat, Matrix, Point, Rect, Size, TextPageFlags};
+use mupdf::{Colorspace, Document, Error, Image, ImageFormat, Matrix, Point, Quad, Rect, Size, TextPageFlags};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -83,13 +83,15 @@ pub enum Kind {
     Ellipse,
     Text,
     Image,
+    /// Textmarker auf PDF-Text: Punkte paarweise = Zeilenrechtecke (Highlight mit QuadPoints)
+    Highlight,
 }
 
 impl Kind {
     /// Ebene ohne Angabe (alte PDFs): Geschriebenes → 3, Eingefügtes → 2.
     fn layer(self) -> u8 {
         match self {
-            Kind::Ink | Kind::Marker | Kind::Text => 3,
+            Kind::Ink | Kind::Marker | Kind::Text | Kind::Highlight => 3,
             _ => 2,
         }
     }
@@ -117,6 +119,13 @@ pub struct Item {
     /// Ebene 2 = Eingefügtes, 3 = Geschriebenes (1 = PDF-Inhalt, nie ein eigenes Objekt); fehlt → nach Art
     #[serde(default)]
     pub layer: u8,
+    /// Bild: Drehung in Grad im Uhrzeigersinn um die Mitte (Punkte = ungedrehtes Rechteck)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rot: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 const IMAGE_MAX: usize = 64 << 20; // Base64-Länge
@@ -126,6 +135,8 @@ impl Item {
         let need = if self.kind == Kind::Ink || self.kind == Kind::Marker { 1 } else { 2 };
         (0..pages).contains(&self.page)
             && self.points.len() >= need
+            && (self.kind != Kind::Highlight || self.points.len() % 2 == 0)
+            && self.rot.is_finite()
             && self.points.len() <= 100_000
             && self.text.len() <= 100_000
             && (self.kind == Kind::Image) == !self.image.is_empty()
@@ -218,6 +229,32 @@ fn add_stamp(doc: &mut PdfDocument, page: &mut PdfPage, rect: Rect, it: &Item) -
     Ok(a)
 }
 
+/// Gedrehtes Bild: MuPDF erzeugt das Stamp-Aussehen bei `update` neu (BBox 0 0 1 1) → danach ersetzen.
+/// BBox = ungedrehte Größe, /Matrix dreht; PDF bildet die gedrehte BBox auf Rect ab (gleich groß → nur verschoben).
+fn rotate_stamp(doc: &mut PdfDocument, annot: &PdfAnnotation, it: &Item) -> Result<(), Error> {
+    let bad = || Error::InvalidArgument("Stamp ohne Aussehen".into());
+    let mut ap = annot.object().get_dict("AP")?.ok_or_else(bad)?;
+    let res = ap.get_dict("N")?.ok_or_else(bad)?.get_dict("Resources")?.ok_or_else(bad)?;
+    let (w, h) = ((it.points[0][0] - it.points[1][0]).abs().max(0.01), (it.points[0][1] - it.points[1][1]).abs().max(0.01));
+    let arr = |vs: &[f32]| -> Result<PdfObject, Error> {
+        let mut a = doc.new_array()?;
+        for &v in vs {
+            a.array_push(PdfObject::new_real(v)?)?;
+        }
+        Ok(a)
+    };
+    let (s, c) = (-it.rot.to_radians()).sin_cos(); // PDF: y nach oben → Uhrzeigersinn = negativer Winkel
+    let (bbox, m) = (arr(&[0.0, 0.0, w, h])?, arr(&[c, s, -s, c, 0.0, 0.0])?);
+    let mut form = doc.new_dict()?;
+    form.dict_put("Type", PdfObject::new_name("XObject")?)?;
+    form.dict_put("Subtype", PdfObject::new_name("Form")?)?;
+    form.dict_put("BBox", bbox)?;
+    form.dict_put("Matrix", m)?;
+    form.dict_put("Resources", res)?;
+    let n = doc.add_stream(&mupdf::Buffer::from_bytes(format!("q {w} 0 0 {h} 0 0 cm /I Do Q").as_bytes())?, Some(&form), false)?;
+    ap.dict_put("N", n)
+}
+
 /// Stamp-Bild zurück als PNG. Nur was `add_stamp` schreibt (8 bit, Grau/RGB, optional SMask);
 /// sonst Fehler → Annotation bleibt als fremde stehen.
 fn stamp_png(annot: &PdfAnnotation) -> Result<Vec<u8>, Error> {
@@ -291,10 +328,28 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
             a.set_default_appearance("Helv", it.size.clamp(2.0, 200.0), Some(rgb(it.color)))?;
             a
         }
-        Kind::Image => add_stamp(doc, page, rect(), it)?,
+        Kind::Image => {
+            // gedreht: umschließendes Rechteck der gedrehten Ecken um die Mitte
+            let r = rect();
+            let (cx, cy, hw, hh) = ((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0, (r.x1 - r.x0) / 2.0, (r.y1 - r.y0) / 2.0);
+            let (s, c) = it.rot.to_radians().sin_cos();
+            let (ex, ey) = (hw * c.abs() + hh * s.abs(), hw * s.abs() + hh * c.abs());
+            add_stamp(doc, page, Rect::new(cx - ex, cy - ey, cx + ex, cy + ey), it)?
+        }
+        Kind::Highlight => {
+            let mut a = page.create_annotation(mupdf::pdf::PdfAnnotationType::Highlight)?;
+            let quads: Vec<Quad> = it.points.chunks_exact(2).map(|r| {
+                let (p, q) = (pt(&r[0]), pt(&r[1]));
+                let (x0, y0, x1, y1) = (p.x.min(q.x), p.y.min(q.y), p.x.max(q.x), p.y.max(q.y));
+                Quad::new(Point::new(x0, y0), Point::new(x1, y0), Point::new(x0, y1), Point::new(x1, y1))
+            }).collect();
+            a.set_quad_points(quads)?;
+            a
+        }
     };
     match it.kind {
         Kind::Image => {}
+        Kind::Highlight => annot.set_color(rgb(it.color))?,
         Kind::Text => annot.set_border_width(0.0)?,
         _ => {
             annot.set_color(rgb(it.color))?;
@@ -312,6 +367,9 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
     annot.update()?;
     if it.kind == Kind::Marker {
         set_multiply(&annot)?;
+    }
+    if it.kind == Kind::Image && it.rot != 0.0 {
+        rotate_stamp(doc, &annot, it)?;
     }
     Ok(())
 }
@@ -682,7 +740,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer() }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0 }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -807,6 +865,32 @@ mod tests {
             .get_dict("Resources").unwrap().unwrap().get_dict("ExtGState").unwrap().unwrap();
         let g = gs.get_dict_val(0).unwrap().unwrap();
         assert_eq!(g.get_dict("BM").unwrap().unwrap().as_name().unwrap(), b"Multiply");
+    }
+
+    #[test]
+    fn highlight_und_gedrehtes_bild() {
+        use base64::Engine;
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let hl = Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(Kind::Highlight, vec![[10.0, 10.0, 0.5], [90.0, 22.0, 0.5], [10.0, 24.0, 0.5], [60.0, 36.0, 0.5]]) };
+        let png = test_png().0;
+        // 300×200, 90° im Uhrzeigersinn um (200, 150): linke obere Kachel (rot) landet rechts oben
+        let img = Item { rot: 90.0, image: base64::engine::general_purpose::STANDARD.encode(&png), ..item(Kind::Image, vec![[50.0, 50.0, 0.5], [350.0, 250.0, 0.5]]) };
+        let path = tmp("hl-rot");
+        save(&doc, &[hl.clone(), img], &path, false).unwrap();
+        let back = open(&path).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let a = page.annotations().next().unwrap();
+        assert_eq!(a.r#type().unwrap(), T::Highlight);
+        assert_eq!(a.quad_points().unwrap().len(), 2, "ein Quad je Zeile");
+        let pix = back.load_page(0).unwrap().to_pixmap(&Matrix::IDENTITY, &Colorspace::device_rgb(), false, true).unwrap();
+        assert_eq!(&pix.pixel(250, 60).unwrap().components()[..3], &[255, 0, 0], "Bild gedreht");
+        let taken = take_own(&back, 0..1).unwrap();
+        assert_eq!(taken[0], hl);
+        assert_eq!(taken[1].rot, 90.0);
+        // ungerade Punktzahl ist kein Highlight
+        assert!(add_items(&mut doc, &[item(Kind::Highlight, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5], [3.0, 3.0, 0.5]])], true).is_err());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

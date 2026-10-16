@@ -4,11 +4,11 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSPrope
 import { z } from "zod";
 import {
   afterDelete, afterInsert, afterMove, afterRotate, box, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  layerOf, MARKERS, moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Layer, type Preset,
+  layerOf, moveItem, newId, textRect, toData, type Item, type Layer, type Preset,
 } from "./ink";
 import * as ol from "./outline";
 import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
-import { type Settings, type Tool } from "./settings";
+import { loadPalettes, storePalettes, type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
@@ -100,8 +100,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [layer, setLayer] = useState<Layer>(3);
   /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
-  const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
-  const [marker, setMarker] = useState<Preset>(MARKERS[0] ?? DEFAULT_PRESET);
+  const [pal, setPal] = useState(loadPalettes);
+  useEffect(() => storePalettes(pal), [pal]);
+  const [preset, setPreset] = useState<Preset>(pal.pen.find((p) => p.name === DEFAULT_PRESET.name) ?? pal.pen[0] ?? DEFAULT_PRESET);
+  const [marker, setMarker] = useState<Preset>(pal.marker[0] ?? DEFAULT_PRESET);
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
@@ -185,7 +187,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   }
 
   /** Seitenoperation im Backend; Objekte werden mit umnummeriert, Objekte einer eingefügten PDF kommen dazu. */
-  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[]): Promise<boolean> {
+  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[], keepSel = false): Promise<boolean> {
     if (busy.current) return false;
     busy.current = true;
     try {
@@ -194,7 +196,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         items: [...remap((h.list[h.at] ?? EMPTY).items, r.inserted), ...r.items.map(fromData)], rev: r.rev, sizes: r.sizes,
       }));
       setVersion((v) => v + 1);
-      clearSel();
+      // Original-Objekte nur verschoben/skaliert/gedreht: Indizes bleiben → Auswahl bleibt
+      if (!keepSel) clearSel();
       setError(r.warning ? `Hinweis: ${r.warning}` : undefined);
       return true;
     } catch (e) {
@@ -391,10 +394,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     if (!c || !ctx) return;
     const [page, x, y] = c;
     const t = text.replace(/\r\n?/g, "\n").slice(0, 100_000);
-    const points = textRect(ctx, t, TEXT_SIZE, 0, 0);
+    const points = textRect(ctx, t, pal.text, 0, 0);
     const [, [bw, bh] = [0, 0]] = points;
     place([moveItem({
-      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: TEXT_SIZE, simulated: false, points, text: t,
+      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t,
     }, x - bw / 2, y - bh / 2)]);
   }
 
@@ -422,7 +425,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   /** Original-Objekte der PDF ändern; eigene Objekte ersetzen (`next`) bzw. entfernen (`drop`) im selben Schritt. */
   const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = []) =>
     void pageOp({ op: "orig", page, edits }, (its) =>
-      its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it));
+      its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it), !drop.length && edits.every((e) => "matrix" in e));
 
   const removeSel = (ownOnly = false) => {
     const orig = selection.ids.filter((i) => i < 0).map((i) => ({ index: -1 - i }));
@@ -642,8 +645,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const btn = "rounded-xs px-2.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
   const on = (b: boolean) => (b ? " bg-accent-soft text-ink" : "");
   const sep = <span className="mx-1 h-5 w-px bg-line" />;
-  const palette = tool === "marker" ? MARKERS : PRESETS;
-  const pick = tool === "marker" ? marker : preset;
+  const mk = tool === "marker";
+  const palette = mk ? pal.marker : pal.pen;
+  const pick = mk ? marker : preset;
+  const setPick = mk ? setMarker : setPreset;
+  const same = (a: Preset, b: Preset) => a.name === b.name && a.size === b.size && a.color.every((c, k) => c === b.color[k]);
+  const setPalette = (list: Preset[]) => setPal((p) => (mk ? { ...p, marker: list } : { ...p, pen: list }));
+  const hex = (c: Preset["color"]) => "#" + c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
 
   return (
     <div
@@ -689,12 +697,45 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           <button
             key={p.name}
             title={p.name}
-            onClick={() => (tool === "marker" ? setMarker(p) : setPreset(p))}
-            className={`grid h-7 w-7 place-items-center rounded-pill ring-2 ${p === pick ? "ring-accent" : "ring-transparent"}`}
+            onClick={() => setPick(p)}
+            className={`grid h-7 w-7 place-items-center rounded-pill ring-2 ${same(p, pick) ? "ring-accent" : "ring-transparent"}`}
           >
             <span className="block rounded-pill" style={{ width: Math.min(p.size * 3, 18), height: Math.min(p.size * 3, 18), background: `rgb(${p.color.map((c) => c * 255).join(",")})`, outline: "1px solid var(--line-2)" }} />
           </button>
         ))}
+        {/* Zahnrad: Stärke/Farbe stufenlos, wirkt sofort aufs aktive Werkzeug; Presets speichern/überschreiben */}
+        <details className="relative">
+          <summary className={btn + " list-none cursor-pointer"} title="Stärke, Farbe, Presets">⚙</summary>
+          <div className="absolute left-0 top-full z-20 mt-1 flex w-56 flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm shadow-lg">
+            <label className="flex flex-col gap-1">
+              {tool === "text" ? `Textgröße ${pal.text} pt` : `Stärke ${pick.size.toFixed(1)}`}
+              <input type="range" aria-label="Stärke"
+                min={tool === "text" ? 6 : 0.5} max={tool === "text" ? 72 : mk ? 40 : 20} step={tool === "text" ? 1 : 0.1}
+                value={tool === "text" ? pal.text : pick.size}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (tool === "text") setPal((p) => ({ ...p, text: v }));
+                  else setPick({ ...pick, size: v });
+                }} />
+            </label>
+            <label className="flex items-center justify-between">
+              Farbe
+              <input type="color" aria-label="Farbe" value={hex(pick.color)}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value.slice(1), 16);
+                  setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
+                }} />
+            </label>
+            <button className={btn} onClick={() => {
+              const p = { ...pick, name: `Eigenes ${palette.length + 1}` };
+              setPalette([...palette, p]);
+              setPick(p);
+            }}>als Preset speichern</button>
+            <button className={btn} disabled={!palette.some((p) => p.name === pick.name)}
+              onClick={() => setPalette(palette.map((p) => (p.name === pick.name ? pick : p)))}
+              title={`„${pick.name}" mit den aktuellen Werten überschreiben`}>Preset überschreiben</button>
+          </div>
+        </details>
         {sep}
         <select
           value=""
@@ -923,6 +964,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 tool={tool}
                 preset={preset}
                 marker={marker}
+                textSize={pal.text}
                 settings={settings}
                 layer={layer}
                 textSel={textSel?.page === i && textSel.v === version ? textSel : null}

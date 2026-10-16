@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PRESSURE_MAX } from "./ink";
+import { MARKERS, PRESETS, PRESSURE_MAX, TEXT_SIZE, type Preset } from "./ink";
 
 export const TOOLS = ["pen", "marker", "eraser", "lasso", "text", "line", "arrow", "rect", "ellipse", "form", "link"] as const;
 export type Tool = (typeof TOOLS)[number];
@@ -35,6 +35,29 @@ export function loadSettings(): Settings {
 export function storeSettings(s: Settings) {
   try {
     localStorage.setItem(KEY, JSON.stringify(s));
+  } catch {
+    /* nur Komfort */
+  }
+}
+
+/** Presets (Stift/Formen, Marker) und Textgröße, gerätelokal */
+const PresetData = z.object({ name: z.string(), color: z.tuple([z.number(), z.number(), z.number()]), size: z.number().positive() });
+const Palettes = z.object({ pen: z.array(PresetData), marker: z.array(PresetData), text: z.number().positive() });
+export interface Palettes { pen: Preset[]; marker: Preset[]; text: number }
+export const DEFAULT_PALETTES: Palettes = { pen: PRESETS, marker: MARKERS, text: TEXT_SIZE };
+const PKEY = "pdfnote.presets";
+
+export function loadPalettes(): Palettes {
+  try {
+    return Palettes.parse(JSON.parse(localStorage.getItem(PKEY) ?? "null"));
+  } catch {
+    return DEFAULT_PALETTES;
+  }
+}
+
+export function storePalettes(p: Palettes) {
+  try {
+    localStorage.setItem(PKEY, JSON.stringify(p));
   } catch {
     /* nur Komfort */
   }

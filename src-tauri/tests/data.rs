@@ -40,7 +40,7 @@ fn b64(bytes: &[u8]) -> String {
 }
 
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0 }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0 }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -85,6 +85,8 @@ fn alle_schreibpfade() {
             item(last, Kind::Ellipse, two.clone(), ""),
             item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz ÄÖÜ"),
             pdf::Item { image: b64(&pdf::render_png(&doc, 0, 0.1).unwrap()), ..item(0, Kind::Image, two.clone(), "") },
+            pdf::Item { image: b64(&pdf::render_png(&doc, 0, 0.1).unwrap()), rot: 30.0, ..item(0, Kind::Image, two.clone(), "") },
+            pdf::Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(last, Kind::Highlight, vec![[20.0, 300.0, 0.5], [200.0, 312.0, 0.5], [20.0, 314.0, 0.5], [90.0, 326.0, 0.5]], "") },
         ]);
         pdf::save(&doc, &items, &copy, false).unwrap();
         assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{name}: Zusatzdatei neben der PDF");
@@ -99,6 +101,8 @@ fn alle_schreibpfade() {
         assert_eq!(got.len(), want.len(), "{name}: Objektanzahl");
         let fg: Vec<_> = (0..pages).map(|i| pdf::annotations(&back, i).unwrap().len()).collect();
         assert_eq!(fg, foreign, "{name}: fremde Annotationen");
+        assert!(got.iter().any(|it| it.kind == Kind::Highlight && it.points.len() == 4), "{name}: Highlight");
+        assert!(got.iter().any(|it| it.kind == Kind::Image && (it.rot - 30.0).abs() < 0.01), "{name}: Bild-Drehung");
 
         // Speichern unter (flach): keine eigenen Annotationen mehr, Original-Kopie unverändert
         let flat = tmp.join(format!("flach-{}", src.file_name().unwrap().to_string_lossy()));

@@ -32,16 +32,19 @@ let root: Root;
 let host: HTMLDivElement;
 // Zugriff auf den Zustand des Testelternteils (nach jedem Render gesetzt)
 const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { added: [], setTool: () => {}, selected: [] };
+const lastAdd: Item[] = [];
 
 function Page({ start, layer = 3, init = [] }: { start: Tool; layer?: Layer; init?: Item[] }) {
   const [items, setItems] = useState<Item[]>(init);
   const [tool, st] = useState(start);
-  useEffect(() => void Object.assign(ui, { added: items, setTool: st }), [items]);
+  const [selected, setSel] = useState<number[]>([]);
+  useEffect(() => void Object.assign(ui, { added: items, setTool: st, selected }), [items, selected]);
   return (
     <PageView
-      doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={[]} tool={tool}
-      preset={DEFAULT_PRESET} marker={DEFAULT_PRESET} settings={DEFAULT_SETTINGS}
-      onAdd={(it) => setItems((xs) => [...xs, it])} onRemove={() => {}} onReplace={() => {}} onSelect={(_, ids) => void (ui.selected = ids)}
+      doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool}
+      preset={DEFAULT_PRESET} marker={DEFAULT_PRESET} textSize={14} settings={DEFAULT_SETTINGS}
+      onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))} onRemove={() => {}}
+      onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
       layer={layer} textSel={null} onTextSel={() => {}}
@@ -78,10 +81,10 @@ const mount = (tool: Tool, layer?: Layer, init?: Item[]) => {
   return host.querySelector("[data-page]") as HTMLDivElement;
 };
 
-const fire = (el: Element, type: string, x: number, y: number, buttons = 1) => {
+const fire = (el: Element, type: string, x: number, y: number, buttons = 1, pointerType = "mouse", shiftKey = false) => {
   // jsdom kennt kein PointerEvent → MouseEvent mit den Feldern, die React liest
-  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, buttons });
-  Object.assign(e, { pointerId: 1, pointerType: "mouse", pressure: 0.5 });
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, buttons, shiftKey });
+  Object.assign(e, { pointerId: 1, pointerType, pressure: 0.5 });
   act(() => void el.dispatchEvent(e));
   return e;
 };
@@ -135,4 +138,49 @@ test("Auswahl trifft nur die aktive Ebene", () => {
   fire(page, "pointermove", 400, 200);
   fire(page, "pointerup", 400, 200, 0);
   expect(ui.selected).toEqual([1, 3]);
+});
+
+const obj = (id: number, kind: Item["kind"], x0: number, y0: number, x1: number, y1: number): Item => ({
+  id, page: 0, kind, color: [0, 0, 0], opacity: 1, size: 2, simulated: false, points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
+  ...(kind === "image" ? { image: "x" } : {}),
+});
+
+test("Stifttaste-Lasso → Stift aktiv → Ziehen im Rahmen verschiebt, kein Strich", () => {
+  const page = mount("pen", 3, [obj(1, "ink", 100, 100, 120, 120)]);
+  // Seitentaste (2) + Spitze: Freihand-Lasso um das Objekt
+  for (const [x, y] of [[80, 80], [150, 80], [150, 150], [80, 150]] as const) fire(page, x === 80 && y === 80 ? "pointerdown" : "pointermove", x, y, 3, "pen");
+  fire(page, "pointerup", 80, 150, 0, "pen");
+  expect(ui.selected).toEqual([1]);
+  lastAdd.length = 0;
+  // nur Spitze: Stift wäre aktiv, aber die Auswahl hat Vorrang
+  fire(page, "pointerdown", 110, 110, 1, "pen");
+  fire(page, "pointermove", 160, 130, 1, "pen");
+  fire(page, "pointerup", 160, 130, 0, "pen");
+  flushFrames();
+  expect(lastAdd).toEqual([]);
+  expect(ui.added.map((it) => it.points.map(([x, y]) => [x, y]))).toEqual([[[150, 120], [170, 140]]]);
+  expect(ui.selected).toEqual([1]); // bleibt bestehen
+  // Drücken außerhalb hebt auf und zeichnet
+  fire(page, "pointerdown", 400, 400, 1, "pen");
+  fire(page, "pointerup", 400, 400, 0, "pen");
+  expect(ui.selected).toEqual([]);
+  expect(lastAdd.map((it) => it.kind)).toEqual(["ink"]);
+});
+
+test("Eckgriff: Bild proportional, Umschalt frei", () => {
+  const page = mount("lasso", 2, [obj(1, "image", 100, 100, 200, 150)]);
+  fire(page, "pointerdown", 90, 90);
+  fire(page, "pointermove", 250, 200);
+  fire(page, "pointerup", 250, 200, 0);
+  expect(ui.selected).toEqual([1]);
+  const se = () => host.querySelector('[data-handle="se"]') as HTMLElement;
+  fire(se(), "pointerdown", 200, 150);
+  fire(page, "pointermove", 300, 160);
+  fire(page, "pointerup", 300, 160, 0);
+  expect(ui.added[0]?.points.map(([x, y]) => [x, y])).toEqual([[100, 100], [300, 200]]);
+  fire(se(), "pointerdown", 300, 200, 1, "mouse", true);
+  fire(page, "pointermove", 300, 250, 1, "mouse", true);
+  fire(page, "pointerup", 300, 250, 0, "mouse", true);
+  expect(ui.added[0]?.points.map(([x, y]) => [x, y])).toEqual([[100, 100], [300, 250]]);
+  expect(host.querySelector('[data-handle="rot"]')).not.toBeNull();
 });
