@@ -131,7 +131,7 @@ export const toData = (it: Item) => ({
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
 export const lineHeight = (size: number) => size * 1.2;
-const TEXT_PAD = 2;
+export const TEXT_PAD = 2;
 
 /** Umschließendes Rechteck, normiert (gedrehtes Bild: um die gedrehten Ecken). */
 export function box(it: Item) {
@@ -200,9 +200,11 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
     }
     case "text": {
       const { x0, y0 } = box(it);
+      const { x1 } = box(it);
       ctx.font = `${it.size}px ${FONT}`;
       ctx.textBaseline = "top";
-      it.text.split("\n").forEach((l, i) => ctx.fillText(l, x0 + TEXT_PAD, y0 + TEXT_PAD + i * lineHeight(it.size)));
+      wrapText(it.text, x1 - x0 - 2 * TEXT_PAD, (l) => ctx.measureText(l).width)
+        .forEach(([l], i) => ctx.fillText(l, x0 + TEXT_PAD, y0 + TEXT_PAD + i * lineHeight(it.size)));
       return;
     }
     case "image": {
@@ -258,13 +260,60 @@ export function drawItems(ctx: CanvasRenderingContext2D, items: Item[], zoom: nu
   ctx.globalAlpha = 1;
 }
 
-/** Textfeld-Rechteck aus Text: Breite gemessen, etwas Luft, weil PDF-Helvetica anders läuft als die Canvas-Schrift. */
-export function textRect(ctx: CanvasRenderingContext2D, text: string, size: number, x: number, y: number): InkPoint[] {
+/**
+ * Textfeld-Rechteck aus Text: Breite gemessen, etwas Luft, weil PDF-Helvetica anders läuft als die Canvas-Schrift.
+ * `fixed` = feste Breite (Breitengriff): Text bricht um, nur die Höhe wächst.
+ */
+export function textRect(ctx: CanvasRenderingContext2D, text: string, size: number, x: number, y: number, fixed?: number): InkPoint[] {
   ctx.font = `${size}px ${FONT}`;
-  const lines = text.split("\n");
-  const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) * 1.1 + 2 * TEXT_PAD + size * 0.5;
+  const m = (l: string) => ctx.measureText(l).width;
+  const lines = fixed ? wrapText(text, fixed - 2 * TEXT_PAD, m).map(([l]) => l) : text.split("\n");
+  const w = fixed ?? Math.max(...lines.map(m)) * 1.1 + 2 * TEXT_PAD + size * 0.5;
   const h = lines.length * lineHeight(size) + 2 * TEXT_PAD + size * 0.3;
   return [[x, y, 0.5], [x + w, y + h, 0.5]];
+}
+
+/**
+ * Feste Breite eines Textfelds oder `undefined` (wächst mit dem Text).
+ * ponytail: aus der Box geschlossen (weicht von der Textbreite ab) statt gespeichert – übersteht so Speichern/Öffnen ohne Zusatzfeld.
+ */
+export function fixedWidth(ctx: CanvasRenderingContext2D, it: Item): number | undefined {
+  const { x0, x1 } = box(it);
+  const [, [auto = 0] = []] = textRect(ctx, it.text, it.size, 0, 0);
+  return it.text && Math.abs(x1 - x0 - auto) > 0.5 ? x1 - x0 : undefined;
+}
+
+/**
+ * Angezeigte Zeilen: harte Umbrüche, dazu Wortumbruch bei `maxW` (wie MuPDF beim FreeText-Erscheinungsbild).
+ * Je Zeile Text + Stelle im Gesamttext; Leerzeichen bleiben am Zeilenende, damit die Stellen aufgehen.
+ */
+export function wrapText(text: string, maxW: number, measure: (s: string) => number): [string, number][] {
+  const out: [string, number][] = [];
+  let at = 0;
+  for (const para of text.split("\n")) {
+    let line = "", start = at;
+    for (const w of para.split(/(?<= )/)) {
+      if (line && measure(line + w.trimEnd()) > maxW) {
+        out.push([line, start]);
+        start += line.length;
+        line = w;
+      } else line += w;
+    }
+    out.push([line, start]);
+    at += para.length + 1;
+  }
+  return out;
+}
+
+/** Cursorstelle im Text eines Felds (Breite `w`) unter dem Punkt (x, y) relativ zur linken oberen Ecke, pt. */
+export function caretAt(text: string, size: number, w: number, x: number, y: number, measure: (s: string) => number): number {
+  const lines = wrapText(text, w - 2 * TEXT_PAD, measure);
+  const [line = "", start = 0] = lines[Math.max(0, Math.min(lines.length - 1, Math.floor((y - TEXT_PAD) / lineHeight(size))))] ?? [];
+  let best = 0;
+  for (let k = 1; k <= line.length; k++) {
+    if (Math.abs(measure(line.slice(0, k)) - (x - TEXT_PAD)) < Math.abs(measure(line.slice(0, best)) - (x - TEXT_PAD))) best = k;
+  }
+  return start + best;
 }
 
 function segDist(px: number, py: number, a: InkPoint, b: InkPoint) {

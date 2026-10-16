@@ -1,5 +1,29 @@
 import { expect, test, vi } from "vitest";
-import { captureBinding, DEFAULT_PALETTES, DEFAULT_SETTINGS as S, loadPalettes, loadSettings, storePalettes, toolFor } from "./settings";
+import {
+  afterShape, captureBinding, DEFAULT_PALETTES, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, pickTool, storePalettes, toolFor,
+} from "./settings";
+
+test("Gerät bestimmt das Werkzeug", () => {
+  let t = initTools(true);
+  expect([t.mouse, t.pen]).toEqual(["lasso", "pen"]); // Maus wählt/tippt, Stift schreibt
+  t = pickTool(t, "marker", "pen", true);
+  expect([t.mouse, t.pen]).toEqual(["lasso", "marker"]);
+  t = pickTool(t, "lasso", "pen", true); // Stift wählt Auswahl, Maus bleibt
+  t = pickTool(t, "pen", "mouse", true); // Maus wählt Zeichenwerkzeug → zeichnet (bis Esc), Stift auch
+  expect([t.mouse, t.pen]).toEqual(["pen", "pen"]);
+  // ohne Automatik ein Werkzeug für alle
+  expect(pickTool(initTools(false), "marker", "pen", false).mouse).toBe("marker");
+});
+
+test("Form → zurück zum vorherigen Werkzeug, mit Schloss nicht", () => {
+  let t = pickTool(initTools(true), "marker", "pen", true);
+  t = pickTool(t, "rect", "pen", true);
+  t = pickTool(t, "ellipse", "pen", true); // Formwechsel überschreibt das Vorherige nicht
+  expect(afterShape(t).pen).toBe("marker");
+  expect(afterShape(t).mouse).toBe("lasso");
+  expect(afterShape({ ...t, locked: true }).pen).toBe("ellipse");
+  expect(pickTool({ ...t, locked: true }, "ellipse", "pen", true).locked).toBe(false); // Klick aufs Symbol löst
+});
 
 test("Stifttasten wählen Werkzeug für die Geste", () => {
   expect(toolFor({ pointerType: "pen", buttons: 1 }, "pen", S)).toBe("pen");

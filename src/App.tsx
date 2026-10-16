@@ -242,13 +242,15 @@ export default function App() {
           })}
         </div>
         <button className={btn + on(state.split)} onClick={() => setState(toggleSplit)} title="Fenster teilen: zwei PDFs nebeneinander">Teilen</button>
+        <button className={btn + on(settings.auto)} aria-pressed={settings.auto} onClick={() => updateSettings({ ...settings, auto: !settings.auto })}
+          title={`Automatisch wechseln: Stift zeichnet mit dem Stift-Werkzeug (Punkt), Maus wählt aus und tippt (Rahmen) – ${settings.auto ? "an" : "aus"}`}>⇄</button>
         <button className={btn + on(showSettings)} onClick={() => setShowSettings((s) => !s)} title="Stifttasten und Druck">Stift …</button>
         {error && <span className="text-sm text-red-400">{error}</span>}
         {showSettings && (
           <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
             {(["lasso", "eraser"] as const).map((k) => (
               <div key={k} className="flex items-center justify-between gap-2">
-                <span>{k === "lasso" ? "Lasso" : "Radierer"}: <span className="font-mono text-xs text-ink">{describe(settings[k])}</span></span>
+                <span>{k === "lasso" ? "Auswahl" : "Radierer"}: <span className="font-mono text-xs text-ink">{describe(settings[k])}</span></span>
                 <button className={btn + on(capture === k)} onClick={() => setCapture(capture === k ? undefined : k)}>
                   {capture === k ? "Taste jetzt drücken …" : "Ändern"}
                 </button>

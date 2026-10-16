@@ -8,7 +8,7 @@ import {
 } from "./ink";
 import * as ol from "./outline";
 import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
-import { loadPalettes, storePalettes, type Settings, type Tool } from "./settings";
+import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
@@ -44,7 +44,7 @@ const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 /** Werkzeug, Beschriftung, Tooltip, Kürzel */
 const TOOL_LABELS: [Tool, string, string, string][] = [
   ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
-  ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren", "a"], ["text", "Text", "Textfeld", "t"], ["line", "╱", "Linie", "l"],
+  ["lasso", "↖", "Auswahl/Text: Klick setzt Cursor/Textfeld, Ziehen wählt aus", "a/t"], ["line", "╱", "Linie", "l"],
   ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
   ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
   ["link", "Link", "Anker-Links: Rechteck ziehen, dann Zielstelle anklicken; Klick auf Link springt", "g"],
@@ -56,7 +56,7 @@ const LAYERS: [Layer, string, string][] = [
   [3, "✎", "Ebene 3: Notizen – Stift, Marker, Textfelder"],
 ];
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
-const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, text: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, form: 1 };
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, form: 1 };
 const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
 
 const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
@@ -96,7 +96,12 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [saved, setSaved] = useState<Snap>(init);
   const [version, setVersion] = useState(0);
   const [zoom, setZoom] = useState(1);
-  const [tool, setTool] = useState<Tool>("pen");
+  /** Werkzeug der Maus (bei `settings.auto`) bzw. aller Geräte; `penTool` = Werkzeug des Stifts bei `auto` */
+  const [tools, setTools] = useState(() => initTools(settings.auto));
+  const { mouse: tool, pen: penTool, locked } = tools;
+  const setTool = (t: Tool) => setTools((s) => ({ ...s, mouse: t }));
+  /** Tippen bei ausgewähltem Textfeld: PageView je Seite öffnet das Feld mit dem Zeichen am Ende */
+  const typers = useRef(new Map<number, (id: number, ch: string) => void>()).current;
   const [layer, setLayer] = useState<Layer>(3);
   /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
@@ -145,8 +150,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     clearSel();
     setTextSel(null);
   };
-  const chooseTool = (t: Tool) => {
-    setTool(t);
+  const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
+    setTools((s) => pickTool(s, t, dev, settings.auto));
     const l = TOOL_LAYER[t] ?? (t === "eraser" && layer === 1 ? 3 : undefined);
     if (l) switchLayer(l);
   };
@@ -467,6 +472,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         return;
       }
       if (inField(e.target) || e.altKey || e.metaKey) return;
+      // Tippen bei genau einem ausgewählten Textfeld → Cursor ans Ende, Zeichen einfügen (statt Werkzeug-Kürzel)
+      const [one] = selItems;
+      if (!e.ctrlKey && e.key.length === 1 && selItems.length === 1 && one?.kind === "text") {
+        e.preventDefault();
+        typers.get(selection.page)?.(one.id, e.key);
+        return;
+      }
       const k = e.key.toLowerCase();
       const act: Record<string, () => void> = e.ctrlKey ? {
         s: () => void (e.shiftKey ? saveAs() : save().catch(() => {})),
@@ -491,10 +503,17 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         delete: removeSel, backspace: removeSel,
         escape: () => {
           setLinkFrom(undefined);
+          setTools((s) => ({ ...s, locked: false, mouse: settings.auto ? "lasso" : s.mouse }));
           clearSel();
           setTextSel(null);
         },
-        ...Object.fromEntries(TOOL_LABELS.map(([t, , , key]) => [key, () => chooseTool(t)])),
+        ...Object.fromEntries(TOOL_LABELS.flatMap(([t, , , key]) => key.split("/").map((k) => [k, () => chooseTool(t)]))),
+        // Pfeiltasten schieben eigene ausgewählte Objekte (Umschalt = 10 pt)
+        ...(selItems.length ? Object.fromEntries(([["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, -1], ["arrowdown", 0, 1]] as const)
+          .map(([key, dx, dy]) => [key, () => {
+            const n = e.shiftKey ? 10 : 1;
+            edit((all) => all.map((it) => it.page === selection.page && selection.ids.includes(it.id) ? moveItem(it, dx * n, dy * n) : it));
+          }])) : {}),
         ...Object.fromEntries(LAYERS.map(([l]) => [String(l), () => switchLayer(l)])),
       };
       const f = act[k];
@@ -666,8 +685,19 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         <button className={btn} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} title="Strg+Z">↶</button>
         <button className={btn} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} title="Strg+Y">↷</button>
         {sep}
+        {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
         {TOOL_LABELS.map(([t, label, title, key]) => (
-          <button key={t} className={btn + on(tool === t)} onClick={() => chooseTool(t)} title={`${title} (${key.toUpperCase()})`}>{label}</button>
+          <button
+            key={t}
+            className={`${btn} relative${settings.auto ? (tool === t ? " ring-1 ring-inset ring-accent text-ink" : "") : on(tool === t)}`}
+            onClick={(e) => chooseTool(t, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
+            onDoubleClick={() => SHAPE_TOOLS.includes(t) && setTools((s) => ({ ...s, locked: true }))}
+            title={`${title} (${key.toUpperCase()})${SHAPE_TOOLS.includes(t) ? " – Doppelklick: bleibt aktiv" : ""}`}
+          >
+            {label}
+            {locked && (tool === t || (settings.auto && penTool === t)) && <span className="ml-0.5 text-xs" aria-label="gesperrt">🔒</span>}
+            {settings.auto && penTool === t && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label="Stift" />}
+          </button>
         ))}
         {sep}
         {LAYERS.map(([l, icon, title]) => (
@@ -708,13 +738,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           <summary className={btn + " list-none cursor-pointer"} title="Stärke, Farbe, Presets">⚙</summary>
           <div className="absolute left-0 top-full z-20 mt-1 flex w-56 flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm shadow-lg">
             <label className="flex flex-col gap-1">
-              {tool === "text" ? `Textgröße ${pal.text} pt` : `Stärke ${pick.size.toFixed(1)}`}
+              {tool === "lasso" ? `Textgröße ${pal.text} pt` : `Stärke ${pick.size.toFixed(1)}`}
               <input type="range" aria-label="Stärke"
-                min={tool === "text" ? 6 : 0.5} max={tool === "text" ? 72 : mk ? 40 : 20} step={tool === "text" ? 1 : 0.1}
-                value={tool === "text" ? pal.text : pick.size}
+                min={tool === "lasso" ? 6 : 0.5} max={tool === "lasso" ? 72 : mk ? 40 : 20} step={tool === "lasso" ? 1 : 0.1}
+                value={tool === "lasso" ? pal.text : pick.size}
                 onChange={(e) => {
                   const v = Number(e.target.value);
-                  if (tool === "text") setPal((p) => ({ ...p, text: v }));
+                  if (tool === "lasso") setPal((p) => ({ ...p, text: v }));
                   else setPick({ ...pick, size: v });
                 }} />
             </label>
@@ -962,6 +992,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 items={items.filter((x) => x.page === i)}
                 selected={selection.page === i ? selection.ids : []}
                 tool={tool}
+                penTool={settings.auto ? penTool : tool}
+                typers={typers}
                 preset={preset}
                 marker={marker}
                 textSize={pal.text}
@@ -973,6 +1005,12 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                   setTextSel(t && { ...t, page: i, v: version });
                 }}
                 onAdd={(it) => edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }])}
+                onShape={(it) => {
+                  edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }]);
+                  setTextSel(null);
+                  setSelection({ page: i, ids: [it.id] });
+                  setTools(afterShape);
+                }}
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
                 onSelect={(page, ids) => {

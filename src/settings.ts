@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { MARKERS, PRESETS, PRESSURE_MAX, TEXT_SIZE, type Preset } from "./ink";
 
-export const TOOLS = ["pen", "marker", "eraser", "lasso", "text", "line", "arrow", "rect", "ellipse", "form", "link"] as const;
+/** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus) */
+export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "form", "link"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Stifttaste: Zeigerart + Bitmaske aus PointerEvent.buttons (2 = Seitentaste, 32 = Radierer-Ende). */
@@ -12,6 +13,8 @@ const Settings = z.object({
   lasso: Binding,
   eraser: Binding,
   pressureMax: z.number().min(0.3).max(1),
+  /** Gerät bestimmt das Werkzeug: Stift → Stift-Werkzeug, Maus → Auswahl/Text (fehlt in alten Einstellungen → an) */
+  auto: z.boolean().default(true),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -19,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lasso: { pointerType: "pen", buttons: 2 },
   eraser: { pointerType: "pen", buttons: 32 },
   pressureMax: PRESSURE_MAX,
+  auto: true,
 };
 
 const KEY = "pdfnote.settings";
@@ -72,6 +76,38 @@ export function toolFor(e: { pointerType: string; buttons: number }, tool: Tool,
   if (matches(s.lasso, e)) return "lasso";
   return e.buttons === 1 ? tool : null;
 }
+
+/**
+ * Werkzeug je Gerät: `mouse` gilt ohne `auto` für alle Geräte, `pen` nur mit `auto` für den Stift.
+ * `prev` = Werkzeug vor einer Form (danach geht es dorthin zurück), `locked` = Form bleibt (Doppelklick aufs Symbol).
+ */
+export interface Tools { mouse: Tool; pen: Tool; prev: { mouse: Tool; pen: Tool }; locked: boolean }
+export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse"];
+export const initTools = (auto: boolean): Tools => ({ mouse: auto ? "lasso" : "pen", pen: "pen", prev: { mouse: "lasso", pen: "pen" }, locked: false });
+
+/** Werkzeug wählen; `dev` = womit. Bei `auto` setzt der Stift nur seins, die Maus ihres – Zeichenwerkzeuge gelten auch für den Stift. */
+export function pickTool(s: Tools, t: Tool, dev: "pen" | "mouse", auto: boolean): Tools {
+  const draw = t !== "lasso" && t !== "form" && t !== "link";
+  const mouse = !auto || dev === "mouse";
+  const pen = auto && (dev === "pen" || draw);
+  const shape = SHAPE_TOOLS.includes(t);
+  return {
+    mouse: mouse ? t : s.mouse,
+    pen: pen ? t : s.pen,
+    prev: {
+      mouse: mouse && shape && !SHAPE_TOOLS.includes(s.mouse) ? s.mouse : s.prev.mouse,
+      pen: pen && shape && !SHAPE_TOOLS.includes(s.pen) ? s.pen : s.prev.pen,
+    },
+    locked: false,
+  };
+}
+
+/** Nach dem Zeichnen einer Form: zurück zum vorherigen Werkzeug, außer mit Schloss. */
+export const afterShape = (s: Tools): Tools => s.locked ? s : {
+  ...s,
+  mouse: SHAPE_TOOLS.includes(s.mouse) ? s.prev.mouse : s.mouse,
+  pen: SHAPE_TOOLS.includes(s.pen) ? s.prev.pen : s.pen,
+};
 
 /** Taste aus einem Ereignis lernen: alles außer Spitze/linker Taste. */
 export const captureBinding = (e: { pointerType: string; buttons: number }): Binding | null =>
