@@ -52,10 +52,11 @@ pub fn render_png(doc: &PdfDocument, index: i32, scale: f32) -> Result<Vec<u8>, 
     Ok(out)
 }
 
-/// Scan-Seite: kein Text, nur ein Bild über (fast) die ganze Seite → Seite ist fester Hintergrund,
+/// Scan-Seite: kein sichtbarer Text, nur ein Bild über (fast) die ganze Seite → Seite ist fester Hintergrund,
 /// Elemente darin werden nicht auswählbar.
 pub fn is_scan(doc: &PdfDocument, index: i32) -> Result<bool, Error> {
-    use mupdf::text_page::TextBlockType;
+    use mupdf::text_page::{TextBlockType, TextCharFlags};
+    let drawn = TextCharFlags::FILLED | TextCharFlags::STROKED;
     let page = doc.load_page(index)?;
     let area = |r: Rect| (r.x1 - r.x0).max(0.0) * (r.y1 - r.y0).max(0.0);
     let full = area(page.bounds()?);
@@ -63,6 +64,8 @@ pub fn is_scan(doc: &PdfDocument, index: i32) -> Result<bool, Error> {
     for b in page.to_text_page(TextPageFlags::PRESERVE_IMAGES)?.blocks() {
         match b.r#type() {
             TextBlockType::Image if area(b.bounds()) >= 0.9 * full => images += 1,
+            // unsichtbarer Text (OCR, `3 Tr`) macht aus dem Scan keine Textseite
+            TextBlockType::Text if b.lines().all(|l| l.chars().all(|c| !c.flags().intersects(drawn))) => {}
             _ => return Ok(false),
         }
     }
@@ -80,6 +83,16 @@ pub enum Kind {
     Ellipse,
     Text,
     Image,
+}
+
+impl Kind {
+    /// Ebene ohne Angabe (alte PDFs): Geschriebenes → 3, Eingefügtes → 2.
+    fn layer(self) -> u8 {
+        match self {
+            Kind::Ink | Kind::Marker | Kind::Text => 3,
+            _ => 2,
+        }
+    }
 }
 
 /// Eigenes Objekt. Punkte in pt relativ zur linken oberen Seitenecke, dritter Wert = Druck.
@@ -101,6 +114,9 @@ pub struct Item {
     /// Bild: PNG/JPEG als Base64. Liegt in der PDF nur als Stamp-Bild, nicht doppelt in den Daten.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub image: String,
+    /// Ebene 2 = Eingefügtes, 3 = Geschriebenes (1 = PDF-Inhalt, nie ein eigenes Objekt); fehlt → nach Art
+    #[serde(default)]
+    pub layer: u8,
 }
 
 const IMAGE_MAX: usize = 64 << 20; // Base64-Länge
@@ -117,10 +133,14 @@ impl Item {
             && self.points.iter().flatten().chain(&self.color).chain([&self.opacity, &self.size, &self.width]).all(|v| v.is_finite())
     }
 
+    pub fn layer(&self) -> u8 {
+        if matches!(self.layer, 2 | 3) { self.layer } else { self.kind.layer() }
+    }
+
     /// Gespeicherte Daten: auf 0,01 gerundet, damit die PDF nicht unnötig wächst.
     fn data(&self) -> String {
         let r = |v: f32| (v * 100.0).round() / 100.0;
-        let it = Item { points: self.points.iter().map(|p| p.map(r)).collect(), image: String::new(), ..self.clone() };
+        let it = Item { points: self.points.iter().map(|p| p.map(r)).collect(), image: String::new(), layer: self.layer(), ..self.clone() };
         serde_json::to_string(&it).unwrap_or_default()
     }
 }
@@ -247,7 +267,7 @@ fn stamp_png(annot: &PdfAnnotation) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
-fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item) -> Result<(), Error> {
+fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Option<PdfObject>; 2]) -> Result<(), Error> {
     let b = page.bounds()?;
     let pt = |p: &[f32; 3]| Point::new(b.x0 + p[0], b.y0 + p[1]);
     let rect = || {
@@ -286,6 +306,9 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item) -> Result<(), 
         annot.set_opacity(it.opacity.clamp(0.05, 1.0))?;
     }
     annot.object().dict_put(OWN_KEY, PdfObject::new_string(&it.data())?)?;
+    if let Some(g) = &groups[(it.layer() - 2) as usize] {
+        annot.object().dict_put("OC", g.clone())?;
+    }
     annot.update()?;
     if it.kind == Kind::Marker {
         set_multiply(&annot)?;
@@ -293,12 +316,111 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item) -> Result<(), 
     Ok(())
 }
 
+/// Namen der PDF-Ebenen (Optional Content Groups) für Ebene 2 und 3; Ebene 1 (PDF-Inhalt) hat keine.
+pub const LAYER_NAMES: [&str; 2] = ["PDF Note – Elemente", "PDF Note – Notizen"];
+
+fn name_of(o: &PdfObject) -> Result<Option<String>, Error> {
+    o.get_dict("Name")?.map(|n| n.as_string()).transpose()
+}
+
+fn remove_own_groups(arr: &mut PdfObject) -> Result<(), Error> {
+    for i in (0..arr.len()? as i32).rev() {
+        if let Some(o) = arr.get_array(i)? {
+            if name_of(&o)?.is_some_and(|n| LAYER_NAMES.contains(&n.as_str())) {
+                arr.array_delete(i)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Eigene Ebenen aus `/OCProperties` entfernen (fremde bleiben); keine Ebene mehr übrig → `/OCProperties` weg.
+/// Verwaiste OCG-Objekte räumt das Garbage-Collect beim Schreiben weg.
+fn clear_layers(doc: &PdfDocument) -> Result<(), Error> {
+    let mut cat = doc.catalog()?;
+    let Some(props) = cat.get_dict("OCProperties")? else { return Ok(()) };
+    if let Some(d) = props.get_dict("D")? {
+        for k in ["Order", "ON", "OFF", "Locked"] {
+            if let Some(mut a) = d.get_dict(k)? {
+                remove_own_groups(&mut a)?;
+            }
+        }
+    }
+    match props.get_dict("OCGs")? {
+        Some(mut a) => {
+            remove_own_groups(&mut a)?;
+            if a.len()? == 0 {
+                cat.dict_delete("OCProperties")?;
+            }
+        }
+        None => cat.dict_delete("OCProperties")?,
+    }
+    Ok(())
+}
+
+/// Ebenen 2/3 als OCGs neu anlegen (nur benötigte); vorher eigene alte entfernen → nie doppelt.
+fn add_layers(doc: &mut PdfDocument, need: [bool; 2]) -> Result<[Option<PdfObject>; 2], Error> {
+    clear_layers(doc)?;
+    let mut out = [None, None];
+    if !need.contains(&true) {
+        return Ok(out);
+    }
+    let mut cat = doc.catalog()?;
+    let mut props = match cat.get_dict("OCProperties")? { Some(p) => p, None => doc.new_dict()? };
+    let mut ocgs = match props.get_dict("OCGs")? { Some(a) => a, None => doc.new_array()? };
+    let mut d = match props.get_dict("D")? { Some(d) => d, None => doc.new_dict()? };
+    let mut order = match d.get_dict("Order")? { Some(a) => a, None => doc.new_array()? };
+    for (i, name) in LAYER_NAMES.iter().enumerate() {
+        if !need[i] {
+            continue;
+        }
+        let mut g = doc.new_dict()?;
+        g.dict_put("Type", PdfObject::new_name("OCG")?)?;
+        g.dict_put("Name", PdfObject::new_string(name)?)?;
+        let g = doc.add_object(&g)?;
+        ocgs.array_push(g.clone())?;
+        order.array_push(g.clone())?;
+        out[i] = Some(g);
+    }
+    d.dict_put("Order", order)?;
+    props.dict_put("D", d)?;
+    props.dict_put("OCGs", ocgs)?;
+    cat.dict_put("OCProperties", props)?;
+    Ok(out)
+}
+
+/// Ebenen-Name (OCG aus `/OC`) je Annotation einer Seite – für Tests.
+pub fn annotation_layers(doc: &PdfDocument, index: i32) -> Result<Vec<Option<String>>, Error> {
+    let page = doc.load_pdf_page(index)?;
+    let mut out = Vec::new();
+    for a in page.annotations() {
+        out.push(match a.object().get_dict("OC")? { Some(g) => name_of(&g)?, None => None });
+    }
+    Ok(out)
+}
+
+/// Namen aller OCGs des Dokuments – für Tests.
+pub fn layer_names(doc: &PdfDocument) -> Result<Vec<String>, Error> {
+    let mut out = Vec::new();
+    if let Some(a) = doc.catalog()?.get_dict("OCProperties")?.map(|p| p.get_dict("OCGs")).transpose()?.flatten() {
+        for i in 0..a.len()? as i32 {
+            if let Some(o) = a.get_array(i)? {
+                out.push(name_of(&o)?.unwrap_or_default());
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Fügt jedes Objekt als eigene Annotation ein (Radierer löscht später ganze Objekte).
-pub fn add_items(doc: &mut PdfDocument, items: &[Item]) -> Result<(), String> {
+/// `layers`: Annotationen per `/OC` den PDF-Ebenen „Elemente“/„Notizen“ zuordnen (nicht beim Einbrennen).
+pub fn add_items(doc: &mut PdfDocument, items: &[Item], layers: bool) -> Result<(), String> {
     let count = doc.page_count().map_err(|e| e.to_string())?;
     if let Some(bad) = items.iter().find(|it| !it.valid(count)) {
         return Err(format!("ungültiges Objekt auf Seite {}", bad.page + 1));
     }
+    let need = if layers { [2, 3].map(|l| items.iter().any(|it| it.layer() == l)) } else { [false; 2] };
+    let groups = add_layers(doc, need).map_err(|e| e.to_string())?;
     for page_no in 0..count {
         let on_page: Vec<_> = items.iter().filter(|it| it.page == page_no).collect();
         if on_page.is_empty() {
@@ -307,7 +429,7 @@ pub fn add_items(doc: &mut PdfDocument, items: &[Item]) -> Result<(), String> {
         let run = || -> Result<(), Error> {
             let mut page = doc.load_pdf_page(page_no)?;
             for it in on_page {
-                add_item(doc, &mut page, it)?;
+                add_item(doc, &mut page, it, &groups)?;
             }
             page.update()?;
             Ok(())
@@ -328,6 +450,7 @@ pub fn take_own(doc: &PdfDocument, pages: std::ops::Range<i32>) -> Result<Vec<It
             let data = a.object().get_dict(OWN_KEY)?.map(|d| d.as_string()).transpose()?;
             if let Some(mut it) = data.and_then(|d| serde_json::from_str::<Item>(&d).ok()) {
                 it.page = page_no;
+                it.layer = it.layer();
                 if it.kind == Kind::Image {
                     use base64::Engine;
                     it.image = stamp_png(&a).map(|p| base64::engine::general_purpose::STANDARD.encode(p)).unwrap_or_default();
@@ -351,7 +474,7 @@ pub fn take_own(doc: &PdfDocument, pages: std::ops::Range<i32>) -> Result<Vec<It
 /// Speichern: Kopie des Arbeitsdokuments + Objekte, optional eingebrannt (flach), atomar nach `path`.
 pub fn save(doc: &PdfDocument, items: &[Item], path: &Path, flat: bool) -> Result<(), String> {
     let mut copy = PdfDocument::from_bytes(&to_bytes(doc)?).map_err(|e| e.to_string())?;
-    add_items(&mut copy, items)?;
+    add_items(&mut copy, items, !flat)?;
     if flat {
         copy.bake(true, false).map_err(|e| e.to_string())?;
     }
@@ -559,7 +682,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new() }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer() }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -653,7 +776,7 @@ mod tests {
         assert_eq!(got.samples(), &want[..], "Pixel inkl. Alpha");
         assert_eq!(Item { image: String::new(), ..taken[0].clone() }, Item { image: String::new(), ..img });
         // Bild ohne Daten / Daten ohne Bild abgelehnt
-        assert!(add_items(&mut doc, &[item(Kind::Image, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]])]).is_err());
+        assert!(add_items(&mut doc, &[item(Kind::Image, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]])], true).is_err());
         let _ = std::fs::remove_file(path);
     }
 
@@ -677,7 +800,7 @@ mod tests {
     fn marker_multipliziert() {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
-        add_items(&mut doc, &all_kinds()[1..2]).unwrap();
+        add_items(&mut doc, &all_kinds()[1..2], true).unwrap();
         let page = doc.load_pdf_page(0).unwrap();
         let a = page.annotations().next().unwrap();
         let gs = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap()
@@ -693,7 +816,7 @@ mod tests {
         let mut page = doc.load_pdf_page(0).unwrap();
         page.add_ink_annotation([[Point::new(1.0, 1.0), Point::new(5.0, 5.0)]]).unwrap();
         page.update().unwrap();
-        add_items(&mut doc, &all_kinds()[..1]).unwrap();
+        add_items(&mut doc, &all_kinds()[..1], true).unwrap();
         // kaputte eigene Daten → bleibt als fremde Annotation stehen
         let mut page = doc.load_pdf_page(0).unwrap();
         let bad = page.add_rect_annotation(Rect::new(1.0, 1.0, 9.0, 9.0)).unwrap();
@@ -708,10 +831,10 @@ mod tests {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
         let ok = item(Kind::Ink, vec![[1.0, 1.0, 0.5]]);
-        assert!(add_items(&mut doc, &[Item { page: 5, ..ok.clone() }]).is_err());
-        assert!(add_items(&mut doc, &[Item { points: vec![[f32::NAN, 0.0, 0.5]], ..ok.clone() }]).is_err());
-        assert!(add_items(&mut doc, &[item(Kind::Rect, vec![[1.0, 1.0, 0.5]])]).is_err());
-        assert!(add_items(&mut doc, &[ok]).is_ok());
+        assert!(add_items(&mut doc, &[Item { page: 5, ..ok.clone() }], true).is_err());
+        assert!(add_items(&mut doc, &[Item { points: vec![[f32::NAN, 0.0, 0.5]], ..ok.clone() }], true).is_err());
+        assert!(add_items(&mut doc, &[item(Kind::Rect, vec![[1.0, 1.0, 0.5]])], true).is_err());
+        assert!(add_items(&mut doc, &[ok], true).is_ok());
     }
 
     #[test]
@@ -725,6 +848,42 @@ mod tests {
         // Inhalt jetzt im Seiteninhalt: Text des Textfelds ist Seitentext
         assert!(page_texts(&back).unwrap()[0].contains("Grüße"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ebenen_als_ocgs() {
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let mut items = all_kinds();
+        items[2].layer = 3; // Linie manuell in Ebene 3
+        let path = tmp("ocg");
+        save(&doc, &items, &path, false).unwrap();
+        // zweimal speichern → keine doppelten OCGs
+        let back = open(&path).unwrap();
+        let taken = take_own(&back, 0..1).unwrap();
+        assert_eq!(taken, items, "Ebene bleibt erhalten");
+        save(&back, &taken, &path, false).unwrap();
+        let again = open(&path).unwrap();
+        assert_eq!(layer_names(&again).unwrap(), LAYER_NAMES.to_vec());
+        let want: Vec<_> = items.iter().map(|it| Some(LAYER_NAMES[(it.layer() - 2) as usize].to_string())).collect();
+        assert_eq!(annotation_layers(&again, 0).unwrap(), want);
+        // nur Ebene 3 benutzt → nur „Notizen“
+        save(&doc, &items[..1], &path, false).unwrap();
+        assert_eq!(layer_names(&open(&path).unwrap()).unwrap(), vec![LAYER_NAMES[1]]);
+        // Einbrennen → keine Ebenen
+        let flat = tmp("ocg-flat");
+        save(&again, &taken, &flat, true).unwrap();
+        assert!(layer_names(&open(&flat).unwrap()).unwrap().is_empty());
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(flat);
+    }
+
+    #[test]
+    fn ebene_fehlt_nach_objektart() {
+        let old: Item = serde_json::from_str(r#"{"page":0,"kind":"rect","color":[0,0,0],"opacity":1,"size":1,"width":1,"points":[]}"#).unwrap();
+        assert_eq!((old.layer, old.layer()), (0, 2));
+        assert_eq!(Item { kind: Kind::Marker, ..old.clone() }.layer(), 3);
+        assert_eq!(Item { layer: 3, ..old }.layer(), 3);
     }
 
     #[test]

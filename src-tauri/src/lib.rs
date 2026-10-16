@@ -230,6 +230,12 @@ async fn text_paragraphs(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Re
     w.run(move |d| text::paragraphs(&doc(d, id)?.doc, index)).await
 }
 
+/// Zeichen einer Seite (inkl. OCR-Text) für die Textauswahl.
+#[tauri::command]
+async fn text_chars(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<text::CharLine>, String> {
+    w.run(move |d| text::chars(&doc(d, id)?.doc, index)).await
+}
+
 /// Formularfelder einer Seite.
 #[tauri::command]
 async fn form_fields(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<form::Field>, String> {
@@ -307,7 +313,7 @@ pub fn run() {
             let _ = ocr::TESSDATA.set(app.path().resource_dir()?.join("tessdata"));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path, search, links])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path, search, links])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

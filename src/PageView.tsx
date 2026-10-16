@@ -3,9 +3,10 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
   box, drawItems, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, scaleItem,
-  TEXT_SIZE, textRect, unionBox, type InkPoint, type Item, type Preset,
+  layerOf, TEXT_SIZE, textRect, unionBox, type InkPoint, type Item, type Layer, type Preset,
 } from "./ink";
 import { toolFor, type Settings, type Tool } from "./settings";
+import { CharLine, posAt, selRange, type Pos } from "./textsel";
 
 /**
  * Rendert die Seite nur, solange sie (± eine Bildschirmhöhe) sichtbar ist; sonst Bild freigeben.
@@ -86,7 +87,8 @@ type Gesture =
   | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; straight: boolean } | null }
   | { t: "shape"; item: Item }
   | { t: "erase"; ids: Set<number> }
-  | { t: "lasso"; poly: [number, number][] }
+  | { t: "lasso"; poly: [number, number][]; rect: boolean }
+  | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean }
   | { t: "move"; x: number; y: number; dx: number; dy: number }
   | { t: "scale"; ox: number; oy: number; d0: number; s: number }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
@@ -122,9 +124,16 @@ function smallestAt(its: Item[], x: number, y: number) {
     .sort((a, b) => area(a) - area(b))[0];
 }
 
+/** Markierter PDF-Text der Seite (Stellen in `text_chars`) */
+export interface TextSel { a: Pos; b: Pos; text: string }
+
 export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
   items: Item[]; selected: number[]; tool: Tool; preset: Preset; marker: Preset; settings: Settings;
+  /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
+  layer: Layer;
+  textSel: TextSel | null;
+  onTextSel: (sel: TextSel | null) => void;
   onAdd: (it: Item) => void;
   onRemove: (ids: number[]) => void;
   onReplace: (items: Item[]) => void;
@@ -164,10 +173,11 @@ export function PageView(p: PageProps) {
   const [url, visible] = usePageImage(ref, doc, index, zoom * devicePixelRatio, version);
   const [w, h] = [size[0] * zoom, size[1] * zoom];
 
-  // Original-Objekte der PDF (nur Lasso): als Pseudo-Bild-Objekte mit Id −1 − Index, nicht gezeichnet
+  // Ebene 1: Original-Objekte, Absätze und Zeichen der PDF laden
+  const lassoOn = p.layer === 1 && visible;
+  // Original-Objekte der PDF: als Pseudo-Bild-Objekte mit Id −1 − Index, nicht gezeichnet
   // Boxen gehören zu einem Stand (`version`); veraltete Indizes nie verwenden
   const [origBoxes, setOrigBoxes] = useState<{ v: number; b: number[][] }>({ v: -1, b: [] });
-  const lassoOn = tool === "lasso" && visible;
   useEffect(() => {
     if (!lassoOn) return;
     let live = true;
@@ -178,20 +188,26 @@ export function PageView(p: PageProps) {
     id: -1 - i, page: index, kind: "image", color: [0, 0, 0], opacity: 1, size: 0, simulated: false,
     points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
   })) : [];
-  // Textabsätze der PDF (nur PDF-Text-Werkzeug), ebenfalls je Stand
-  const [paras, setParas] = useState<{ v: number; list: Para[] }>({ v: -1, list: [] });
+  // Textabsätze (Klick bearbeitet) und Zeichen inkl. OCR-Text (Ziehen markiert), je Stand
+  const [paras, setParas] = useState<{ v: number; list: Para[]; chars: CharLine[] }>({ v: -1, list: [], chars: [] });
   const [pedit, setPedit] = useState<number>();
-  const textOn = tool === "pdftext" && visible;
+  // Index gilt nur für Stand + Ebene: nach Undo/Seitenoperation/Ebenenwechsel Editor schließen
+  const [peditKey, setPeditKey] = useState(`${version}/${p.layer}`);
+  if (peditKey !== `${version}/${p.layer}`) {
+    setPeditKey(`${version}/${p.layer}`);
+    setPedit(undefined);
+  }
   useEffect(() => {
-    if (!textOn) return;
+    if (!lassoOn) return;
     let live = true;
-    invoke("text_paragraphs", { id: doc, index }).then(
-      (r) => live && setParas({ v: version, list: z.array(Para).parse(r) }),
-      () => live && setParas({ v: version, list: [] }),
+    Promise.all([invoke("text_paragraphs", { id: doc, index }), invoke("text_chars", { id: doc, index })]).then(
+      ([r, c]) => live && setParas({ v: version, list: z.array(Para).parse(r), chars: z.array(CharLine).parse(c) }),
+      () => live && setParas({ v: version, list: [], chars: [] }),
     );
     return () => void (live = false);
-  }, [doc, index, version, textOn]);
-  const plist = textOn && paras.v === version ? paras.list : [];
+  }, [doc, index, version, lassoOn]);
+  const plist = lassoOn && paras.v === version ? paras.list : [];
+  const clist = lassoOn && paras.v === version ? paras.chars : [];
   // Formularfelder: alte Liste bleibt bis zur neuen stehen, sonst verlieren die Eingaben nach jedem Wert den Fokus (Tab)
   const [fields, setFields] = useState<Field[]>([]);
   const [newf, setNewf] = useState<NewField["rect"]>();
@@ -270,7 +286,8 @@ export function PageView(p: PageProps) {
   const eraseAt = (x: number, y: number) => {
     const c = g.current;
     if (c?.t !== "erase") return;
-    for (const it of items) if (hitTest(it, x, y, ERASER_PX / zoom)) c.ids.add(it.id);
+    const l = p.layer === 1 ? 3 : p.layer;
+    for (const it of items) if (layerOf(it) === l && hitTest(it, x, y, ERASER_PX / zoom)) c.ids.add(it.id);
   };
 
   const make = (kind: Item["kind"], pr: Preset, q: InkPoint, simulated: boolean): Item => ({
@@ -307,10 +324,9 @@ export function PageView(p: PageProps) {
       g.current = { t: "link", x, y, dx: 0, dy: 0 };
       return rerender();
     }
-    if (t === "pdftext") {
-      const i = paraAt(x, y);
-      setPedit(undefined);
-      if (i >= 0) g.current = { t: "para", i, x, y, dx: 0, dy: 0 };
+    // Griffleiste über dem bearbeiteten Absatz verschiebt ihn
+    if (pedit !== undefined && (e.target as Element).closest("[data-grip]")) {
+      g.current = { t: "para", i: pedit, x, y, dx: 0, dy: 0 };
       return rerender();
     }
     if (t === "pen" || t === "marker") {
@@ -328,7 +344,10 @@ export function PageView(p: PageProps) {
       } else if (b && x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) {
         g.current = { t: "move", x, y, dx: 0, dy: 0 };
       } else {
-        g.current = { t: "lasso", poly: [[x, y]] };
+        const at = p.layer === 1 ? posAt(clist, x, y) : null;
+        setPedit(undefined);
+        // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck
+        g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen" };
       }
       rerender();
     } else {
@@ -367,8 +386,15 @@ export function PageView(p: PageProps) {
       case "erase":
         for (const ev of evs) eraseAt(...(pt(ev).slice(0, 2) as [number, number]));
         return schedule();
-      case "lasso":
-        c.poly.push([x, y]);
+      case "lasso": {
+        const [x0, y0] = c.poly[0] ?? [x, y];
+        if (c.rect) c.poly = [[x0, y0], [x, y0], [x, y], [x0, y], [x0, y0]];
+        else c.poly.push([x, y]);
+        break;
+      }
+      case "tsel":
+        c.b = posAt(clist, x, y, true) ?? c.b;
+        c.moved ||= Math.hypot(x - c.x, y - c.y) * zoom > 3;
         break;
       case "move":
       case "para":
@@ -406,13 +432,23 @@ export function PageView(p: PageProps) {
       case "lasso": {
         const [x0, y0] = c.poly[0] ?? [0, 0];
         const far = c.poly.some(([x, y]) => Math.hypot(x - x0, y - y0) > 3);
+        // nur die aktive Ebene ist wählbar
+        const cand = p.layer === 1 ? origs : items.filter((it) => layerOf(it) === p.layer);
         const ids = far
-          ? [...items, ...origs].filter((it) => {
+          ? cand.filter((it) => {
             const b = box(it);
             return inPolygon((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, c.poly);
           }).map((it) => it.id)
-          : items.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id ?? smallestAt(origs, x0, y0)?.id;
+          : p.layer === 1 ? smallestAt(origs, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id;
         p.onSelect(index, ids === undefined ? [] : Array.isArray(ids) ? ids : [ids]);
+        break;
+      }
+      case "tsel": {
+        const i = paraAt(c.x, c.y);
+        if (!c.moved) {
+          p.onTextSel(null);
+          if (i >= 0) setPedit(i);
+        } else p.onTextSel({ a: c.a, b: c.b, text: selRange(clist, c.a, c.b).text });
         break;
       }
       case "move":
@@ -421,8 +457,10 @@ export function PageView(p: PageProps) {
       case "para": {
         const para = plist[c.i];
         // kurzes Zucken = Klick → bearbeiten
-        if (para && Math.hypot(c.dx, c.dy) * zoom > 3) p.onText({ para: c.i, text: para.text, dx: c.dx, dy: c.dy });
-        else setPedit(c.i);
+        if (para && Math.hypot(c.dx, c.dy) * zoom > 3) {
+          setPedit(undefined);
+          p.onText({ para: c.i, text: para.text, dx: c.dx, dy: c.dy });
+        } else setPedit(c.i);
         break;
       }
       case "field":
@@ -497,6 +535,8 @@ export function PageView(p: PageProps) {
 
   const sb = sel.length ? unionBox(sel.map(transform)) : null;
   const lasso = gs?.t === "lasso" ? gs.poly : null;
+  const ts = gs?.t === "tsel" ? gs : p.textSel;
+  const tsRects = ts && clist.length ? selRange(clist, ts.a, ts.b).rects : [];
   const hoverD = hover && (hover.tool === "eraser" ? 2 * ERASER_PX
     : hover.tool === "pen" ? preset.size * zoom : hover.tool === "marker" ? marker.size * zoom : 0);
 
@@ -505,7 +545,7 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
       onPointerDown={down}
       onMouseDown={(e) => {
         if (textDown.current) e.preventDefault();
@@ -551,14 +591,21 @@ export function PageView(p: PageProps) {
           }}
         />
       ) : null}
+      {tsRects.map(([x0, y0, x1, y1], i) => (
+        <div key={`s${i}`} className="pointer-events-none absolute bg-accent/30"
+          style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }} />
+      ))}
+      {/* bearbeiteter Absatz: Rahmen + Griffleiste zum Verschieben */}
       {plist.map(({ bbox: [x0, y0, x1, y1] }, i) => {
         const m = gs?.t === "para" && gs.i === i ? gs : { dx: 0, dy: 0 };
-        return (
+        return pedit === i && (
           <div
             key={i}
-            className={`pointer-events-none absolute border border-dashed ${m.dx || m.dy || pedit === i ? "border-accent" : "border-accent/30"}`}
+            className="pointer-events-none absolute border border-dashed border-accent"
             style={{ left: (x0 + m.dx) * zoom - 2, top: (y0 + m.dy) * zoom - 2, width: (x1 - x0) * zoom + 4, height: (y1 - y0) * zoom + 4 }}
-          />
+          >
+            <span data-grip title="Absatz verschieben" className="pointer-events-auto absolute -top-3 left-0 h-2.5 w-full cursor-move rounded-xs bg-accent/60" />
+          </div>
         );
       })}
       {/* Felder in PDF-Reihenfolge → Tab springt zum nächsten; Haken/Punkt zeigt das Seitenbild, Eingabe liegt unsichtbar darüber */}

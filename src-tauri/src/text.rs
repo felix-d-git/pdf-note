@@ -107,6 +107,41 @@ fn lines(page: &PdfPage) -> Result<Vec<Line>, Error> {
     Ok(out)
 }
 
+/// Textzeile zum Markieren/Kopieren: ein Rechteck je Zeichen (`text` zeichenweise gleich lang wie `boxes`).
+#[derive(Serialize, Debug, Clone)]
+pub struct CharLine {
+    pub text: String,
+    pub boxes: Vec<[f32; 4]>,
+}
+
+/// Alle Zeichen einer Seite inkl. unsichtbarem OCR-Text (auch auf Scan-Seiten) – für die Textauswahl in Ebene 1.
+pub fn chars(doc: &PdfDocument, index: i32) -> Result<Vec<CharLine>, String> {
+    let err = |e: Error| e.to_string();
+    if !(0..doc.page_count().map_err(err)?).contains(&index) {
+        return Err("ungültige Seite".into());
+    }
+    let page = doc.load_page(index).map_err(err)?;
+    let b = page.bounds().map_err(err)?;
+    let mut out = Vec::new();
+    for block in page.to_text_page(TextPageFlags::empty()).map_err(err)?.blocks() {
+        for l in block.lines() {
+            let mut line = CharLine { text: String::new(), boxes: Vec::new() };
+            for c in l.chars() {
+                let q = c.quad();
+                let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x].map(|v| v - b.x0);
+                let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y].map(|v| v - b.y0);
+                let (lo, hi) = (|v: [f32; 4]| v.into_iter().fold(f32::MAX, f32::min), |v: [f32; 4]| v.into_iter().fold(f32::MIN, f32::max));
+                line.text.push(c.char().unwrap_or(char::REPLACEMENT_CHARACTER));
+                line.boxes.push([lo(xs), lo(ys), hi(xs), hi(ys)]);
+            }
+            if !line.boxes.is_empty() {
+                out.push(line);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Serif/Mono der Originalschrift. MuPDF meldet Serif auch für Aptos/Calibri/URW-Sans (Word setzt in
 /// `/Flags` kein Serif-Bit, auch nicht bei Times) → zuerst bekannte Namen.
 // ponytail: Namensliste; unbekannte Schriften → MuPDF-Flag, mehr Namen ergänzen, wenn Ersatz danebenliegt

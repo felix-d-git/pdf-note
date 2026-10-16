@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { DEFAULT_PRESET, type Item } from "./ink";
+import { DEFAULT_PRESET, type Item, type Layer } from "./ink";
 import { PageView } from "./PageView";
 import { DEFAULT_SETTINGS, type Tool } from "./settings";
 
@@ -31,19 +31,20 @@ const flushFrames = () => act(() => {
 let root: Root;
 let host: HTMLDivElement;
 // Zugriff auf den Zustand des Testelternteils (nach jedem Render gesetzt)
-const ui: { added: Item[]; setTool: (t: Tool) => void } = { added: [], setTool: () => {} };
+const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { added: [], setTool: () => {}, selected: [] };
 
-function Page({ start }: { start: Tool }) {
-  const [items, setItems] = useState<Item[]>([]);
+function Page({ start, layer = 3, init = [] }: { start: Tool; layer?: Layer; init?: Item[] }) {
+  const [items, setItems] = useState<Item[]>(init);
   const [tool, st] = useState(start);
   useEffect(() => void Object.assign(ui, { added: items, setTool: st }), [items]);
   return (
     <PageView
       doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={[]} tool={tool}
       preset={DEFAULT_PRESET} marker={DEFAULT_PRESET} settings={DEFAULT_SETTINGS}
-      onAdd={(it) => setItems((xs) => [...xs, it])} onRemove={() => {}} onReplace={() => {}} onSelect={() => {}}
+      onAdd={(it) => setItems((xs) => [...xs, it])} onRemove={() => {}} onReplace={() => {}} onSelect={(_, ids) => void (ui.selected = ids)}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
+      layer={layer} textSel={null} onTextSel={() => {}}
     />
   );
 }
@@ -71,9 +72,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = (tool: Tool) => {
+const mount = (tool: Tool, layer?: Layer, init?: Item[]) => {
   root = createRoot(host);
-  act(() => root.render(<Page start={tool} />));
+  act(() => root.render(<Page start={tool} layer={layer} init={init} />));
   return host.querySelector("[data-page]") as HTMLDivElement;
 };
 
@@ -119,4 +120,19 @@ test("50 schnelle Striche und Formen bleiben alle sichtbar", () => {
     expect(draws.at(-1)).toHaveLength(i + 1);
   }
   expect(ui.added).toHaveLength(50);
+});
+
+test("Auswahl trifft nur die aktive Ebene", () => {
+  const obj = (id: number, kind: Item["kind"], x: number): Item => ({
+    id, page: 0, kind, color: [0, 0, 0], opacity: 1, size: 2, simulated: false, points: [[x, 100, 0.5], [x + 20, 120, 0.5]], text: "",
+  });
+  const init = [obj(1, "ink", 100), obj(2, "rect", 200), obj(3, "rect", 300)];
+  init[2] = { ...obj(3, "rect", 300), layer: 3 }; // manuell auf Ebene 3 gezeichnet
+  const page = mount("lasso", 3, init);
+  // Maus zieht ein Rechteck über alle drei Objekte
+  fire(page, "pointerdown", 50, 50);
+  fire(page, "pointermove", 400, 50);
+  fire(page, "pointermove", 400, 200);
+  fire(page, "pointerup", 400, 200, 0);
+  expect(ui.selected).toEqual([1, 3]);
 });
