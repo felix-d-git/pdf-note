@@ -150,6 +150,10 @@ export function PageView(p: PageProps) {
   const ref = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const g = useRef<Gesture>(null);
+  // ein ausstehender Frame: sonst übermalt ein veralteter rAF nach `up` den gerade übernommenen Strich
+  const frame = useRef(0);
+  // Text-Klick: folgendes mousedown würde der neuen Textarea den Fokus nehmen (Blur → leeres Feld verworfen)
+  const textDown = useRef(false);
   // Geste gehört einem Zeiger; aufliegender Handballen o. Ä. darf sie nicht stören
   const owner = useRef(-1);
   // Abbild der Geste für das Rendern (Ref selbst darf im Render nicht gelesen werden)
@@ -233,6 +237,10 @@ export function PageView(p: PageProps) {
     if (ctx) drawItems(ctx, shown(), zoom);
   };
   useEffect(redraw);
+  const schedule = () => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(redraw);
+  };
   // Bilder laden asynchron → danach neu zeichnen
   useEffect(() => {
     addEventListener(IMAGE_LOADED, redraw);
@@ -282,7 +290,10 @@ export function PageView(p: PageProps) {
     if (t === "text") {
       const hit = items.findLast((it) => it.kind === "text" && hitTest(it, x, y, 0));
       // Klick während des Bearbeitens schließt erst das offene Feld (Blur speichert)
-      if (!edit) setEdit(hit ? { item: hit, isNew: false } : { item: make("text", preset, q, false), isNew: true });
+      if (!edit) {
+        textDown.current = true;
+        setEdit(hit ? { item: hit, isNew: false } : { item: make("text", preset, q, false), isNew: true });
+      }
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -349,13 +360,13 @@ export function PageView(p: PageProps) {
             if (hd && Math.hypot(r[0] - hd.x, r[1] - hd.y) > HOLD_TOL) armHold(r[0], r[1]);
           }
         }
-        return void requestAnimationFrame(redraw);
+        return schedule();
       case "shape":
         c.item.points[1] = q;
-        return void requestAnimationFrame(redraw);
+        return schedule();
       case "erase":
         for (const ev of evs) eraseAt(...(pt(ev).slice(0, 2) as [number, number]));
-        return void requestAnimationFrame(redraw);
+        return schedule();
       case "lasso":
         c.poly.push([x, y]);
         break;
@@ -378,6 +389,7 @@ export function PageView(p: PageProps) {
     if (c && e.pointerId !== owner.current) return;
     g.current = null;
     if (!c) return;
+    cancelAnimationFrame(frame.current);
     switch (c.t) {
       case "draw":
         if (c.hold) clearTimeout(c.hold.timer);
@@ -495,6 +507,10 @@ export function PageView(p: PageProps) {
       className="relative mx-auto bg-white shadow-raised"
       style={{ width: w, height: h, touchAction: "none", cursor: tool === "text" || tool === "pdftext" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
       onPointerDown={down}
+      onMouseDown={(e) => {
+        if (textDown.current) e.preventDefault();
+        textDown.current = false;
+      }}
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={up}

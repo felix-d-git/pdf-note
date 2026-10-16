@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -107,12 +108,14 @@ export default function App() {
     void getCurrentWindow().setTitle(`${current?.dirty ? "* " : ""}${current ? `${fileName(current.path)} – ` : ""}PDF Note`);
   }, [current]);
 
-  // Einmalig: „Öffnen mit", Drag & Drop, Beenden fragt für jedes ungespeicherte Dokument
+  // Einmalig: „Öffnen mit" (auch bei laufender App), Drag & Drop, Beenden fragt für jedes ungespeicherte Dokument
   useEffect(() => {
     void invoke<string | null>("startup_path").then((p) => {
       if (p) void live.current.openPath(p);
     });
     const un = [
+      // zweiter Start (Explorer-Doppelklick) bei laufender App → Pfad kommt von dort
+      listen<string>("open-path", (e) => void live.current.openPath(e.payload)),
       getCurrentWebview().onDragDropEvent((e) => {
         if (e.payload.type !== "drop") return;
         for (const p of e.payload.paths.filter((x) => x.toLowerCase().endsWith(".pdf"))) void live.current.openPath(p);

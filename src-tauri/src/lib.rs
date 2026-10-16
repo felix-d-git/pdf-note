@@ -8,7 +8,7 @@ pub mod text;
 
 use mupdf::pdf::PdfDocument;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use tauri::ipc::Response;
 
@@ -288,6 +288,18 @@ fn startup_path() -> Option<String> {
 
 pub fn run() {
     tauri::Builder::default()
+        // muss das erste Plugin sein: zweiter Start endet hier, Pfad geht an die laufende Instanz
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            use tauri::{Emitter, Manager};
+            if let Some(p) = argv.get(1).filter(|a| !a.starts_with('-')) {
+                let _ = app.emit("open-path", Path::new(&cwd).join(p));
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(Worker::start())
         .setup(|app| {

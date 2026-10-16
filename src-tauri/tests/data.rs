@@ -132,6 +132,34 @@ fn alle_schreibpfade() {
     assert!(n > 0, "keine PDFs in {}", dir.display());
 }
 
+/// v1.0.0-Fehler „Striche verschwinden": 50 kurze Striche/Formen gemischt (wie aus dem Frontend-Test) →
+/// Speichern → Neu-Öffnen → alle 50 da.
+#[test]
+#[ignore]
+fn fuenfzig_schnelle_striche() {
+    use pdf::Kind;
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs/word.pdf");
+    let tmp = std::env::temp_dir().join("pdf-note-test-50");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let copy = tmp.join("word.pdf");
+    std::fs::copy(&src, &copy).expect("testdata/pdfs/word.pdf fehlt");
+    let doc = pdf::open(&copy).unwrap();
+    let before = pdf::take_own(&doc, 0..doc.page_count().unwrap()).unwrap().len();
+    let kinds = [Kind::Ink, Kind::Rect, Kind::Ink, Kind::Line, Kind::Ink, Kind::Ellipse, Kind::Arrow];
+    let items: Vec<_> = (0..50)
+        .map(|i| {
+            let (x, y) = (30.0 + (i % 10) as f32 * 50.0, 60.0 + (i / 10) as f32 * 60.0);
+            item(0, kinds[i % kinds.len()], vec![[x, y, 0.5], [x + 20.0, y + 15.0, 0.6], [x + 35.0, y + 5.0, 0.5]], "")
+        })
+        .collect();
+    pdf::save(&doc, &items, &copy, false).unwrap();
+    let back = pdf::open(&copy).unwrap();
+    let got = pdf::take_own(&back, 0..back.page_count().unwrap()).unwrap();
+    assert_eq!(got.len(), before + 50, "Objektanzahl nach Neu-Öffnen");
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1, "Zusatzdatei neben der PDF");
+}
+
 /// Tabs: zwei Dokumente gleichzeitig im selben Thread; Seitenoperation + Undo in einem lässt das andere unberührt,
 /// beide speichern in ihre eigene Datei.
 #[test]
