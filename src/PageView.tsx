@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
-  box, drawItems, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
+  box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
   rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type InkPoint, type Item, type Layer, type Preset,
 } from "./ink";
 import { toolFor, type Settings, type Tool } from "./settings";
@@ -82,13 +82,22 @@ const straighten = (s: Item, x: number, y: number) => {
 const HOLD_TOL = 2; // pt Bewegung, die das Ruhen nicht unterbricht
 const ERASER_PX = 8; // Radierer-Radius in Bildschirmpixeln
 const css = (c: [number, number, number]) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
+const hex = (c: [number, number, number]) => `#${c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`;
+/** Ersatz-Schriftfamilie für die Absatz-Textarea */
+const family = (font: string) => /mono|courier/i.test(font) ? "monospace" : /sans|helvet|arial|calibri/i.test(font) ? FONT : "serif";
 
 type Gesture =
   | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; straight: boolean } | null }
   | { t: "shape"; item: Item }
   | { t: "erase"; ids: Set<number> }
-  | { t: "lasso"; poly: [number, number][]; rect: boolean }
-  | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean }
+  /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
+  | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean }
+  | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean; fresh: boolean }
+  /** Ziehen im gerade geöffneten Textfeld markiert von Stelle `a` aus */
+  | { t: "fsel"; it: Item; a: number }
+  /** Griffleiste/Breitengriff eines Textfelds */
+  | { t: "tmove"; id: number; x: number; y: number; dx: number; dy: number }
+  | { t: "twidth" | "pwidth"; id: number; x: number; w0: number; w: number }
   | { t: "move"; x: number; y: number; dx: number; dy: number }
   /** Griff `h` (Himmelsrichtung): Gegenseite (ox, oy) bleibt stehen */
   | { t: "scale"; h: string; x: number; y: number; w: number; hh: number; ox: number; oy: number; sx: number; sy: number }
@@ -119,7 +128,11 @@ const Field = z.object({
 type Field = z.infer<typeof Field>;
 export interface NewField { kind: "text" | "check" | "combo"; name: string; rect: [number, number, number, number]; options: string[] }
 /** Änderung an Absatz `para`; `size`/`font` nur, wenn gewählt (erzwingt Ersatzschrift). */
-export interface TextEdit { para: number; text: string; dx?: number; dy?: number; size?: number; font?: "sans" | "serif" | "mono" }
+export interface TextEdit {
+  para: number; text: string; dx?: number; dy?: number; size?: number; font?: "sans" | "serif" | "mono";
+  /** feste Breite (Breitengriff), pt; Farbe 0…1 */
+  width?: number; color?: [number, number, number];
+}
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 const HANDLE_CURSOR: Record<string, string> = { nw: "nwse", se: "nwse", ne: "nesw", sw: "nesw", n: "ns", s: "ns", e: "ew", w: "ew" };
@@ -141,12 +154,17 @@ export interface TextSel { a: Pos; b: Pos; text: string }
 
 export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
-  items: Item[]; selected: number[]; tool: Tool; preset: Preset; marker: Preset; textSize: number; settings: Settings;
+  /** `tool` = Maus-Werkzeug, `penTool` = Stift-Werkzeug (gleich, wenn „Automatisch wechseln" aus ist) */
+  items: Item[]; selected: number[]; tool: Tool; penTool: Tool; preset: Preset; marker: Preset; textSize: number; settings: Settings;
   /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
   layer: Layer;
   textSel: TextSel | null;
   onTextSel: (sel: TextSel | null) => void;
   onAdd: (it: Item) => void;
+  /** fertig gezogene Form (Stift oder Maus) */
+  onShape: (it: Item, pen: boolean) => void;
+  /** Tippen bei ausgewähltem Textfeld: DocView ruft je Seite `(id, Zeichen)` */
+  typers: Map<number, (id: number, ch: string) => void>;
   onRemove: (ids: number[]) => void;
   onReplace: (items: Item[]) => void;
   onSelect: (page: number, ids: number[]) => void;
@@ -166,6 +184,16 @@ export interface PageProps {
 
 export interface OrigEdit { index: number; matrix?: number[] }
 
+/** Griffleiste oben (verschieben, Klick wählt als Objekt) + Breitengriff rechts; Attributwert = Id/Absatz */
+const grips = (grip: string, width: string, id: number) => (
+  <>
+    <span {...{ [`data-${grip}`]: id }} title="Verschieben – Klick wählt als Objekt"
+      className="pointer-events-auto absolute -top-2.5 left-0 h-2 w-full cursor-move rounded-xs bg-accent/50" />
+    <span {...{ [`data-${width}`]: id }} title="Breite – Text bricht um"
+      className="pointer-events-auto absolute top-0 -right-2 h-full w-1.5 cursor-ew-resize rounded-xs bg-accent/50" />
+  </>
+);
+
 export function PageView(p: PageProps) {
   const { doc, index, size, zoom, version, items, selected, tool, preset, marker, settings } = p;
   const ref = useRef<HTMLDivElement>(null);
@@ -183,7 +211,23 @@ export function PageView(p: PageProps) {
   const [hover, setHover] = useState<{ x: number; y: number; tool: Tool }>();
   // Zeiger über der Auswahl → Verschiebe-Cursor
   const [overSel, setOverSel] = useState(false);
-  const [edit, setEdit] = useState<{ item: Item; isNew: boolean }>();
+  // offenes Textfeld; `text` = Startinhalt, falls schon getippt wurde (Tippen bei ausgewähltem Feld); `fixed` = feste Breite
+  const [edit, setEdit] = useState<{ item: Item; isNew: boolean; text?: string; fixed?: number }>();
+  // Textfeld/Absatz unter der Maus (Rahmen, Griffleiste, I-Cursor)
+  const [hovT, setHovT] = useState<number>();
+  const [hovP, setHovP] = useState<number>();
+  // Textarea des offenen Felds/Absatzes; Cursor/Markierung, die beim Öffnen gesetzt wird
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const caret = useRef<[number, number]>([0, 0]);
+  // erstes Esc schließt den Editor, das Feld bleibt ausgewählt
+  const esc = useRef(false);
+  // React 19 ruft Ref-Callbacks je Render neu auf → nur beim ersten Mal fokussieren und Cursor setzen
+  const taRef = (el: HTMLTextAreaElement | null) => {
+    if (!el || el === ta.current) return;
+    ta.current = el;
+    el.focus();
+    el.setSelectionRange(...caret.current);
+  };
   const [url, visible] = usePageImage(ref, doc, index, zoom * devicePixelRatio, version);
   const [w, h] = [size[0] * zoom, size[1] * zoom];
 
@@ -203,9 +247,10 @@ export function PageView(p: PageProps) {
     points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
   })) : [];
   // Textabsätze (Klick bearbeitet) und Zeichen inkl. OCR-Text (Ziehen markiert, Marker rastet ein), je Stand
-  const textOn = visible && (p.layer === 1 || tool === "marker");
+  const textOn = visible && (p.layer === 1 || tool === "marker" || p.penTool === "marker");
   const [paras, setParas] = useState<{ v: number; list: Para[]; chars: CharLine[] }>({ v: -1, list: [], chars: [] });
-  const [pedit, setPedit] = useState<number>();
+  // bearbeiteter Absatz: Index, Verschiebung und feste Breite aus Griffleiste/Breitengriff
+  const [pedit, setPedit] = useState<{ i: number; dx: number; dy: number; w?: number }>();
   // Index gilt nur für Stand + Ebene: nach Undo/Seitenoperation/Ebenenwechsel Editor schließen
   const [peditKey, setPeditKey] = useState(`${version}/${p.layer}`);
   if (peditKey !== `${version}/${p.layer}`) {
@@ -253,7 +298,9 @@ export function PageView(p: PageProps) {
   // Drehgriff nur für Bilder (Original-Objekte zählen als Bild)
   const rotatable = sel.length > 0 && sel.every((it) => it.kind === "image");
   const transform = (it: Item) =>
-    !selected.includes(it.id) ? it
+    gs?.t === "tmove" && gs.id === it.id ? moveItem(it, gs.dx, gs.dy)
+    : gs?.t === "twidth" && gs.id === it.id ? (({ x0, y0, y1 }) => ({ ...it, points: [[x0, y0, 0.5], [x0 + gs.w, y1, 0.5]] as InkPoint[] }))(box(it))
+    : !selected.includes(it.id) ? it
     : gs?.t === "move" ? moveItem(it, gs.dx, gs.dy)
     : gs?.t === "scale" ? scaleItem(it, gs.ox, gs.oy, gs.sx, gs.sy)
     : gs?.t === "rot" ? rotateItem(it, gs.cx, gs.cy, gs.deg)
@@ -313,20 +360,97 @@ export function PageView(p: PageProps) {
     size: kind === "text" ? p.textSize : pr.size, simulated, points: [q], text: "",
   });
 
+  const ctx2d = () => (canvas.current ?? document.createElement("canvas")).getContext("2d");
+  /** Textbreite in pt; ohne Canvas-Maße (Test) grob geschätzt */
+  const measurer = (size: number) => {
+    const ctx = ctx2d();
+    if (!ctx?.measureText) return (s: string) => s.length * size * 0.5;
+    return (s: string) => {
+      ctx.font = `${size}px ${FONT}`;
+      return ctx.measureText(s).width;
+    };
+  };
+  // nur Textfelder der aktiven Ebene (Ebene 1: keine) – Klick wechselt nie die Ebene
+  const textAt = (x: number, y: number, m = 0) => items.findLast((it) => {
+    const b = box(it);
+    return it.kind === "text" && layerOf(it) === p.layer && x >= b.x0 - m && x <= b.x1 + m && y >= b.y0 - 2 * m && y <= b.y1;
+  });
+  /** Textfeld öffnen, Cursor an die Klickstelle; Ziehen markiert weiter (`fsel`) */
+  const openText = (e: React.PointerEvent, it: Item, x: number, y: number) => {
+    const { x0, y0, x1 } = box(it);
+    const k = caretAt(it.text, it.size, x1 - x0, x - x0, y - y0, measurer(it.size));
+    const ctx = ctx2d();
+    caret.current = [k, k];
+    textDown.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setEdit({ item: it, isNew: false, fixed: ctx?.measureText ? fixedWidth(ctx, it) : undefined });
+    g.current = { t: "fsel", it, a: k };
+    rerender();
+  };
+  /** Stelle im Absatztext (Zeilen mit Leerzeichen verbunden) zur Cursorstelle `[Zeile, Zeichen]` */
+  const paraCaret = (para: Para, [l, ch]: Pos) => {
+    const [x0, y0, x1, y1] = para.bbox;
+    const inside = (n: number) => clist[n]?.boxes.some(([a, b, c, d]) => (a + c) / 2 >= x0 && (a + c) / 2 <= x1 && (b + d) / 2 >= y0 && (b + d) / 2 <= y1);
+    let k = 0;
+    for (let n = 0; n < l; n++) if (inside(n)) k += (clist[n]?.text.length ?? 0) + 1;
+    return Math.min(para.text.length, k + ch);
+  };
+
+  // Typen bei ausgewähltem Textfeld: Cursor ans Ende, Zeichen einfügen
+  useEffect(() => {
+    p.typers.set(index, (id, ch) => {
+      const it = items.find((i) => i.id === id && i.kind === "text");
+      if (!it) return;
+      const ctx = ctx2d();
+      caret.current = [it.text.length + ch.length, it.text.length + ch.length];
+      p.onSelect(index, []);
+      setEdit({ item: it, isNew: false, text: it.text + ch, fixed: ctx?.measureText ? fixedWidth(ctx, it) : undefined });
+    });
+  });
+  useEffect(() => () => void p.typers.delete(index), [p.typers, index]);
+
   // Stift-Spitze/linke Maustaste nach Werkzeug, gebundene Stifttasten temporär; Finger geht an den Scroll-Container.
   const down = (e: React.PointerEvent) => {
-    if (e.pointerType === "touch" || (e.target as Element).closest("textarea, [data-pedit], [data-field]")) return;
-    const t = toolFor(e, tool, settings);
+    const tgt = e.target as Element;
+    const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
+    if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
+    const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
     if (!t || g.current) return;
     owner.current = e.pointerId;
     e.stopPropagation();
     const q = pt(e);
     const [x, y] = q;
+    // Griffleiste/Breitengriff: offenes Textfeld erst übernehmen, dann als Objekt verschieben/umbrechen
+    if (grip) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const { tgrip, twidth } = grip.dataset;
+      if (tgrip !== undefined || twidth !== undefined) {
+        const id = Number(tgrip ?? twidth);
+        const it = edit?.item.id === id ? edit.item : items.find((i) => i.id === id);
+        const w0 = edit?.item.id === id ? (edit.fixed ?? (ta.current?.offsetWidth ?? 0) / zoom) : it ? box(it).x1 - box(it).x0 : 0;
+        ta.current?.blur();
+        g.current = tgrip !== undefined ? { t: "tmove", id, x, y, dx: 0, dy: 0 } : { t: "twidth", id, x, w0, w: w0 };
+        return rerender();
+      }
+      // Absatz: Fokus bleibt in der Textarea (Eingaben bleiben erhalten)
+      const para = pedit && plist[pedit.i];
+      if (!pedit || !para) return;
+      textDown.current = true;
+      const w0 = pedit.w ?? para.bbox[2] - para.bbox[0];
+      g.current = "grip" in grip.dataset ? { t: "para", i: pedit.i, x, y, dx: 0, dy: 0 } : { t: "pwidth", id: pedit.i, x, w0, w: w0 };
+      return rerender();
+    }
     // Auswahl hat Vorrang vor dem Werkzeug: Griff → Größe/Drehen, Rahmen → verschieben, außerhalb → aufheben
     // ponytail: nur die Auswahl dieser Seite; Druck auf einer anderen Seite lässt sie stehen (Esc hebt auf)
     if (sel.length) {
       const b = unionBox(sel);
-      const h = (e.target as Element).closest<HTMLElement>("[data-handle]")?.dataset.handle;
+      const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
+      // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
+      const only = sel.length === 1 && sel[0]?.kind === "text" ? sel[0] : undefined;
+      if (t === "lasso" && only && !h && inBox(b, x, y)) {
+        p.onSelect(index, []);
+        return openText(e, only, x, y);
+      }
       if (h || inBox(b, x, y)) {
         e.currentTarget.setPointerCapture(e.pointerId);
         const [cx, cy] = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
@@ -337,14 +461,14 @@ export function PageView(p: PageProps) {
       }
       p.onSelect(index, []);
     }
-    if (t === "text") {
-      const hit = items.findLast((it) => it.kind === "text" && hitTest(it, x, y, 0));
-      // Klick während des Bearbeitens schließt erst das offene Feld (Blur speichert)
-      if (!edit) {
-        textDown.current = true;
-        setEdit(hit ? { item: hit, isNew: false } : { item: make("text", preset, q, false), isNew: true });
-      }
-      return;
+    // Klick während des Bearbeitens schließt erst das offene Feld/den Absatz (Blur speichert)
+    const fresh = !edit && !pedit;
+    // anderes Textfeld: offenes übernehmen und direkt hineinspringen
+    const hitT = t === "lasso" && !pedit ? textAt(x, y) : undefined;
+    if (hitT) {
+      if (hitT.id === edit?.item.id) return;
+      ta.current?.blur();
+      return openText(e, hitT, x, y);
     }
     e.currentTarget.setPointerCapture(e.pointerId);
     if (t === "form") {
@@ -355,11 +479,6 @@ export function PageView(p: PageProps) {
     if (t === "link") {
       if (p.linking) return p.onLinkTo(x, y);
       g.current = { t: "link", x, y, dx: 0, dy: 0 };
-      return rerender();
-    }
-    // Griffleiste über dem bearbeiteten Absatz verschiebt ihn
-    if (pedit !== undefined && (e.target as Element).closest("[data-grip]")) {
-      g.current = { t: "para", i: pedit, x, y, dx: 0, dy: 0 };
       return rerender();
     }
     const at = t === "marker" ? posAt(clist, x, y) : null;
@@ -375,9 +494,8 @@ export function PageView(p: PageProps) {
       redraw();
     } else if (t === "lasso") {
       const at = p.layer === 1 ? posAt(clist, x, y) : null;
-      setPedit(undefined);
       // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck, Stift ein Lasso
-      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen" };
+      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false, fresh } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen", fresh };
       rerender();
     } else {
       g.current = { t: "shape", item: { ...make(t, preset, q, false), points: [q, q] } };
@@ -392,9 +510,13 @@ export function PageView(p: PageProps) {
       const over = sel.length > 0 && inBox(unionBox(sel), x, y);
       setOverSel(over);
       if (e.pointerType === "pen") {
-        const t = toolFor({ pointerType: "pen", buttons: e.buttons | 1 }, tool, settings);
+        const t = toolFor({ pointerType: "pen", buttons: e.buttons | 1 }, p.penTool, settings);
         setHover(t && !over ? { x, y, tool: t } : undefined);
       }
+      // Rahmen um Textfeld/Absatz unter der Maus; Rand großzügig, damit Griffleiste/Breitengriff erreichbar bleiben
+      const lasso = (e.pointerType === "pen" ? p.penTool : tool) === "lasso";
+      setHovT(lasso ? textAt(x, y, 8 / zoom)?.id : undefined);
+      setHovP(lasso && p.layer === 1 && !pedit ? paraAt(x, y) : -1);
       return;
     }
     const evs = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
@@ -429,10 +551,21 @@ export function PageView(p: PageProps) {
         break;
       case "move":
       case "para":
+      case "tmove":
       case "field":
       case "link":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
+      case "twidth":
+      case "pwidth":
+        c.w = Math.max(20, c.w0 + x - c.x);
+        break;
+      case "fsel": {
+        const { x0, y0, x1 } = box(c.it);
+        const b = caretAt(c.it.text, c.it.size, x1 - x0, x - x0, y - y0, measurer(c.it.size));
+        ta.current?.setSelectionRange(Math.min(c.a, b), Math.max(c.a, b), b < c.a ? "backward" : "forward");
+        return;
+      }
       case "scale": {
         // Bilder: Ecke proportional, Umschalt frei; andere umgekehrt. Kanten: eine Achse.
         const fx = c.h.includes("w") ? -1 : c.h.includes("e") ? 1 : 0, fy = c.h.includes("n") ? -1 : c.h.includes("s") ? 1 : 0;
@@ -471,7 +604,7 @@ export function PageView(p: PageProps) {
         break;
       case "shape": {
         const [a, b] = c.item.points;
-        if (a && b && Math.hypot(a[0] - b[0], a[1] - b[1]) > 1) p.onAdd(c.item);
+        if (a && b && Math.hypot(a[0] - b[0], a[1] - b[1]) > 1) p.onShape(c.item, e.pointerType === "pen");
         break;
       }
       case "erase":
@@ -489,28 +622,50 @@ export function PageView(p: PageProps) {
           }).map((it) => it.id)
           : p.layer === 1 ? smallestAt(origs, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id;
         p.onSelect(index, ids === undefined ? [] : Array.isArray(ids) ? ids : [ids]);
+        // Klick ins Leere (Ebene 2/3) setzt den Cursor; das Feld entsteht erst mit dem ersten Zeichen
+        if (!far && c.fresh && ids === undefined && p.layer !== 1 && e.pointerType !== "pen") {
+          caret.current = [0, 0];
+          setEdit({ item: make("text", preset, [x0, y0, 0.5], false), isNew: true });
+        }
         break;
       }
       case "tsel": {
         const i = paraAt(c.x, c.y);
+        const para = plist[i];
         if (!c.moved) {
           p.onTextSel(null);
-          if (i >= 0) setPedit(i);
+          if (para && c.fresh) {
+            const k = paraCaret(para, c.a);
+            caret.current = [k, k];
+            setPedit({ i, dx: 0, dy: 0 });
+          }
         } else p.onTextSel({ a: c.a, b: c.b, text: selRange(clist, c.a, c.b).text });
         break;
       }
+      case "tmove":
+      case "twidth": {
+        const it = items.find((i) => i.id === c.id);
+        if (!it) break;
+        const { x0, y0 } = box(it);
+        const ctx = ctx2d();
+        if (c.t === "tmove" ? Math.hypot(c.dx, c.dy) * zoom > 3 : Math.abs(c.w - c.w0) * zoom > 1) {
+          p.onReplace([c.t === "tmove" ? moveItem(it, c.dx, c.dy) : { ...it, points: ctx ? textRect(ctx, it.text, it.size, x0, y0, c.w) : transform(it).points }]);
+        }
+        p.onSelect(index, [c.id]);
+        break;
+      }
+      case "pwidth":
+        if (pedit) setPedit({ ...pedit, w: c.w });
+        break;
+      case "fsel":
+        break;
       case "move":
         if (c.dx || c.dy) commit((it) => moveItem(it, c.dx, c.dy), [1, 0, 0, 1, c.dx, c.dy]);
         break;
-      case "para": {
-        const para = plist[c.i];
-        // kurzes Zucken = Klick → bearbeiten
-        if (para && Math.hypot(c.dx, c.dy) * zoom > 3) {
-          setPedit(undefined);
-          p.onText({ para: c.i, text: para.text, dx: c.dx, dy: c.dy });
-        } else setPedit(c.i);
+      case "para":
+        // Verschiebung gilt beim Übernehmen, Eingaben bleiben offen
+        if (pedit) setPedit({ ...pedit, dx: pedit.dx + c.dx, dy: pedit.dy + c.dy });
         break;
-      }
       case "field":
         if (Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3) {
           setNewf([Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
@@ -550,32 +705,41 @@ export function PageView(p: PageProps) {
   const commitText = (text: string) => {
     if (!edit) return;
     setEdit(undefined);
-    const { item, isNew } = edit;
+    const { item, isNew, fixed } = edit;
+    // Esc: Feld bleibt als Objekt ausgewählt
+    const keep = esc.current;
+    esc.current = false;
     if (!text.trim()) {
       if (!isNew) p.onRemove([item.id]);
       return;
     }
+    if (keep) p.onSelect(index, [item.id]);
     if (text === item.text) return;
-    const ctx = (canvas.current ?? document.createElement("canvas")).getContext("2d");
+    const ctx = ctx2d();
     const { x0, y0 } = box(item);
-    const points = ctx ? textRect(ctx, text, item.size, x0, y0) : item.points;
+    const points = ctx ? textRect(ctx, text, item.size, x0, y0, fixed) : item.points;
     const next = { ...item, text, points };
     if (isNew) p.onAdd(next);
     else p.onReplace([next]);
   };
 
   const submitPara = (f: HTMLFormElement) => {
-    const para = pedit === undefined ? undefined : plist[pedit];
+    const pe = pedit;
+    const para = pe && plist[pe.i];
     setPedit(undefined);
-    if (!para || pedit === undefined) return;
+    if (!pe || !para) return;
     const d = new FormData(f);
     const text = String(d.get("text") ?? "");
     const font = String(d.get("font") ?? "");
     const size = Number(d.get("size"));
-    const edit: TextEdit = { para: pedit, text };
+    const color = String(d.get("color") ?? "");
+    const edit: TextEdit = { para: pe.i, text };
+    if (pe.dx || pe.dy) Object.assign(edit, { dx: pe.dx, dy: pe.dy });
+    if (pe.w !== undefined) edit.width = pe.w;
     if (font === "sans" || font === "serif" || font === "mono") edit.font = font;
     if (Number.isFinite(size) && Math.abs(size - para.size) > 0.05) edit.size = size;
-    if (text !== para.text || edit.font || edit.size) p.onText(edit);
+    if (/^#[0-9a-f]{6}$/i.test(color) && color !== hex(para.color)) edit.color = [1, 3, 5].map((k) => parseInt(color.slice(k, k + 2), 16) / 255) as TextEdit["color"];
+    if (text !== para.text || Object.keys(edit).length > 2) p.onText(edit);
   };
 
   const submitField = (f: HTMLFormElement) => {
@@ -599,7 +763,9 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: overSel || gs?.t === "move" ? "move" : tool === "text" ? "text" : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor: overSel || gs?.t === "move" || gs?.t === "tmove" || gs?.t === "para" ? "move"
+        : gs?.t === "twidth" || gs?.t === "pwidth" ? "ew-resize"
+        : tool === "lasso" ? (hovT !== undefined || (hovP ?? -1) >= 0 ? "text" : "default") : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
       onPointerDown={down}
       onMouseDown={(e) => {
         if (textDown.current) e.preventDefault();
@@ -663,19 +829,24 @@ export function PageView(p: PageProps) {
         <div key={`s${i}`} className="pointer-events-none absolute bg-accent/30"
           style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }} />
       ))}
-      {/* bearbeiteter Absatz: Rahmen + Griffleiste zum Verschieben */}
-      {plist.map(({ bbox: [x0, y0, x1, y1] }, i) => {
-        const m = gs?.t === "para" && gs.i === i ? gs : { dx: 0, dy: 0 };
-        return pedit === i && (
-          <div
-            key={i}
-            className="pointer-events-none absolute border border-dashed border-accent"
-            style={{ left: (x0 + m.dx) * zoom - 2, top: (y0 + m.dy) * zoom - 2, width: (x1 - x0) * zoom + 4, height: (y1 - y0) * zoom + 4 }}
-          >
-            <span data-grip title="Absatz verschieben" className="pointer-events-auto absolute -top-3 left-0 h-2.5 w-full cursor-move rounded-xs bg-accent/60" />
-          </div>
-        );
-      })}
+      {/* Absatz unter der Maus: dünner Rahmen */}
+      {hovP !== undefined && hovP >= 0 && plist[hovP] && !pedit && (() => {
+        const [x0, y0, x1, y1] = plist[hovP].bbox;
+        return <div className="pointer-events-none absolute border border-accent/40"
+          style={{ left: x0 * zoom - 2, top: y0 * zoom - 2, width: (x1 - x0) * zoom + 4, height: (y1 - y0) * zoom + 4 }} />;
+      })()}
+      {/* Textfelder unter der Maus/ausgewählt/gezogen: Rahmen, Griffleiste oben, Breitengriff rechts */}
+      {items.filter((it) => it.kind === "text" && it.id !== edit?.item.id && layerOf(it) === p.layer
+        && (it.id === hovT || (sel.length === 1 && sel[0]?.id === it.id) || ((gs?.t === "tmove" || gs?.t === "twidth") && gs.id === it.id)))
+        .map((it) => {
+          const b = box(transform(it));
+          return (
+            <div key={`t${it.id}`} className="pointer-events-none absolute border border-accent/40"
+              style={{ left: b.x0 * zoom - 1, top: b.y0 * zoom - 1, width: (b.x1 - b.x0) * zoom + 2, height: (b.y1 - b.y0) * zoom + 2 }}>
+              {grips("tgrip", "twidth", it.id)}
+            </div>
+          );
+        })}
       {/* Felder in PDF-Reihenfolge → Tab springt zum nächsten; Haken/Punkt zeigt das Seitenbild, Eingabe liegt unsichtbar darüber */}
       {flist.map((f) => {
         const [x0, y0, x1, y1] = f.rect;
@@ -757,56 +928,76 @@ export function PageView(p: PageProps) {
           </form>
         </>
       )}
-      {pedit !== undefined && plist[pedit] && (() => {
-        const { bbox: [x0, , x1, y1], text, size } = plist[pedit];
+      {/* Absatz direkt bearbeiten: Textarea über dem Absatz, Mini-Leiste darunter; Verlassen/Esc übernimmt (Schwärzen + neu setzen) */}
+      {pedit && (() => {
+        const para = plist[pedit.i];
+        if (!para) return null;
+        const [x0, y0, x1, y1] = para.bbox;
+        const m = gs?.t === "para" ? gs : { dx: 0, dy: 0 };
+        const pw = gs?.t === "pwidth" ? gs.w : pedit.w ?? x1 - x0;
+        const fs = para.size * zoom;
+        const field = "rounded-xs border border-line bg-transparent";
         return (
           <form
             data-pedit
-            className="absolute z-10 flex flex-col gap-1 rounded-xs bg-surface p-2 text-sm shadow-raised"
-            style={{ left: x0 * zoom, top: y1 * zoom + 6, width: Math.max(260, (x1 - x0) * zoom) }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitPara(e.currentTarget);
+            className="absolute z-10"
+            style={{ left: (x0 + pedit.dx + m.dx) * zoom - 2, top: (y0 + pedit.dy + m.dy) * zoom - 2 }}
+            onSubmit={(e) => e.preventDefault()}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) submitPara(e.currentTarget);
             }}
             onKeyDown={(e) => {
-              e.stopPropagation(); // Strg+Z, Werkzeug-Kürzel gehören dem Formular
-              if (e.key === "Escape") setPedit(undefined);
-              if (e.key === "Enter" && e.ctrlKey) e.currentTarget.requestSubmit();
+              e.stopPropagation(); // Strg+Z, Werkzeug-Kürzel gehören dem Absatz
+              if (e.key === "Escape" || (e.key === "Enter" && e.ctrlKey)) (document.activeElement as HTMLElement | null)?.blur();
             }}
           >
-            <textarea name="text" autoFocus defaultValue={text} rows={Math.min(12, Math.ceil(text.length / 60) + 1)} className="resize-y rounded-xs border border-line bg-transparent p-1" />
-            <div className="flex items-center gap-2">
-              <select name="font" defaultValue="" title="Schrift" className="rounded-xs border border-line bg-transparent">
+            {grips("grip", "pwidth", pedit.i)}
+            <textarea
+              ref={taRef}
+              name="text"
+              defaultValue={para.text}
+              className="block resize-none bg-white outline-1 outline-accent outline-dashed"
+              style={{
+                width: pw * zoom + 4, minHeight: (y1 - y0) * zoom + 4, padding: 2, font: `${fs}px ${family(para.font)}`,
+                lineHeight: `${lineHeight(fs)}px`, color: css(para.color), overflow: "hidden", fieldSizing: "content",
+              } as React.CSSProperties}
+            />
+            <div className="absolute top-full left-0 mt-1 flex items-center gap-1 rounded-xs bg-surface p-1 text-sm shadow-raised">
+              <select name="font" defaultValue="" title="Schrift" className={field}>
                 <option value="">Original</option>
                 <option value="sans">Sans</option>
                 <option value="serif">Serif</option>
                 <option value="mono">Mono</option>
               </select>
-              <input name="size" type="number" min={2} max={500} step={0.5} defaultValue={Math.round(size * 10) / 10} title="Größe (pt)" className="w-16 rounded-xs border border-line bg-transparent" />
-              <button type="button" className="ml-auto" onClick={() => setPedit(undefined)}>Abbrechen</button>
-              <button type="submit" className="text-accent" title="Strg+Enter">OK</button>
+              <input name="size" type="number" min={2} max={500} step={0.5} defaultValue={Math.round(para.size * 10) / 10} title="Größe (pt)" className={`w-16 ${field}`} />
+              <input name="color" type="color" defaultValue={hex(para.color)} title="Farbe" className="h-6 w-8" />
             </div>
           </form>
         );
       })()}
+      {/* Textfeld: wächst mit dem Text oder bricht bei fester Breite um (wie MuPDF beim Speichern) */}
       {edit && (() => {
         const { x0, y0 } = box(edit.item);
         const fs = edit.item.size * zoom;
         return (
-          <textarea
-            autoFocus
-            defaultValue={edit.item.text}
-            onBlur={(e) => commitText(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation(); // Strg+Z usw. gehören dem Textfeld
-              if (e.key === "Escape" || (e.key === "Enter" && e.ctrlKey)) e.currentTarget.blur();
-            }}
-            className="absolute resize-none border border-dashed border-accent bg-transparent outline-none"
-            style={{
-              left: x0 * zoom, top: y0 * zoom, padding: 2 * zoom, font: `${fs}px ${FONT}`, lineHeight: `${lineHeight(fs)}px`,
-              color: css(edit.item.color), minWidth: fs * 4, overflow: "hidden", fieldSizing: "content",
-            } as React.CSSProperties}
-          />
+          <div key={edit.item.id} className="absolute" style={{ left: x0 * zoom, top: y0 * zoom }}>
+            {grips("tgrip", "twidth", edit.item.id)}
+            <textarea
+              ref={taRef}
+              defaultValue={edit.text ?? edit.item.text}
+              onBlur={(e) => commitText(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation(); // Strg+Z usw. gehören dem Textfeld
+                if (e.key === "Escape") esc.current = true;
+                if (e.key === "Escape" || (e.key === "Enter" && e.ctrlKey)) e.currentTarget.blur();
+              }}
+              className="block resize-none bg-transparent outline-1 outline-accent outline-dashed"
+              style={{
+                padding: 2 * zoom, font: `${fs}px ${FONT}`, lineHeight: `${lineHeight(fs)}px`, color: css(edit.item.color),
+                overflow: "hidden", fieldSizing: "content", ...(edit.fixed ? { width: edit.fixed * zoom } : { minWidth: fs * 4 }),
+              } as React.CSSProperties}
+            />
+          </div>
         );
       })()}
     </div>

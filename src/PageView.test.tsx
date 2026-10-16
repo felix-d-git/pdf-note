@@ -33,17 +33,20 @@ let host: HTMLDivElement;
 // Zugriff auf den Zustand des Testelternteils (nach jedem Render gesetzt)
 const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { added: [], setTool: () => {}, selected: [] };
 const lastAdd: Item[] = [];
+const shapes: Item[] = [];
 
-function Page({ start, layer = 3, init = [] }: { start: Tool; layer?: Layer; init?: Item[] }) {
+/** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
+function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[] }) {
   const [items, setItems] = useState<Item[]>(init);
   const [tool, st] = useState(start);
-  const [selected, setSel] = useState<number[]>([]);
+  const [selected, setSel] = useState<number[]>(sel);
   useEffect(() => void Object.assign(ui, { added: items, setTool: st, selected }), [items, selected]);
   return (
     <PageView
-      doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool}
+      doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool} penTool={pen ?? tool} typers={new Map()}
       preset={DEFAULT_PRESET} marker={DEFAULT_PRESET} textSize={14} settings={DEFAULT_SETTINGS}
-      onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))} onRemove={() => {}}
+      onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))}
+      onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={() => {}}
       onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
@@ -75,9 +78,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = (tool: Tool, layer?: Layer, init?: Item[]) => {
+const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[] } = {}) => {
   root = createRoot(host);
-  act(() => root.render(<Page start={tool} layer={layer} init={init} />));
+  act(() => root.render(<Page start={tool} layer={layer} init={init} {...more} />));
   return host.querySelector("[data-page]") as HTMLDivElement;
 };
 
@@ -89,11 +92,11 @@ const fire = (el: Element, type: string, x: number, y: number, buttons = 1, poin
   return e;
 };
 
-test("Klick mit Text-Werkzeug legt ein Textfeld an, das den Fokus behält", () => {
-  const page = mount("text");
+test("Klick mit Auswahl/Text auf freie Fläche legt ein Textfeld an, das den Fokus behält", () => {
+  const page = mount("lasso");
+  // Feld entsteht erst beim Loslassen (Ziehen wäre Auswahl) → mousedown davor nimmt ihm keinen Fokus
   fire(page, "pointerdown", 100, 100);
-  // kompatibles mousedown darf der neuen Textarea den Fokus nicht nehmen
-  expect(fire(page, "mousedown", 100, 100).defaultPrevented).toBe(true);
+  fire(page, "mousedown", 100, 100);
   fire(page, "pointerup", 100, 100, 0);
   const ta = host.querySelector("textarea") as HTMLTextAreaElement;
   expect(ta).not.toBeNull();
@@ -183,4 +186,41 @@ test("Eckgriff: Bild proportional, Umschalt frei", () => {
   fire(page, "pointerup", 300, 250, 0, "mouse", true);
   expect(ui.added[0]?.points.map(([x, y]) => [x, y])).toEqual([[100, 100], [300, 250]]);
   expect(host.querySelector('[data-handle="rot"]')).not.toBeNull();
+});
+
+test("Gerät bestimmt das Werkzeug: Stift zeichnet, Maus wählt aus", () => {
+  const page = mount("lasso", 3, [], { pen: "pen" });
+  fire(page, "pointerdown", 100, 100, 1, "pen");
+  fire(page, "pointermove", 150, 150, 1, "pen");
+  fire(page, "pointerup", 150, 150, 0, "pen");
+  expect(ui.added.map((it) => it.kind)).toEqual(["ink"]);
+  fire(page, "pointerdown", 300, 300);
+  fire(page, "pointermove", 400, 400);
+  fire(page, "pointerup", 400, 400, 0);
+  expect(ui.added).toHaveLength(1); // Maus zeichnet nicht
+});
+
+test("Klick in ausgewähltes Textfeld setzt den Cursor an die Klickstelle", () => {
+  const it: Item = {
+    id: 5, page: 0, kind: "text", color: [0, 0, 0], opacity: 1, size: 10, simulated: false, layer: 3,
+    points: [[100, 100, 0.5], [150, 112, 0.5]], text: "Hallo Welt",
+  };
+  const page = mount("lasso", 3, [it], { sel: [5] });
+  // jsdom: Ersatzmaß 0,5 × Größe je Zeichen → 3 Zeichen = 15 pt hinter dem Innenabstand
+  fire(page, "pointerdown", 100 + 2 + 15, 104);
+  fire(page, "pointerup", 100 + 2 + 15, 104, 0);
+  const ta = host.querySelector("textarea") as HTMLTextAreaElement;
+  expect(ta.value).toBe("Hallo Welt");
+  expect([ta.selectionStart, ta.selectionEnd]).toEqual([3, 3]);
+  expect(document.activeElement).toBe(ta);
+});
+
+test("Form landet über onShape und ist ausgewählt", () => {
+  shapes.length = 0;
+  const page = mount("rect");
+  fire(page, "pointerdown", 100, 100);
+  fire(page, "pointermove", 200, 160);
+  fire(page, "pointerup", 200, 160, 0);
+  expect(shapes.map((s) => s.kind)).toEqual(["rect"]);
+  expect(ui.selected).toEqual([shapes[0]?.id]);
 });

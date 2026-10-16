@@ -232,8 +232,8 @@ pub enum Family {
 }
 
 /// Änderung an Absatz `para` (Reihenfolge wie `paragraphs`): neuer Text (leer = löschen), Verschiebung in pt,
-/// optional andere Größe/Schrift (dann immer Ersatzschrift).
-#[derive(Deserialize, Debug, Clone)]
+/// optional andere Größe/Schrift (dann immer Ersatzschrift), Breite (Umbruch, pt) und Farbe (0…1).
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct TextEdit {
     pub para: usize,
     pub text: String,
@@ -245,6 +245,10 @@ pub struct TextEdit {
     pub size: Option<f32>,
     #[serde(default)]
     pub font: Option<Family>,
+    #[serde(default)]
+    pub width: Option<f32>,
+    #[serde(default)]
+    pub color: Option<[f32; 3]>,
 }
 
 /// Glyph einer Schrift: Fontressource, Code-Bytes, Breite in 1/1000 em.
@@ -572,6 +576,8 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     check_page(doc, index)?;
     let ok = [e.dx, e.dy].iter().all(|v| v.is_finite() && v.abs() < 1e4)
         && e.size.is_none_or(|s| s.is_finite() && (2.0..=500.0).contains(&s))
+        && e.width.is_none_or(|w| w.is_finite() && (1.0..=1e4).contains(&w))
+        && e.color.is_none_or(|c| c.iter().all(|v| (0.0..=1.0).contains(v)))
         && e.text.chars().count() <= 20_000;
     if !ok {
         return Err("ungültige Textänderung".into());
@@ -634,7 +640,11 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     let left = p.left();
     let right = p.lines.iter().map(|l| l.bbox[2]).fold(f32::MIN, f32::max);
     // einzeilig (Überschrift, kurze Zeile): Rahmen = Textbreite wäre zu eng → bis zum Rand gegenüber dem linken
-    let right = if p.lines.len() == 1 { right.max(b.x1 - b.x0 - left) } else { right };
+    let right = match e.width {
+        Some(w) => left + w,
+        None if p.lines.len() == 1 => right.max(b.x1 - b.x0 - left),
+        None => right,
+    };
     let width = (right - left).max(size);
     let indent = first.x0 - left;
     let justify = p.lines.len() > 2 && p.lines[..p.lines.len() - 1].iter().all(|l| (l.bbox[2] - right).abs() < 0.3 * p.size);
@@ -659,7 +669,7 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     let mut s = b"q\n".to_vec();
     s.extend(contents(&page).map_err(err)?);
     s.extend(b"\nQ\n");
-    s.extend(emit(&set, &fonts, size, p.color, &inv).into_bytes());
+    s.extend(emit(&set, &fonts, size, e.color.unwrap_or(p.color), &inv).into_bytes());
     let stream = doc.add_stream(&mupdf::Buffer::from_bytes(&s).map_err(err)?, None, false).map_err(err)?;
     page.object().dict_put("Contents", stream).map_err(err)?;
     Ok((!notes.is_empty()).then(|| notes.join("; ")))
@@ -694,7 +704,7 @@ mod tests {
                         BT /F1 12 Tf 20 110 Td (Zweiter Absatz) Tj ET";
 
     fn edit_of(para: usize, text: &str) -> TextEdit {
-        TextEdit { para, text: text.into(), dx: 0.0, dy: 0.0, size: None, font: None }
+        TextEdit { para, text: text.into(), ..Default::default() }
     }
 
     #[test]

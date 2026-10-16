@@ -350,7 +350,7 @@ fn text_bearbeiten() {
             // Absatzreihenfolge ändert sich nach jeder Änderung → Index neu bestimmen
             let old = if para == body { &before[body].text } else { &before[single].text };
             let i = paragraphs(&doc, 0).unwrap().iter().position(|p| &p.text == old).unwrap();
-            let edit = TextEdit { para: i, text: text.clone(), dx: 0.0, dy: 0.0, size: None, font: None };
+            let edit = TextEdit { para: i, text: text.clone(), ..Default::default() };
             warnings.push(pdf::page_op(&mut doc, &PageOp::Text { page: 0, edit }).unwrap().warning);
         }
         pdf::save(&doc, &[], &copy, false).unwrap();
@@ -372,6 +372,59 @@ fn text_bearbeiten() {
         assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
         assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
         println!("{f}: Absätze {body}+{single} geändert, Hinweise {warnings:?}, {} → {} Bytes", original.len(), std::fs::metadata(&copy).unwrap().len());
+    }
+}
+
+/// Direkt-Bearbeitung wie im Frontend (Text im Absatz tippen, Breitengriff, Farbe in der Mini-Leiste): ein `page_op`
+/// mit Text + Breite + Farbe → speichern → neu öffnen: Text geändert und schmaler umbrochen, Rest der Seite gleich.
+#[test]
+#[ignore]
+fn text_direkt() {
+    use pdf::PageOp;
+    use pdf_note_lib::text::{paragraphs, TextEdit};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-direkt");
+    let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    for f in ["latex.pdf", "word.pdf"] {
+        let src = dir.join(f);
+        let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(f);
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let before = paragraphs(&doc, 0).unwrap();
+        let body = before.iter().position(|p| p.text.split_whitespace().count() >= 8 && p.bbox[3] - p.bbox[1] > 1.8 * p.size).unwrap();
+        let p = &before[body];
+        // Wort in der Mitte eingefügt (Cursor an Klickstelle), Breite auf 70 %, rot
+        let mid = p.text.char_indices().filter(|(_, c)| *c == ' ').nth(3).unwrap().0;
+        // nur die erste Hälfte behalten: schmaler, aber nicht höher → überdeckt den nächsten Absatz nicht
+        let half = p.text.char_indices().filter(|(_, c)| *c == ' ').nth(p.text.split_whitespace().count() / 2).map_or(p.text.len(), |(i, _)| i);
+        let text = format!("{} direkt{}", &p.text[..mid], &p.text[mid..half.max(mid)]);
+        let width = 0.7 * (p.bbox[2] - p.bbox[0]);
+        let edit = TextEdit { para: body, text: text.clone(), width: Some(width), color: Some([1.0, 0.0, 0.0]), ..Default::default() };
+        pdf::page_op(&mut doc, &PageOp::Text { page: 0, edit }).unwrap();
+        pdf::save(&doc, &[], &copy, false).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = paragraphs(&doc, 0).unwrap();
+        let all = words(&page_texts(&doc).unwrap()[0]);
+        assert!(all.contains(&words(&text)), "{f}: neuer Text fehlt: {text}
+{all}");
+        let q = after.iter().find(|q| words(&q.text).contains("direkt")).expect("geänderter Absatz fehlt");
+        assert!(q.bbox[2] - q.bbox[0] <= width + 1.0, "{f}: Breite {} > {width}", q.bbox[2] - q.bbox[0]);
+        assert!(q.color[0] > 0.9 && q.color[1] < 0.1, "{f}: Farbe {:?}", q.color);
+        for (i, o) in before.iter().enumerate().filter(|(i, _)| *i != body) {
+            assert!(after.iter().any(|a| a.text == o.text), "{f}: Absatz {i} verändert: {}", o.text);
+        }
+        let t = page_texts(&doc).unwrap();
+        for i in 1..texts.len() {
+            assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
+        }
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
     }
 }
 
