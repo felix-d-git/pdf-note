@@ -3,22 +3,35 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowLeftRight, Columns2, FolderOpen, Keyboard, Monitor, Moon, NotebookPen, Settings as Gear, Sun, X } from "lucide-react";
+import { ArrowLeftRight, CircleHelp, Columns2, FileWarning, FolderOpen, Keyboard, Monitor, Moon, NotebookPen, Settings as Gear, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { dropDoc } from "./docstore";
 import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
+import { Help } from "./help";
 import { T } from "./i18n";
+import { comboOf, KEYS, keyMap } from "./keys";
+import { fromSession, loadSession, storeSession, toSession, type DocStart } from "./session";
 import { applyTheme, captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
 import {
   activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, setDirty, show, toggleSplit, toPane, type Pane, type Tab,
 } from "./tabs";
+import { Tour, tourSeen } from "./tour";
 import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem } from "./ui";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+/** Sitzung einmal je Programmstart wiederherstellen (StrictMode führt Effekte doppelt aus); Öffnen wartet darauf */
+let restored: Promise<void> | undefined;
+const NO_VIEW: DocStart = { zoom: 1, left: 0, top: 0, layer: 3, mouse: "lasso", pen: "pen" };
 
 export default function App() {
   const [state, setState] = useState(EMPTY_TABS);
   const [inits, setInits] = useState(new Map<number, Snap>());
+  /** Ansicht je Dokument aus der letzten Sitzung */
+  const [starts, setStarts] = useState(new Map<number, DocStart>());
+  /** beim Wiederherstellen nicht mehr gefundene Dateien (Hinweis-Symbol) */
+  const [missing, setMissing] = useState<string[]>([]);
+  const [help, setHelp] = useState(false);
+  const [tour, setTour] = useState(() => !tourSeen());
   const [ratio, setRatio] = useState(0.5);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
@@ -41,9 +54,10 @@ export default function App() {
   const current = tabs.find((t) => t.id === activeId(state));
   // Für Listener, die nur einmal registriert werden
   const live = useRef<{
-    tabs: Tab[]; openPath: (p: string) => Promise<void>; confirmLeave: (t: Tab) => Promise<boolean>; dropImages: (ps: string[], x: number, y: number) => Promise<void>;
+    tabs: Tab[]; state: typeof state; ratio: number; side: boolean; openPath: (p: string) => Promise<void>; restore: () => Promise<void>; saveSession: () => Promise<void>;
+    confirmLeave: (t: Tab) => Promise<boolean>; dropImages: (ps: string[], x: number, y: number) => Promise<void>;
   }>({
-    tabs, openPath: async () => {}, confirmLeave: async () => true, dropImages: async () => {},
+    tabs, state, ratio, side: false, openPath: async () => {}, restore: async () => {}, saveSession: async () => {}, confirmLeave: async () => true, dropImages: async () => {},
   });
 
   const onDirty = useCallback((id: number, dirty: boolean) => setState((s) => setDirty(s, id, dirty)), []);
@@ -93,37 +107,75 @@ export default function App() {
     return p;
   }
 
+  /** PDF ins Backend laden; Passwort fragen, bis es passt. `undefined` = abgebrochen, Fehler werden geworfen. */
+  async function load(p: string) {
+    const id = nextId.current++;
+    // Öffnen-Passwort lebt nur im RAM (hier + Backend)
+    let password: string | null = null;
+    for (;;) {
+      try {
+        return { id, snap: toSnap(PageState.parse(await invoke("open_pdf", { id, path: p, password }))) };
+      } catch (e) {
+        if (String(e) !== "PASSWORT_NOETIG" && String(e) !== "PASSWORT_FALSCH") throw e;
+        password = await askPassword(fileName(p), String(e) === "PASSWORT_FALSCH");
+        if (password === null) return;
+      }
+    }
+  }
+
   async function openPath(p: string) {
+    await restored;
     const hit = live.current.tabs.find((t) => samePath(t.path, p));
     if (hit) return setState((s) => show(s, hit.id));
     // gleiche Datei kurz nacheinander (Start-Pfad + Drop) → nur einmal öffnen
     if (opening.current.some((o) => samePath(o, p))) return;
     opening.current.push(p);
-    const id = nextId.current++;
     try {
-      // Öffnen-Passwort: fragen, bis es passt oder abgebrochen wird; lebt nur im RAM (hier + Backend)
-      let password: string | null = null;
-      let state: unknown;
-      for (;;) {
-        try {
-          state = await invoke("open_pdf", { id, path: p, password });
-          break;
-        } catch (e) {
-          if (String(e) !== "PASSWORT_NOETIG" && String(e) !== "PASSWORT_FALSCH") throw e;
-          const wrong = String(e) === "PASSWORT_FALSCH";
-          password = await askPassword(fileName(p), wrong);
-          if (password === null) return;
-        }
-      }
-      const snap = toSnap(PageState.parse(state));
-      setInits((m) => new Map(m).set(id, snap));
-      setState((s) => openTab(s, id, p));
+      const r = await load(p);
+      if (!r) return;
+      setInits((m) => new Map(m).set(r.id, r.snap));
+      setState((s) => openTab(s, r.id, p));
       setError(undefined);
     } catch (e) {
       setError(`Öffnen fehlgeschlagen: ${String(e)}`);
     } finally {
       opening.current = opening.current.filter((o) => o !== p);
     }
+  }
+
+  /** Letzte Sitzung: fehlende/unlesbare Dateien still auslassen (Hinweis-Symbol), Passwort-Abbruch lässt den Tab weg. */
+  async function restore() {
+    const s = loadSession();
+    if (!s) return;
+    const gone: string[] = [];
+    const got = await Promise.all(s.files.map((f) => load(f.path).catch(() => void gone.push(fileName(f.path)))));
+    const next = fromSession(s, got.map((g) => g?.id));
+    setInits((m) => new Map([...m, ...got.flatMap((g) => (g ? [[g.id, g.snap] as const] : []))]));
+    setStarts(new Map(got.flatMap((g, i) => (g && s.files[i] ? [[g.id, s.files[i]] as const] : []))));
+    setState(next);
+    setRatio(s.ratio);
+    setSplitSide({ split: next.split, open: s.side });
+    setMissing(gone);
+    // Öffnen danach (Explorer-Start) sieht die Tabs schon vor dem nächsten Rendern
+    live.current.tabs = next.tabs;
+  }
+
+  /** Sitzung beim Beenden: Tabs + Ansicht je Dokument, Fenster (maximiert/minimiert → Größe davor) */
+  async function saveSession() {
+    const w = getCurrentWindow();
+    let win = loadSession()?.win;
+    try {
+      if (!(await w.isMinimized())) {
+        // setSize setzt die Innengröße, setPosition die äußere Lage
+        const [pos, size, max] = await Promise.all([w.outerPosition(), w.innerSize(), w.isMaximized()]);
+        const cur = { x: pos.x, y: pos.y, w: size.width, h: size.height, max: false };
+        win = max ? { ...(win ?? cur), max: true } : cur;
+      }
+    } catch {
+      // Fenster nicht abfragbar → letzte Lage behalten
+    }
+    const { state: st, ratio: r, side } = live.current;
+    storeSession(toSession(st, r, (id) => apis.get(String(id))?.state() ?? NO_VIEW, win, side));
   }
 
   async function pickFile() {
@@ -150,7 +202,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    live.current = { tabs, openPath, confirmLeave, dropImages };
+    live.current = { tabs, state, ratio, side: splitSide.open, openPath, restore, saveSession, confirmLeave, dropImages };
   });
 
   // Ansicht: System folgt Windows auch während die App läuft
@@ -170,7 +222,9 @@ export default function App() {
 
   // Einmalig: „Öffnen mit" (auch bei laufender App), Drag & Drop, Beenden fragt für jedes ungespeicherte Dokument
   useEffect(() => {
-    void invoke<string | null>("startup_path").then((p) => {
+    // erst die letzte Sitzung, dann die per Explorer übergebene PDF als aktiver Tab
+    restored ??= live.current.restore().catch(() => {});
+    void restored.then(() => invoke<string | null>("startup_path")).then((p) => {
       if (p) void live.current.openPath(p);
     });
     const un = [
@@ -188,6 +242,7 @@ export default function App() {
         for (const t of live.current.tabs) {
           if (!(await live.current.confirmLeave(t))) return e.preventDefault();
         }
+        await live.current.saveSession();
       }),
     ];
     return () => un.forEach((u) => void u.then((f) => f()));
@@ -213,16 +268,17 @@ export default function App() {
     };
   });
 
-  // Tastatur: Strg+O, Strg+W, Strg+(Umschalt+)Tab; dokumentbezogene Tasten in DocView
+  // Tastatur: Öffnen, Schließen, Tab wechseln, Hilfe; dokumentbezogene Tasten in DocView
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey) return;
-      const k = e.key.toLowerCase();
-      const act: Record<string, () => void> = {
-        o: () => void pickFile(),
-        w: () => void (current && close(current)),
-        tab: () => setState((s) => cycle(s, e.shiftKey ? -1 : 1)),
-      };
+      const act = keyMap([
+        [KEYS.open, () => void pickFile()],
+        [KEYS.close, () => void (current && close(current))],
+        [KEYS.nextTab, () => setState((s) => cycle(s, 1))],
+        [KEYS.prevTab, () => setState((s) => cycle(s, -1))],
+        [KEYS.help, () => setHelp(true)],
+      ]);
+      const k = comboOf(e);
       const f = act[k];
       if (f) {
         e.preventDefault();
@@ -292,6 +348,7 @@ export default function App() {
         view={dup ? `${t.id}b` : String(t.id)}
         path={t.path}
         init={init}
+        start={starts.get(t.id)}
         visible={dup || paneOf(t.id) !== undefined}
         active={p === state.active}
         marked={state.split && p === state.active}
@@ -310,7 +367,7 @@ export default function App() {
     <div className="flex h-full flex-col">
       <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
         <IconBtn icon={NotebookPen} label={T.newFile} onClick={() => void newFile()} />
-        <IconBtn icon={FolderOpen} label={T.open} keys="Strg+O" onClick={() => void pickFile()} />
+        <IconBtn icon={FolderOpen} label={T.open} keys={KEYS.open} onClick={() => void pickFile()} />
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={() => {
           tabDrag.current = null;
           setDrop(undefined);
@@ -333,7 +390,7 @@ export default function App() {
                 <IconBtn
                   icon={X}
                   label={T.close}
-                  keys="Strg+W"
+                  keys={KEYS.close}
                   className="rounded-xs p-0.5 text-ink-3 hover:bg-line hover:text-ink"
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
@@ -349,6 +406,10 @@ export default function App() {
         <IconBtn icon={ArrowLeftRight} label={T.auto} className={btn + on(settings.auto)} aria-pressed={settings.auto}
           onClick={() => updateSettings({ ...settings, auto: !settings.auto })} />
         <IconBtn icon={Gear} label={T.settings} className={btn + on(showSettings)} aria-pressed={showSettings} onClick={() => setShowSettings((s) => !s)} />
+        <IconBtn icon={CircleHelp} label={T.help} keys={KEYS.help} className={btn + on(help)} aria-pressed={help} onClick={() => setHelp(true)} />
+        {missing.length > 0 && (
+          <IconBtn icon={FileWarning} label={T.missing(missing.join(", "))} className={btn + " text-accent"} onClick={() => setMissing([])} />
+        )}
         {error && <span className="text-sm text-red-400">{error}</span>}
         {showSettings && (
           <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
@@ -422,6 +483,11 @@ export default function App() {
           />
         )}
       </div>
+      {help && <Help onClose={() => setHelp(false)} onTour={() => {
+        setHelp(false);
+        setTour(true);
+      }} />}
+      {tour && <Tour onEnd={() => setTour(false)} />}
       {pwAsk && <PasswordPrompt {...pwAsk} />}
     </div>
   );

@@ -2,10 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, ClipboardPen, Eraser, File, FileCode,
-  FileImage, FileMinus, Flame, FileOutput, FilePenLine, FilePlus, Files, FileText, Grid3x3, Grip, Highlighter, ImagePlus, Link, ListIndentDecrease,
-  ListIndentIncrease, LocateFixed, Lock, MousePointer2, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Pen, PenLine, Plus, Redo2, RotateCw,
-  Rows3, Save, ScanText, Shapes, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+  ArrowDown, ArrowUp, ArrowUpRight, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, File, FileCode,
+  FileImage, FileMinus, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
+  ListIndentIncrease, LocateFixed, Lock, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
+  Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
@@ -15,7 +15,9 @@ import {
 import { useDoc } from "./docstore";
 import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem } from "./ui";
 import { T, tip } from "./i18n";
+import { comboOf, KEYS, keyMap, LAYERS, TOOL_LABELS } from "./keys";
 import * as ol from "./outline";
+import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 
@@ -50,15 +52,6 @@ export const toSnap = (r: z.infer<typeof PageState>): Snap => ({ items: r.items.
  */
 const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
-/** Werkzeug, Symbol, Name, Kürzel */
-const TOOL_LABELS: [Tool, LucideIcon, string, string][] = [
-  ["pen", Pen, T.pen, "p"], ["marker", Highlighter, T.marker, "m"], ["eraser", Eraser, T.eraser, "e"],
-  ["lasso", MousePointer2, T.lasso, "a/t"], ["line", Slash, T.line, "l"], ["arrow", ArrowUpRight, T.arrow, "f"],
-  ["rect", Square, T.rect, "r"], ["ellipse", Circle, T.ellipse, "k"], ["axes", Axis3d, T.axes, "x"],
-  ["form", ClipboardPen, T.form, "o"], ["link", Link, T.link, "g"],
-];
-/** Ebene, Symbol, Name; Kürzel = Nummer */
-const LAYERS: [Layer, LucideIcon, string][] = [[1, FileText, T.layer1], [2, Shapes, T.layer2], [3, PenLine, T.layer3]];
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
 const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
 const SHAPES: [Item["kind"], LucideIcon, string][] = [
@@ -93,14 +86,17 @@ export interface DocApi {
   save: () => Promise<void>;
   /** Bild an Bildschirmstelle (client px) einfügen; ohne Stelle mittig. false = keine eigene Seite dort */
   dropImage: (b64: string, x?: number, y?: number) => Promise<boolean>;
+  /** Ansicht für die Sitzung (Seite/Scroll, Zoom, Ebene, Werkzeug je Gerät) */
+  state: () => DocStart;
 }
 
 /**
  * Ein offenes Dokument mit eigenem Undo, Zoom, Scroll und Werkzeug. Bleibt gemountet, solange der Tab offen ist;
  * versteckt (`visible` = false) gibt es seine Seitenbilder frei (IntersectionObserver in PageView).
  */
-export function DocView({ id, view, path, init, visible, active, marked, settings, style, apis, sideOpen, onSide, onDirty, onFocus }: {
-  id: number; view: string; path: string; init: Snap; visible: boolean; active: boolean; marked: boolean; settings: Settings;
+export function DocView({ id, view, path, init, start, visible, active, marked, settings, style, apis, sideOpen, onSide, onDirty, onFocus }: {
+  /** `start` = Ansicht aus der letzten Sitzung, sonst Seitenbreite */
+  id: number; view: string; path: string; init: Snap; start?: DocStart; visible: boolean; active: boolean; marked: boolean; settings: Settings;
   style: CSSProperties; apis: Map<string, DocApi>; sideOpen: boolean; onSide: () => void;
   onDirty: (id: number, dirty: boolean) => void; onFocus: () => void;
 }) {
@@ -110,14 +106,14 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
   const setHist = (f: (h: History) => History) => setDoc((d) => ({ ...d, hist: f(d.hist) }));
   const setSaved = (s: Snap) => setDoc((d) => ({ ...d, saved: s }));
   const setVersion = (f: (v: number) => number) => setDoc((d) => ({ ...d, version: f(d.version) }));
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(start?.zoom ?? 1);
   /** Werkzeug der Maus (bei `settings.auto`) bzw. aller Geräte; `penTool` = Werkzeug des Stifts bei `auto` */
-  const [tools, setTools] = useState(() => initTools(settings.auto));
+  const [tools, setTools] = useState(() => ({ ...initTools(settings.auto), ...(start && { mouse: start.mouse, pen: start.pen }) }));
   const { mouse: tool, pen: penTool, locked } = tools;
   const setTool = (t: Tool) => setTools((s) => ({ ...s, mouse: t }));
   /** Tippen bei ausgewähltem Textfeld: PageView je Seite öffnet das Feld mit dem Zeichen am Ende */
   const typers = useRef(new Map<number, (id: number, ch: string) => void>()).current;
-  const [layer, setLayer] = useState<Layer>(3);
+  const [layer, setLayer] = useState<Layer>(start?.layer ?? 3);
   /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
   const [pal, setPal] = useState(loadPalettes);
@@ -148,7 +144,7 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
   // Passwort nur in diesem Zustand, verworfen beim Schließen des Dialogs
   const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
   const scroller = useRef<HTMLDivElement>(null);
-  const scrollPos = useRef({ left: 0, top: 0 });
+  const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const snap = hist.list[hist.at] ?? EMPTY;
@@ -572,16 +568,17 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
   }
 
   useEffect(() => {
-    apis.set(view, { save, dropImage });
+    apis.set(view, { save, dropImage, state: () => ({ zoom, ...scrollPos.current, layer, mouse: tool, pen: penTool }) });
   });
   useEffect(() => () => void apis.delete(view), [apis, view]);
   useEffect(() => onDirty(id, dirty), [onDirty, id, dirty]);
 
-  // Beim Öffnen auf Seitenbreite zoomen
+  // Beim Öffnen auf Seitenbreite zoomen (wiederhergestellte Sitzung behält ihren Zoom)
   useLayoutEffect(() => {
+    if (start) return;
     const width = (scroller.current?.clientWidth || 800) - 48;
     setZoom(clampZoom(width / Math.max(...init.sizes.map(([w]) => w))));
-  }, [init]);
+  }, [init, start]);
 
   // Versteckt verliert das Element seine Scroll-Position → beim Wiederanzeigen zurücksetzen
   useLayoutEffect(() => {
@@ -593,7 +590,8 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "s" && e.target instanceof HTMLElement && e.target.closest("[data-field]")) {
+      const c = comboOf(e);
+      if (c === KEYS.save && e.target instanceof HTMLElement && e.target.closest("[data-field]")) {
         e.preventDefault();
         e.target.blur(); // übernimmt den Wert (blur → setField, synchron)
         if (fieldN.current || busy.current) saveSoon.current = true;
@@ -608,47 +606,43 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
         typers.get(selection.page)?.(one.id, e.key);
         return;
       }
-      const k = e.key.toLowerCase();
-      const act: Record<string, () => void> = e.ctrlKey ? {
-        s: () => void (e.shiftKey ? setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" }) : save().catch(() => {})),
-        z: () => void travel(e.shiftKey ? hist.at + 1 : hist.at - 1),
-        y: () => void travel(hist.at + 1),
-        a: () => {
+      const nudge = (dx: number, dy: number, n: number) => () =>
+        edit((all) => all.map((it) => it.page === selection.page && selection.ids.includes(it.id) ? moveItem(it, dx * n, dy * n) : it));
+      const act = keyMap([
+        [KEYS.save, () => void save().catch(() => {})],
+        [KEYS.saveAs, () => setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" })],
+        [KEYS.undo, () => void travel(hist.at - 1)],
+        [KEYS.redo, () => void travel(hist.at + 1)],
+        [KEYS.selectAll, () => {
           const page = Math.min(current, sizes.length - 1);
           setTool("lasso");
           if (layer !== 1) return setSelection({ page, ids: items.filter((it) => it.page === page && layerOf(it) === layer).map((it) => it.id) });
           const v = version;
           invoke<number[][]>("orig_objects", { id, index: page }).then(
             (b) => v === version && setSelection({ page, ids: b.map((_, i) => -1 - i) }), () => {});
-        },
-        "+": () => applyZoom(zoom * 1.2),
-        "=": () => applyZoom(zoom * 1.2),
-        "-": () => applyZoom(zoom / 1.2),
-        f: () => {
+        }],
+        [KEYS.zoomIn, () => applyZoom(zoom * 1.2)],
+        [KEYS.zoomOut, () => applyZoom(zoom / 1.2)],
+        [KEYS.search, () => {
           setFind((f) => f ?? { q: "", done: null, hits: [], at: -1, v: version });
           requestAnimationFrame(() => findInput.current?.select());
-        },
-      } : {
-        delete: removeSel, backspace: removeSel,
-        escape: () => {
+        }],
+        [KEYS.del, removeSel],
+        [KEYS.escape, () => {
           setLinkFrom(undefined);
           setTools((s) => ({ ...s, locked: false, mouse: settings.auto ? "lasso" : s.mouse }));
           clearSel();
           setTextSel(null);
-        },
-        i: () => void insertImageFile(),
-        contextmenu: openMenu,
-        ...(e.shiftKey ? { f10: openMenu } : {}),
-        ...Object.fromEntries(TOOL_LABELS.flatMap(([t, , , key]) => key.split("/").map((k) => [k, () => chooseTool(t)]))),
+        }],
+        [KEYS.image, () => void insertImageFile()],
+        [KEYS.menu, openMenu],
+        ...TOOL_LABELS.map(([t, , , key]): [string, () => void] => [key, () => chooseTool(t)]),
+        ...LAYERS.map(([l]): [string, () => void] => [String(l), () => switchLayer(l)]),
         // Pfeiltasten schieben eigene ausgewählte Objekte (Umschalt = 10 pt)
-        ...(selItems.length ? Object.fromEntries(([["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, -1], ["arrowdown", 0, 1]] as const)
-          .map(([key, dx, dy]) => [key, () => {
-            const n = e.shiftKey ? 10 : 1;
-            edit((all) => all.map((it) => it.page === selection.page && selection.ids.includes(it.id) ? moveItem(it, dx * n, dy * n) : it));
-          }])) : {}),
-        ...Object.fromEntries(LAYERS.map(([l]) => [String(l), () => switchLayer(l)])),
-      };
-      const f = act[k];
+        ...(selItems.length ? ([["←", -1, 0], ["→", 1, 0], ["↑", 0, -1], ["↓", 0, 1]] as const).flatMap(([key, dx, dy]): [string, () => void][] =>
+          [[key, nudge(dx, dy, 1)], [`Umschalt+${key}`, nudge(dx, dy, 10)]]) : []),
+      ]);
+      const f = act[c];
       if (f) {
         e.preventDefault();
         f();
@@ -802,11 +796,11 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
     >
       <div className="flex flex-wrap items-center gap-1 border-b border-line bg-surface px-3 py-1.5">
         <IconBtn icon={sideOpen ? PanelLeftClose : PanelLeftOpen} label={T.sidebar} onClick={onSide} aria-pressed={sideOpen} />
-        <IconBtn icon={Save} label={T.save} keys="Strg+S" onClick={() => void save().catch(() => {})} disabled={!dirty} />
-        <IconBtn icon={FileOutput} label={T.saveAs} keys="Strg+Umschalt+S" onClick={() => setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" })} />
+        <IconBtn icon={Save} label={T.save} keys={KEYS.save} onClick={() => void save().catch(() => {})} disabled={!dirty} />
+        <IconBtn icon={FileOutput} label={T.saveAs} keys={KEYS.saveAs} onClick={() => setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" })} />
         {sep}
-        <IconBtn icon={Undo2} label={T.undo} keys="Strg+Z" onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} />
-        <IconBtn icon={Redo2} label={T.redo} keys="Strg+Y" onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
+        <IconBtn icon={Undo2} label={T.undo} keys={KEYS.undo} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} />
+        <IconBtn icon={Redo2} label={T.redo} keys={KEYS.redo} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
         {sep}
         {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
         {TOOL_LABELS.map(([t, icon, label, key]) => (
@@ -814,7 +808,7 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
             key={t}
             icon={icon}
             label={label}
-            keys={key.toUpperCase()}
+            keys={key}
             className={`${btn} relative${settings.auto ? (tool === t ? " ring-1 ring-inset ring-accent text-ink" : "") : on(tool === t)}`}
             onClick={(e) => chooseTool(t, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
             onDoubleClick={() => SHAPE_TOOLS.includes(t) && setTools((s) => ({ ...s, locked: true }))}
@@ -829,8 +823,8 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
             <sub className="font-mono">{l}</sub>
           </IconBtn>
         ))}
-        <IconBtn icon={ImagePlus} label={T.image} keys="I" onClick={() => void insertImageFile()} />
-        <Menu icon={Plus} label={T.insert} keys="Strg+V">
+        <IconBtn icon={ImagePlus} label={T.image} keys={KEYS.image} onClick={() => void insertImageFile()} />
+        <Menu icon={Plus} label={T.insert} keys={KEYS.paste}>
           <MenuItem icon={ImagePlus} label={T.imageFile} onClick={() => void insertImageFile()} />
           <MenuItem icon={Type} label={T.textBox} onClick={() => insertText("Text")} />
           {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
@@ -902,9 +896,9 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
         <IconBtn icon={ScanText} label={T.ocr} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} />
         <IconBtn icon={FileMinus} label={T.pageDelete} onClick={deletePage} disabled={sizes.length < 2} />
         {sep}
-        <IconBtn icon={ZoomOut} label={T.zoomOut} keys="Strg+−" onClick={() => applyZoom(zoom / 1.2)} />
+        <IconBtn icon={ZoomOut} label={T.zoomOut} keys={KEYS.zoomOut} onClick={() => applyZoom(zoom / 1.2)} />
         <span className="w-12 text-center font-mono text-xs text-ink-2">{Math.round(zoom * 100)} %</span>
-        <IconBtn icon={ZoomIn} label={T.zoomIn} keys="Strg++" onClick={() => applyZoom(zoom * 1.2)} />
+        <IconBtn icon={ZoomIn} label={T.zoomIn} keys={KEYS.zoomIn} onClick={() => applyZoom(zoom * 1.2)} />
         <form
           className="flex items-center gap-1 text-sm text-ink-2"
           onSubmit={(e) => {
@@ -952,7 +946,7 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
               className="w-40 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-xs text-ink"
             />
             <span className="w-14 font-mono text-xs">{find.done === null ? "" : `${find.at + 1}/${hits.length}`}</span>
-            <IconBtn icon={X} label={T.searchClose} keys="Esc" onClick={() => setFind(null)} />
+            <IconBtn icon={X} label={T.searchClose} keys={KEYS.escape} onClick={() => setFind(null)} />
           </form>
         )}
         {tool === "link" && linkFrom && <span className="text-sm text-accent">{T.linkTarget}</span>}

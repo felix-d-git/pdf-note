@@ -34,8 +34,23 @@ const de = {
   pwRule: "Passwort: 1–127 Byte", pwMismatch: "Passwörter stimmen nicht überein", pwWrong: "Falsches Passwort – erneut eingeben",
   pwFor: (f: string) => `„${f}" ist mit einem Passwort geschützt`, unlock: "Öffnen",
   ownTarget: "Nicht über die offene Datei – anderen Namen wählen",
+  nextTab: "Nächster Tab", prevTab: "Vorheriger Tab", help: "Hilfe", selectAll: "Alles auswählen", nudge: "Auswahl verschieben (Umschalt = 10 pt)",
+  escape: "Abbrechen/Auswahl aufheben", menu: "Kontextmenü", keyDel: "Entf", keyBack: "Rücktaste", keyMenu: "Menütaste",
+  missing: (f: string) => `Nicht mehr gefunden (Tab entfernt): ${f}`, helpSearch: "Hilfe durchsuchen", keysTitle: "Tastenkürzel", toolsTitle: "Werkzeuge",
+  key: "Taste", action: "Aktion", noHits: "Kein Kapitel gefunden",
+  tourStart: "Tour starten", tourBack: "Zurück", tourNext: "Weiter", tourSkip: "Tour überspringen", tourDone: "Fertig",
+  sample: "Beispielseite – hier klicken und tippen", sampleFile: "Beispiel.pdf",
+  tour: [
+    ["PDF öffnen", "Mit dem Ordner-Symbol oder Strg+O öffnest du PDFs – jede bekommt einen Tab. Dateien kannst du auch einfach hineinziehen."],
+    ["Werkzeuge", "Die Leiste zeigt alle Werkzeuge mit Taste. Ist „Gerät bestimmt Werkzeug\" an, merkt sich Stift und Maus je ein eigenes Werkzeug."],
+    ["Ebenen", "Ebene 1 = PDF-Inhalt, 2 = Elemente (Bilder, Formen), 3 = Handschrift. Werkzeuge wechseln die Ebene selbst."],
+    ["Text tippen", "Mit dem Auswahl-Werkzeug auf die Seite klicken und lostippen – es entsteht ein Textfeld."],
+    ["Auswahl", "Ausgewähltes hat Griffe und eine Mini-Leiste; Rechtsklick öffnet weitere Befehle."],
+    ["Speichern", "Strg+S schreibt alles in die PDF selbst – keine Zusatzdateien. Andere Programme zeigen deine Notizen ebenfalls."],
+    ["Hilfe", "F1 oder ? öffnet die Hilfe mit allen Tasten. Dort kannst du diese Tour jederzeit neu starten."],
+  ] as [string, string][],
 };
-type Strings = typeof de;
+export type Strings = typeof de;
 
 const en: Strings = {
   ctrl: "Ctrl", shift: "Shift",
@@ -72,11 +87,29 @@ const en: Strings = {
   pwRule: "Password: 1–127 bytes", pwMismatch: "Passwords do not match", pwWrong: "Wrong password – try again",
   pwFor: (f: string) => `"${f}" is password protected`, unlock: "Open",
   ownTarget: "Not over the open file – choose another name",
+  nextTab: "Next tab", prevTab: "Previous tab", help: "Help", selectAll: "Select all", nudge: "Move selection (Shift = 10 pt)",
+  escape: "Cancel/clear selection", menu: "Context menu", keyDel: "Del", keyBack: "Backspace", keyMenu: "Menu key",
+  missing: (f: string) => `No longer found (tab removed): ${f}`, helpSearch: "Search help", keysTitle: "Keyboard shortcuts", toolsTitle: "Tools",
+  key: "Key", action: "Action", noHits: "No chapter found",
+  tourStart: "Start tour", tourBack: "Back", tourNext: "Next", tourSkip: "Skip tour", tourDone: "Done",
+  sample: "Sample page – click here and type", sampleFile: "Sample.pdf",
+  tour: [
+    ["Open a PDF", "The folder icon or Ctrl+O opens PDFs – each gets a tab. You can also drop files onto the window."],
+    ["Tools", "The toolbar shows every tool with its key. With \"Device picks tool\" on, pen and mouse each keep their own tool."],
+    ["Layers", "Layer 1 = PDF content, 2 = elements (images, shapes), 3 = handwriting. Tools switch the layer on their own."],
+    ["Type text", "With the select tool, click on the page and start typing – a text box appears."],
+    ["Selection", "Selected objects get handles and a mini bar; right-click opens more commands."],
+    ["Save", "Ctrl+S writes everything into the PDF itself – no extra files. Other programs show your notes too."],
+    ["Help", "F1 or ? opens the help with every key. You can restart this tour from there at any time."],
+  ],
 };
 
 export const STRINGS = { de, en };
 export const T: Strings = /^de\b/i.test(globalThis.navigator?.language ?? "") ? de : en;
 
-/** Tooltip „Name (Taste)"; `key` mit `Strg+`/`Umschalt+` wird übersetzt */
-export const tip = (name: string, key?: string) =>
-  key ? `${name} (${key.replace("Strg", T.ctrl).replace("Umschalt", T.shift)})` : name;
+const KEY_WORDS = { Strg: "ctrl", Umschalt: "shift", Entf: "keyDel", Rücktaste: "keyBack", Menütaste: "keyMenu" } as const;
+/** Kürzel aus `KEYS` (deutsch notiert) in der Oberflächensprache */
+export const keyText = (k: string) => k.replace(/Strg|Umschalt|Entf|Rücktaste|Menütaste/g, (w) => T[KEY_WORDS[w as keyof typeof KEY_WORDS]]);
+
+/** Tooltip „Name (Taste)"; Tastennamen werden übersetzt */
+export const tip = (name: string, key?: string) => (key ? `${name} (${keyText(key)})` : name);
