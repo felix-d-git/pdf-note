@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
+  afterDelete, afterInsert, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
   rotateItem, savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -116,4 +116,18 @@ test("Highlight trifft nur seine Zeilenrechtecke", () => {
   expect(hitTest(h, 50, 5, 0)).toBe(true);
   expect(hitTest(h, 80, 25, 0)).toBe(false);
   expect(layerOf(h)).toBe(3);
+});
+
+test("Zuschnitt: Griffe begrenzt, Ausschnitt bleibt an seiner Stelle (auch gedreht)", () => {
+  expect(cropDrag([0, 0, 1, 1], "se", -0.3, -0.2)).toEqual([0, 0, 0.7, 0.8]);
+  expect(cropDrag([0, 0, 1, 1], "w", -0.5, 0.4)).toEqual([0, 0, 1, 1]); // nicht über den Rand, n/s unberührt
+  const [l, , r] = cropDrag([0.2, 0, 0.4, 1], "e", -1, 0);
+  expect(r - l).toBeCloseTo(0.05); // Mindestgröße
+  const img = it("image", [[0, 0], [40, 20]]);
+  expect(cropItem(img, [0.5, 0, 1, 1], "B").points).toEqual([[20, 0, 0.5], [40, 20, 0.5]]);
+  // 90° im Uhrzeigersinn: rechte Bildhälfte liegt unten
+  const c = cropItem({ ...img, rot: 90 }, [0.5, 0, 1, 1], "B");
+  expect(c.points.flatMap((p) => [p[0], p[1]]).map((v) => Math.round(v))).toEqual([10, 10, 30, 30]);
+  expect(c.rot).toBe(90);
+  expect(c.image).toBe("B");
 });

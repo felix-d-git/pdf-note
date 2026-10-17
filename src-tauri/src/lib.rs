@@ -288,6 +288,11 @@ fn read_image(path: PathBuf) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn crop_image(image: String, frac: [f32; 4]) -> Result<String, String> {
+    pdf::crop_b64(&image, frac)
+}
+
+#[tauri::command]
 fn startup_path() -> Option<String> {
     std::env::args().nth(1).filter(|a| !a.starts_with('-'))
 }
@@ -313,7 +318,7 @@ pub fn run() {
             let _ = ocr::TESSDATA.set(app.path().resource_dir()?.join("tessdata"));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, startup_path, search, links])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

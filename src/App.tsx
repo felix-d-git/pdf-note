@@ -30,8 +30,10 @@ export default function App() {
   const { tabs, panes } = state;
   const current = tabs.find((t) => t.id === activeId(state));
   // Für Listener, die nur einmal registriert werden
-  const live = useRef<{ tabs: Tab[]; openPath: (p: string) => Promise<void>; confirmLeave: (t: Tab) => Promise<boolean> }>({
-    tabs, openPath: async () => {}, confirmLeave: async () => true,
+  const live = useRef<{
+    tabs: Tab[]; openPath: (p: string) => Promise<void>; confirmLeave: (t: Tab) => Promise<boolean>; dropImages: (ps: string[], x: number, y: number) => Promise<void>;
+  }>({
+    tabs, openPath: async () => {}, confirmLeave: async () => true, dropImages: async () => {},
   });
 
   const onDirty = useCallback((id: number, dirty: boolean) => setState((s) => setDirty(s, id, dirty)), []);
@@ -44,6 +46,19 @@ export default function App() {
     });
     if (r === "Speichern") return (apis.get(t.id)?.save() ?? Promise.resolve()).then(() => true, () => false);
     return r === "Verwerfen";
+  }
+
+  /** Bilder aus dem Explorer: auf die Seite unter (x, y) (auch im geteilten Fenster), sonst mittig ins aktive Dokument. */
+  async function dropImages(paths: string[], x: number, y: number) {
+    for (const p of paths) {
+      try {
+        const b64 = await invoke<string>("read_image", { path: p });
+        const hit = await Promise.all([...apis.values()].map((a) => a.dropImage(b64, x, y)));
+        if (!hit.includes(true) && current) await apis.get(current.id)?.dropImage(b64);
+      } catch (e) {
+        setError(`Bild einfügen fehlgeschlagen: ${String(e)}`);
+      }
+    }
   }
 
   async function close(t: Tab) {
@@ -100,7 +115,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    live.current = { tabs, openPath, confirmLeave };
+    live.current = { tabs, openPath, confirmLeave, dropImages };
   });
 
   // Titel mit * bei ungespeicherten Änderungen (aktiver Tab)
@@ -118,7 +133,11 @@ export default function App() {
       listen<string>("open-path", (e) => void live.current.openPath(e.payload)),
       getCurrentWebview().onDragDropEvent((e) => {
         if (e.payload.type !== "drop") return;
-        for (const p of e.payload.paths.filter((x) => x.toLowerCase().endsWith(".pdf"))) void live.current.openPath(p);
+        const ext = (x: string) => x.toLowerCase().split(".").pop() ?? "";
+        for (const p of e.payload.paths.filter((x) => ext(x) === "pdf")) void live.current.openPath(p);
+        // Position in physischen Pixeln → CSS-Pixel
+        const { x, y } = e.payload.position;
+        void live.current.dropImages(e.payload.paths.filter((p) => ["png", "jpg", "jpeg"].includes(ext(p))), x / devicePixelRatio, y / devicePixelRatio);
       }),
       getCurrentWindow().onCloseRequested(async (e) => {
         for (const t of live.current.tabs) {

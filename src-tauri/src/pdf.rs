@@ -198,6 +198,31 @@ pub fn image_b64(bytes: &[u8]) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// Zuschnitt (destruktiv): Bild-Base64 → nur der Ausschnitt `[l, t, r, b]` (Anteile 0…1) als PNG-Base64.
+/// PNG, weil die Crate kein JPEG schreibt; gespeicherte Stamps kommen ohnehin als PNG zurück (`stamp_png`).
+pub fn crop_b64(b64: &str, f: [f32; 4]) -> Result<String, String> {
+    use base64::Engine;
+    let e = base64::engine::general_purpose::STANDARD;
+    let [l, t, r, b] = f.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { -1.0 });
+    if l < 0.0 || t < 0.0 || r <= l || b <= t {
+        return Err("Zuschnitt ungültig".into());
+    }
+    let src = Image::from_bytes(&e.decode(b64).map_err(|e| e.to_string())?).and_then(|i| i.to_pixmap()).map_err(|e| e.to_string())?;
+    let (w, h) = (src.width() as f32, src.height() as f32);
+    let (x0, y0) = (((l * w).round() as usize).min(w as usize - 1), ((t * h).round() as usize).min(h as usize - 1));
+    let (x1, y1) = (((r * w).round() as usize).clamp(x0 + 1, w as usize), ((b * h).round() as usize).clamp(y0 + 1, h as usize));
+    let cs = src.color_space().ok_or("Bild ohne Farbraum")?;
+    let mut out = mupdf::Pixmap::new_with_w_h(&cs, (x1 - x0) as i32, (y1 - y0) as i32, src.alpha()).map_err(|e| e.to_string())?;
+    let (n, ss, ds) = (src.n() as usize, src.stride() as usize, out.stride() as usize);
+    let row = (x1 - x0) * n;
+    for y in y0..y1 {
+        out.samples_mut()[(y - y0) * ds..][..row].copy_from_slice(&src.samples()[y * ss + x0 * n..][..row]);
+    }
+    let mut png = Vec::new();
+    out.write_to(&mut png, ImageFormat::PNG).map_err(|e| format!("Bild nicht zuschneidbar: {e}"))?;
+    Ok(e.encode(png))
+}
+
 fn add_stamp(doc: &mut PdfDocument, page: &mut PdfPage, rect: Rect, it: &Item) -> Result<PdfAnnotation, Error> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
@@ -833,6 +858,14 @@ mod tests {
         let got = Image::from_bytes(&b64.decode(&taken[0].image).unwrap()).unwrap().to_pixmap().unwrap();
         assert_eq!(got.samples(), &want[..], "Pixel inkl. Alpha");
         assert_eq!(Item { image: String::new(), ..taken[0].clone() }, Item { image: String::new(), ..img });
+        // Zuschnitt: rechte zwei Spalten der unteren Zeile → Pixel inkl. Alpha übernommen
+        let cut = Image::from_bytes(&b64.decode(crop_b64(&b64.encode(&png), [0.34, 0.5, 1.0, 1.0]).unwrap()).unwrap()).unwrap().to_pixmap().unwrap();
+        assert_eq!((cut.width(), cut.height()), (2, 1));
+        assert_eq!(cut.samples(), &want[16..24], "Zuschnitt-Pixel");
+        assert!(crop_b64(&b64.encode(&png), [0.5, 0.0, 0.5, 1.0]).is_err(), "leerer Zuschnitt");
+        assert!(crop_b64(&b64.encode(&png), [f32::NAN, 0.0, 1.0, 1.0]).is_err());
+        // Rand rundet auf volle Breite → trotzdem 1 px, kein Panic
+        assert!(crop_b64(&b64.encode(&png), [0.9, 0.9, 1.0, 1.0]).is_ok());
         // Bild ohne Daten / Daten ohne Bild abgelehnt
         assert!(add_items(&mut doc, &[item(Kind::Image, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]])], true).is_err());
         let _ = std::fs::remove_file(path);

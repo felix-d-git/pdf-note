@@ -3,7 +3,7 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { z } from "zod";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
+  afterDelete, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
   layerOf, moveItem, newId, textRect, toData, type Item, type Layer, type Preset,
 } from "./ink";
 import * as ol from "./outline";
@@ -82,7 +82,11 @@ async function blobToB64(b: Blob): Promise<string> {
 }
 
 /** Was App von einem Dokument braucht (Speichern-Nachfrage beim Schließen/Beenden). */
-export interface DocApi { save: () => Promise<void> }
+export interface DocApi {
+  save: () => Promise<void>;
+  /** Bild an Bildschirmstelle (client px) einfügen; ohne Stelle mittig. false = keine eigene Seite dort */
+  dropImage: (b64: string, x?: number, y?: number) => Promise<boolean>;
+}
 
 /**
  * Ein offenes Dokument mit eigenem Undo, Zoom, Scroll und Werkzeug. Bleibt gemountet, solange der Tab offen ist;
@@ -382,10 +386,11 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     place(pasted);
   }
 
-  async function insertImage(b64: string) {
+  async function insertImage(b64: string, at?: [page: number, x: number, y: number]) {
     const c = viewCenter();
     if (!c) return;
-    const [page, x, y, w, h] = c;
+    const [page, x, y] = at ?? c;
+    const [w, h] = sizes[page] ?? A4;
     const img = new Image();
     img.src = `data:${imageMime(b64) ?? "image/png"};base64,${b64}`;
     await img.decode();
@@ -427,6 +432,22 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     }
   }
 
+  /** Drop aus dem Explorer: Seite unter (x, y) suchen; versteckte Tabs haben leere Rechtecke → kein Treffer. */
+  async function dropImage(b64: string, x?: number, y?: number) {
+    if (x === undefined || y === undefined) {
+      await insertImage(b64);
+      return true;
+    }
+    for (const el of scroller.current?.querySelectorAll<HTMLElement>("[data-page]") ?? []) {
+      const r = el.getBoundingClientRect();
+      if (r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        await insertImage(b64, [Number(el.dataset.page), (x - r.left) / zoom, (y - r.top) / zoom]);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Original-Objekte der PDF ändern; eigene Objekte ersetzen (`next`) bzw. entfernen (`drop`) im selben Schritt. */
   const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = []) =>
     void pageOp({ op: "orig", page, edits }, (its) =>
@@ -443,7 +464,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   };
 
   useEffect(() => {
-    apis.set(id, { save });
+    apis.set(id, { save, dropImage });
   });
   useEffect(() => () => void apis.delete(id), [apis, id]);
   useEffect(() => onDirty(id, dirty), [onDirty, id, dirty]);
@@ -507,6 +528,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           clearSel();
           setTextSel(null);
         },
+        i: () => void insertImageFile(),
         ...Object.fromEntries(TOOL_LABELS.flatMap(([t, , , key]) => key.split("/").map((k) => [k, () => chooseTool(t)]))),
         // Pfeiltasten schieben eigene ausgewählte Objekte (Umschalt = 10 pt)
         ...(selItems.length ? Object.fromEntries(([["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, -1], ["arrowdown", 0, 1]] as const)
@@ -705,6 +727,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
             {icon}<sub className="ml-0.5 font-mono">{l}</sub>
           </button>
         ))}
+        <button className={btn} onClick={() => void insertImageFile()} title="Bild einfügen (I) – auch per Drag & Drop aus dem Explorer">🖼</button>
         <select
           value=""
           aria-label="Einfügen"
@@ -789,7 +812,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           <button className={btn} onClick={() => setMdEdit({ page: current, source: md, insert: false })} title="Markdown der aktuellen Seite bearbeiten">Markdown ✎</button>
         )}
         <button className={btn} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} title="PDF hinten anhängen">PDF anhängen</button>
-        <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} title="Bild als Seite nach der aktuellen">Bild</button>
+        <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} title="Bild als neue Seite nach der aktuellen">📄 Bild-Seite</button>
         <button className={btn} onClick={rotate} title="Aktuelle Seite 90° drehen">⟳</button>
         <button className={btn} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} title="Text gescannter Seiten erkennen (lokal, macht sie durchsuchbar)">OCR</button>
         <button className={btn} onClick={deletePage} disabled={sizes.length < 2} title="Aktuelle Seite löschen">Seite −</button>
@@ -1013,6 +1036,12 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 }}
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
+                onCrop={(cid, f) => {
+                  const img = items.find((it) => it.id === cid);
+                  if (img) invoke<string>("crop_image", { image: img.image, frac: f })
+                    .then((b64) => edit((all) => all.map((it) => it.id === cid ? cropItem(it, f, b64) : it)))
+                    .catch((e: unknown) => setError(`Zuschneiden fehlgeschlagen: ${String(e)}`));
+                }}
                 onSelect={(page, ids) => {
                   setTextSel(null);
                   setSelection({ page, ids });
