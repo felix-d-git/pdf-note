@@ -16,18 +16,69 @@ pub fn page_texts(doc: &Document) -> Result<Vec<String>, Error> {
         .collect()
 }
 
+/// Fehlertexte, auf die das Frontend mit dem Passwort-Dialog reagiert.
+pub const NEED_PASSWORD: &str = "PASSWORT_NOETIG";
+pub const WRONG_PASSWORD: &str = "PASSWORT_FALSCH";
+
+/// Verschlüsselung beim Schreiben.
+#[derive(Clone, Copy)]
+pub enum Crypt<'a> {
+    /// wie gelesen (unverschlüsselt oder fremde Verschlüsselung ohne Öffnen-Passwort)
+    Keep,
+    None,
+    /// AES-256 mit diesem Öffnen-Passwort
+    Aes256(&'a str),
+}
+
+/// Grenze der MuPDF-Schreiboptionen (128-Byte-Puffer inkl. Null; länger panickt dort).
+pub fn check_password(pw: &str) -> Result<(), String> {
+    if pw.is_empty() || pw.len() > 127 || pw.contains('\0') {
+        return Err("Passwort: 1–127 Byte, kein Nullzeichen".into());
+    }
+    Ok(())
+}
+
 /// Liest die PDF komplett in den RAM: hält keinen Datei-Handle offen,
 /// sonst kann Windows die Datei beim Speichern nicht ersetzen.
 pub fn open(path: &Path) -> Result<PdfDocument, String> {
+    open_with(path, None).map(|(d, _)| d)
+}
+
+/// Wie `open`; eine PDF mit Öffnen-Passwort wird entsperrt und im RAM unverschlüsselt weitergeführt
+/// (Undo-Stände und Speicher-Kopie lesen sich so ohne Passwort neu ein). Verschlüsselt wird erst beim Schreiben.
+/// `true` = das Passwort wurde gebraucht.
+pub fn open_with(path: &Path, password: Option<&str>) -> Result<(PdfDocument, bool), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    PdfDocument::from_bytes(&bytes).map_err(|e| e.to_string())
+    let mut doc = PdfDocument::from_bytes(&bytes).map_err(|e| e.to_string())?;
+    if !doc.needs_password().map_err(|e| e.to_string())? {
+        return Ok((doc, false));
+    }
+    let pw = password.ok_or(NEED_PASSWORD)?;
+    if check_password(pw).is_err() || !doc.authenticate(pw).map_err(|e| e.to_string())? {
+        return Err(WRONG_PASSWORD.into());
+    }
+    Ok((PdfDocument::from_bytes(&write(&doc, Crypt::None)?).map_err(|e| e.to_string())?, true))
 }
 
 pub fn to_bytes(doc: &PdfDocument) -> Result<Vec<u8>, String> {
+    write(doc, Crypt::Keep)
+}
+
+pub fn write(doc: &PdfDocument, crypt: Crypt) -> Result<Vec<u8>, String> {
+    use mupdf::pdf::Encryption;
     let mut buf = Vec::new();
     // Garbage-Collect: durch Original-Objekt-Änderungen verwaiste alte Content-Streams fallen weg
     let mut opts = mupdf::pdf::PdfWriteOptions::default();
     opts.set_garbage_level(1).set_compress(true);
+    match crypt {
+        Crypt::Keep => opts.set_encryption(Encryption::Keep),
+        Crypt::None => opts.set_encryption(Encryption::None),
+        Crypt::Aes256(pw) => {
+            check_password(pw)?;
+            // Besitzer- = Öffnen-Passwort: wer öffnen darf, darf alles (Rechte bleiben „alle")
+            opts.set_encryption(Encryption::Aes256).set_user_password(pw).set_owner_password(pw)
+        }
+    };
     doc.write_to_with_options(&mut buf, opts).map_err(|e| e.to_string())?;
     Ok(buf)
 }
@@ -665,13 +716,13 @@ pub fn take_own(doc: &PdfDocument, pages: std::ops::Range<i32>) -> Result<Vec<It
 }
 
 /// Speichern: Kopie des Arbeitsdokuments + Objekte, optional eingebrannt (flach), atomar nach `path`.
-pub fn save(doc: &PdfDocument, items: &[Item], path: &Path, flat: bool) -> Result<(), String> {
+pub fn save(doc: &PdfDocument, items: &[Item], path: &Path, flat: bool, crypt: Crypt) -> Result<(), String> {
     let mut copy = PdfDocument::from_bytes(&to_bytes(doc)?).map_err(|e| e.to_string())?;
     add_items(&mut copy, items, !flat)?;
     if flat {
         copy.bake(true, false).map_err(|e| e.to_string())?;
     }
-    save_atomic(&copy, path)
+    save_atomic(&copy, path, crypt)
 }
 
 pub fn tmp_path(path: &Path) -> std::path::PathBuf {
@@ -680,9 +731,10 @@ pub fn tmp_path(path: &Path) -> std::path::PathBuf {
 
 /// Schreibt komplett neu in `<pdf>.pdfnote-tmp`, auf die Platte gezwungen, und benennt dann um:
 /// bricht das Schreiben ab (Absturz, Kill, Strom), bleibt das Original heil.
-pub fn save_atomic(doc: &PdfDocument, path: &Path) -> Result<(), String> {
+/// Verschlüsselt wird schon im RAM → auch die Temp-Datei liegt nie im Klartext auf der Platte.
+pub fn save_atomic(doc: &PdfDocument, path: &Path, crypt: Crypt) -> Result<(), String> {
     use std::io::Write;
-    let buf = to_bytes(doc)?;
+    let buf = write(doc, crypt)?;
     let tmp = tmp_path(path);
     let res = std::fs::File::create(&tmp)
         .and_then(|mut f| f.write_all(&buf).and_then(|_| f.sync_all()))
@@ -903,7 +955,7 @@ mod tests {
         doc.new_page(Size::A4).unwrap();
         let items = all_kinds();
         let path = tmp("kinds");
-        save(&doc, &items, &path, false).unwrap();
+        save(&doc, &items, &path, false, Crypt::Keep).unwrap();
         // Arbeitsdokument bleibt unverändert (gespeichert wird eine Kopie)
         assert!(annotations(&doc, 0).unwrap().is_empty());
 
@@ -953,7 +1005,7 @@ mod tests {
         doc.new_page(Size::A4).unwrap();
         let img = Item { image: b64.encode(&png), ..item(Kind::Image, vec![[50.0, 50.0, 0.5], [350.0, 250.0, 0.5]]) };
         let path = tmp("stamp");
-        save(&doc, std::slice::from_ref(&img), &path, false).unwrap();
+        save(&doc, std::slice::from_ref(&img), &path, false, Crypt::Keep).unwrap();
         let back = open(&path).unwrap();
         let ann = annotations(&back, 0).unwrap();
         assert_eq!(ann.len(), 1);
@@ -991,7 +1043,7 @@ mod tests {
         let png = tmp("scan-img").with_extension("png");
         std::fs::write(&png, test_png().0).unwrap();
         page_op(&mut doc, &PageOp::InsertFile { at: 1, path: png.clone() }).unwrap();
-        save(&doc, &all_kinds()[6..], &png.with_extension("pdf"), true).unwrap();
+        save(&doc, &all_kinds()[6..], &png.with_extension("pdf"), true, Crypt::Keep).unwrap();
         let text = open(&png.with_extension("pdf")).unwrap();
         assert!(!is_scan(&doc, 0).unwrap(), "leere Seite");
         assert!(is_scan(&doc, 1).unwrap(), "Bildseite");
@@ -1023,7 +1075,7 @@ mod tests {
         // 300×200, 90° im Uhrzeigersinn um (200, 150): linke obere Kachel (rot) landet rechts oben
         let img = Item { rot: 90.0, image: base64::engine::general_purpose::STANDARD.encode(&png), ..item(Kind::Image, vec![[50.0, 50.0, 0.5], [350.0, 250.0, 0.5]]) };
         let path = tmp("hl-rot");
-        save(&doc, &[hl.clone(), img], &path, false).unwrap();
+        save(&doc, &[hl.clone(), img], &path, false, Crypt::Keep).unwrap();
         let back = open(&path).unwrap();
         let page = back.load_pdf_page(0).unwrap();
         let a = page.annotations().next().unwrap();
@@ -1072,7 +1124,7 @@ mod tests {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
         let path = tmp("flat");
-        save(&doc, &all_kinds(), &path, true).unwrap();
+        save(&doc, &all_kinds(), &path, true, Crypt::Keep).unwrap();
         let back = open(&path).unwrap();
         assert!(annotations(&back, 0).unwrap().is_empty(), "keine Annotationen mehr");
         // Inhalt jetzt im Seiteninhalt: Text des Textfelds ist Seitentext
@@ -1087,22 +1139,22 @@ mod tests {
         let mut items = all_kinds();
         items[2].layer = 3; // Linie manuell in Ebene 3
         let path = tmp("ocg");
-        save(&doc, &items, &path, false).unwrap();
+        save(&doc, &items, &path, false, Crypt::Keep).unwrap();
         // zweimal speichern → keine doppelten OCGs
         let back = open(&path).unwrap();
         let taken = take_own(&back, 0..1).unwrap();
         assert_eq!(taken, items, "Ebene bleibt erhalten");
-        save(&back, &taken, &path, false).unwrap();
+        save(&back, &taken, &path, false, Crypt::Keep).unwrap();
         let again = open(&path).unwrap();
         assert_eq!(layer_names(&again).unwrap(), LAYER_NAMES.to_vec());
         let want: Vec<_> = items.iter().map(|it| Some(LAYER_NAMES[(it.layer() - 2) as usize].to_string())).collect();
         assert_eq!(annotation_layers(&again, 0).unwrap(), want);
         // nur Ebene 3 benutzt → nur „Notizen“
-        save(&doc, &items[..1], &path, false).unwrap();
+        save(&doc, &items[..1], &path, false, Crypt::Keep).unwrap();
         assert_eq!(layer_names(&open(&path).unwrap()).unwrap(), vec![LAYER_NAMES[1]]);
         // Einbrennen → keine Ebenen
         let flat = tmp("ocg-flat");
-        save(&again, &taken, &flat, true).unwrap();
+        save(&again, &taken, &flat, true, Crypt::Keep).unwrap();
         assert!(layer_names(&open(&flat).unwrap()).unwrap().is_empty());
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(flat);
@@ -1141,7 +1193,7 @@ mod tests {
         p0.add_rect_annotation(Rect::new(1.0, 1.0, 9.0, 9.0)).unwrap();
         p0.update().unwrap();
         let src = tmp("insert-src");
-        save(&other, &[Item { page: 1, ..all_kinds()[0].clone() }], &src, false).unwrap();
+        save(&other, &[Item { page: 1, ..all_kinds()[0].clone() }], &src, false, Crypt::Keep).unwrap();
         let r = page_op(&mut doc, &PageOp::InsertFile { at: 0, path: src.clone() }).unwrap();
         assert_eq!(r.inserted, 2);
         assert_eq!(r.items.len(), 1);
@@ -1159,7 +1211,7 @@ mod tests {
 
         // alles zusammen speichern und neu öffnen
         let out = tmp("ops-out");
-        save(&doc, &[], &out, false).unwrap();
+        save(&doc, &[], &out, false, Crypt::Keep).unwrap();
         assert_eq!(open(&out).unwrap().page_count().unwrap(), 4);
         for p in [src, png, out] {
             let _ = std::fs::remove_file(p);

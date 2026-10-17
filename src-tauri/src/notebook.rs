@@ -26,7 +26,7 @@ pub fn new_pdf(path: &Path) -> Result<(), String> {
     }
     let mut d = PdfDocument::new();
     d.new_page(Size::A4).map_err(err)?;
-    crate::pdf::save_atomic(&d, path)
+    crate::pdf::save_atomic(&d, path, crate::pdf::Crypt::Keep)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
