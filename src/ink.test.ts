@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
+  afterDelete, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
   rotateItem, savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -130,4 +130,15 @@ test("Zuschnitt: Griffe begrenzt, Ausschnitt bleibt an seiner Stelle (auch gedre
   expect(c.points.flatMap((p) => [p[0], p[1]]).map((v) => Math.round(v))).toEqual([10, 10, 30, 30]);
   expect(c.rot).toBe(90);
   expect(c.image).toBe("B");
+});
+
+test("Koordinatensystem: xy 2 Achsen + 2 Spitzen, xyz 3 + 3, Gitter nur mit Schalter", () => {
+  const a = it("axes", [[0, 0], [200, 150]]);
+  expect(axesLines(a).axes).toHaveLength(4);
+  expect(axesLines(a).grid).toHaveLength(0);
+  expect(axesLines({ ...a, xyz: true }).axes).toHaveLength(6);
+  const g = axesLines({ ...a, grid: true }).grid;
+  expect(g.length).toBeGreaterThan(4);
+  // Gitter bleibt im Rahmen
+  expect(g.flat().every(([x, y]) => x >= 0 && x <= 200 && y >= 0 && y <= 150)).toBe(true);
 });

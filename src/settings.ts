@@ -2,7 +2,7 @@ import { z } from "zod";
 import { MARKERS, PRESETS, PRESSURE_MAX, TEXT_SIZE, type Preset } from "./ink";
 
 /** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus); `space` = Platz einfügen (waagrechte Linie ziehen) */
-export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "form", "link", "space"] as const;
+export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "form", "link", "space"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Stifttaste: Zeigerart + Bitmaske aus PointerEvent.buttons (2 = Seitentaste, 32 = Radierer-Ende). */
@@ -83,7 +83,7 @@ export function toolFor(e: { pointerType: string; buttons: number }, tool: Tool,
  */
 export interface Tools { mouse: Tool; pen: Tool; prev: { mouse: Tool; pen: Tool }; locked: boolean }
 /** Einmal-Werkzeuge: danach zurück zum vorherigen (Platz einfügen wie eine Form) */
-export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "space"];
+export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "space"];
 export const initTools = (auto: boolean): Tools => ({ mouse: auto ? "lasso" : "pen", pen: "pen", prev: { mouse: "lasso", pen: "pen" }, locked: false });
 
 /** Werkzeug wählen; `dev` = womit. Bei `auto` setzt der Stift nur seins, die Maus ihres – Zeichenwerkzeuge gelten auch für den Stift. */

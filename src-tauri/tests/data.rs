@@ -40,7 +40,7 @@ fn b64(bytes: &[u8]) -> String {
 }
 
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0 }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0, xyz: false, grid: false }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -731,4 +731,45 @@ fn bild_zuschneiden_drehen() {
     assert_eq!(dims(&pdf::crop_b64(&full, [0.25, 0.25, 0.75, 0.75]).unwrap()), (((w as f32 * 0.75).round() - (w as f32 * 0.25).round()) as u32, ((h as f32 * 0.75).round() - (h as f32 * 0.25).round()) as u32));
     assert!(size[1] < size[0], "zugeschnitten nicht kleiner: {size:?}");
     println!("Bild: {w}×{h} → Zuschnitt, Datei {} → {} Bytes", size[0], size[1]);
+}
+
+/// Koordinatensysteme: xy + xyz mit Gitter speichern → neu öffnen → je ein Objekt mit gleichen Parametern,
+/// in der PDF als Ink mit eigenem Aussehen (sichtbar ohne PDF Note).
+#[test]
+#[ignore]
+fn koordinatensysteme() {
+    use pdf::Kind;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-axes");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        let blank = pdf::render_png(&d, 0, 0.5).unwrap();
+        let foreign = pdf::annotations(&d, 0).unwrap().len();
+        let mut items = pdf::take_own(&d, 0..1).unwrap();
+        let mine = [
+            pdf::Item { layer: 2, size: 2.0, width: 2.0, grid: true, ..item(0, Kind::Axes, vec![[60.0, 60.0, 0.5], [220.0, 200.0, 0.5]], "") },
+            pdf::Item { layer: 2, size: 1.5, width: 1.5, xyz: true, grid: true, opacity: 0.8, ..item(0, Kind::Axes, vec![[250.0, 60.0, 0.5], [420.0, 230.0, 0.5]], "") },
+        ];
+        items.extend(mine.clone());
+        pdf::save(&d, &items, &copy, false).unwrap();
+        let back = pdf::open(&copy).unwrap();
+        let annots = pdf::annotations(&back, 0).unwrap();
+        assert_eq!(annots.len(), foreign + 2, "{}: je eine Annotation", src.display());
+        assert!(annots[foreign..].iter().all(|(t, own)| *t == mupdf::pdf::PdfAnnotationType::Ink && own.is_some()));
+        assert_ne!(pdf::render_png(&back, 0, 0.5).unwrap(), blank, "{}: Aussehen fehlt", src.display());
+        let taken: Vec<_> = pdf::take_own(&back, 0..1).unwrap().into_iter().filter(|it| it.kind == Kind::Axes).collect();
+        assert_eq!(taken, mine, "{}: Parameter nach Neu-Öffnen", src.display());
+        n += 1;
+    }
+    assert!(n > 0);
+    println!("Koordinatensysteme: {n} PDFs OK");
 }
