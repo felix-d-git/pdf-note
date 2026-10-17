@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import { expect, test, vi } from "vitest";
 import {
-  afterShape, captureBinding, DEFAULT_PALETTES, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, pickTool, storePalettes, toolFor,
+  afterShape, applyTheme, captureBinding, DEFAULT_PALETTES, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, pickTool, storePalettes,
+  storeSettings, toolFor,
 } from "./settings";
 
 test("Gerät bestimmt das Werkzeug", () => {
@@ -52,4 +54,17 @@ test("Presets überleben den Neustart, kaputte Daten → Standard", () => {
   mem.set("pdfnote.presets", '{"pen":"kaputt"}');
   expect(loadPalettes()).toEqual(DEFAULT_PALETTES);
   vi.unstubAllGlobals();
+});
+
+test("Ansicht + Seitenleiste: alte Einstellungen → dunkel/offen, Auswahl überlebt den Neustart, Hell setzt data-theme", () => {
+  const mem = new Map<string, string>([["pdfnote.settings", JSON.stringify({ lasso: S.lasso, eraser: S.eraser, pressureMax: 0.8 })]]);
+  vi.stubGlobal("localStorage", { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) });
+  expect(loadSettings()).toMatchObject({ theme: "dark", side: true, auto: true });
+  storeSettings({ ...S, theme: "system", side: false });
+  expect(loadSettings()).toMatchObject({ theme: "system", side: false });
+  vi.unstubAllGlobals();
+  applyTheme("light");
+  expect(document.documentElement.dataset.theme).toBe("light");
+  applyTheme("dark");
+  expect(document.documentElement.dataset.theme).toBeUndefined();
 });

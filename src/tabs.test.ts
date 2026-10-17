@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, show, toggleSplit, type Tabs } from "./tabs";
+import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, show, toggleSplit, toPane, type Tabs } from "./tabs";
 
 const three = (): Tabs => openTab(openTab(openTab(EMPTY_TABS, 1, "C:\\a.pdf"), 2, "C:\\b.pdf"), 3, "C:\\c.pdf");
 const ids = (s: Tabs) => s.tabs.map((t) => t.id);
@@ -85,6 +85,25 @@ describe("Split", () => {
     expect(s.split).toBe(false);
     expect(s.panes).toEqual([1, undefined]);
     expect(activeId(s)).toBe(1);
+  });
+
+  it("Tab in die andere Hälfte ziehen tauscht die Hälften", () => {
+    const s = toPane(toggleSplit(three()), 3, 1);
+    expect(s.panes).toEqual([1, 3]);
+    expect(s.active).toBe(1);
+  });
+
+  it("Strg+Ziehen oder leere Zielhälfte → gleiche PDF in beiden Hälften; Schließen leert beide", () => {
+    expect(toPane(toggleSplit(three()), 3, 1, true).panes).toEqual([3, 3]);
+    let s = toPane(toggleSplit(openTab(EMPTY_TABS, 1, "a")), 1, 1);
+    expect(s.panes).toEqual([1, 1]);
+    expect(show(s, 1).panes).toEqual([1, 1]);
+    s = closeTab(s, 1);
+    expect(s.panes).toEqual([undefined, undefined]);
+  });
+
+  it("Tab aus der Leiste in eine Hälfte ziehen ersetzt nur diese", () => {
+    expect(toPane(toggleSplit(three()), 2, 0).panes).toEqual([2, 1]);
   });
 
   it("focus ohne Split ändert nichts", () => {

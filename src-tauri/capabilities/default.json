@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Hauptfenster. Bewusst ohne http/Netzwerk-Rechte (GRUNDSAETZE.md, Privat). Dialog nur Öffnen, Speichern-unter-Ziel + Nachfrage; Fenster nur Titel (*) und Schließen nach Nachfrage.",
+  "description": "Hauptfenster. Bewusst ohne http/Netzwerk-Rechte (GRUNDSAETZE.md, Privat). Dialog nur Öffnen, Speichern-unter-Ziel + Nachfrage; Fenster nur Titel (*), Schließen nach Nachfrage und Anzeigen nach dem ersten Bild (Start versteckt gegen Aufblitzen).",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
     "core:window:allow-destroy",
+    "core:window:allow-show",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message"
