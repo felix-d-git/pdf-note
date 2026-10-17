@@ -34,6 +34,7 @@ let host: HTMLDivElement;
 const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { added: [], setTool: () => {}, selected: [] };
 const lastAdd: Item[] = [];
 const shapes: Item[] = [];
+const crops: [number, number[]][] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
 function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[] }) {
@@ -48,6 +49,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
       onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))}
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={() => {}}
       onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
+      onCrop={(id, f) => void crops.push([id, f])}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
       layer={layer} textSel={null} onTextSel={() => {}}
@@ -223,4 +225,25 @@ test("Form landet über onShape und ist ausgewählt", () => {
   fire(page, "pointerup", 200, 160, 0);
   expect(shapes.map((s) => s.kind)).toEqual(["rect"]);
   expect(ui.selected).toEqual([shapes[0]?.id]);
+});
+
+test("Doppelklick auf Bild: Zuschneiden, Enter übernimmt, Esc bricht ab", () => {
+  crops.length = 0;
+  const page = mount("lasso", 2, [obj(1, "image", 100, 100, 200, 150)], { sel: [1] });
+  const dbl = () => act(() => void page.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 150, clientY: 120 })));
+  const key = (k: string) => act(() => void dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
+  dbl();
+  expect(host.querySelector('[data-handle="se"]')).toBeNull(); // Auswahlrahmen weicht dem Zuschnitt
+  const e = host.querySelector('[data-crop="e"]') as HTMLElement;
+  fire(e, "pointerdown", 200, 125);
+  fire(e, "pointermove", 150, 125); // halbe Breite nach links
+  fire(e, "pointerup", 150, 125, 0);
+  key("Enter");
+  expect(crops).toEqual([[1, [0, 0, 0.5, 1]]]);
+  expect(host.querySelector("[data-crop]")).toBeNull();
+  dbl();
+  key("Escape");
+  expect(crops).toHaveLength(1);
+  expect(host.querySelector("[data-crop]")).toBeNull();
+  expect(host.querySelector('[data-handle="se"]')).not.toBeNull();
 });

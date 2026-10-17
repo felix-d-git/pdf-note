@@ -3,8 +3,9 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
   box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
-  rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type InkPoint, type Item, type Layer, type Preset,
+  rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset,
 } from "./ink";
+import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
 
@@ -134,8 +135,6 @@ export interface TextEdit {
   width?: number; color?: [number, number, number];
 }
 
-const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
-const HANDLE_CURSOR: Record<string, string> = { nw: "nwse", se: "nwse", ne: "nesw", sw: "nesw", n: "ns", s: "ns", e: "ew", w: "ew" };
 const inBox = (b: { x0: number; y0: number; x1: number; y1: number }, x: number, y: number) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
 const deg = (r: number) => (r * 180) / Math.PI;
 /** Zeilenrechtecke als Punktpaare (Highlight) */
@@ -167,6 +166,8 @@ export interface PageProps {
   typers: Map<number, (id: number, ch: string) => void>;
   onRemove: (ids: number[]) => void;
   onReplace: (items: Item[]) => void;
+  /** Bild zuschneiden (Doppelklick → Zuschnitt-Modus → ✓/Enter) */
+  onCrop: (id: number, f: Crop) => void;
   onSelect: (page: number, ids: number[]) => void;
   /** Original-Objekte der PDF ändern (matrix fehlt → löschen), dazu eigene Objekte – ein Schritt */
   onOrig: (edits: OrigEdit[], next: Item[]) => void;
@@ -297,6 +298,9 @@ export function PageView(p: PageProps) {
   const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
   // Drehgriff nur für Bilder (Original-Objekte zählen als Bild)
   const rotatable = sel.length > 0 && sel.every((it) => it.kind === "image");
+  // Zuschnitt-Modus: id des eigenen Bilds; verschwindet es (Undo, Entf), endet der Modus von selbst
+  const [crop, setCrop] = useState<number>();
+  const cropIt = items.find((it) => it.id === crop && it.kind === "image");
   const transform = (it: Item) =>
     gs?.t === "tmove" && gs.id === it.id ? moveItem(it, gs.dx, gs.dy)
     : gs?.t === "twidth" && gs.id === it.id ? (({ x0, y0, y1 }) => ({ ...it, points: [[x0, y0, 0.5], [x0 + gs.w, y1, 0.5]] as InkPoint[] }))(box(it))
@@ -779,6 +783,11 @@ export function PageView(p: PageProps) {
         setOverSel(false);
       }}
       onContextMenu={(e) => e.preventDefault()}
+      onDoubleClick={(e) => {
+        const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
+        const [it] = sel;
+        if (sel.length === 1 && it && it.id >= 0 && it.kind === "image" && hitTest(it, (e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0)) setCrop(it.id);
+      }}
     >
       {url && <img src={url} alt="" draggable={false} className="absolute inset-0 h-full w-full select-none" />}
       {/* Canvas nur für sichtbare Seiten: volle Auflösung je Seite kostet sonst bei hohem Zoom zu viel Speicher.
@@ -790,7 +799,11 @@ export function PageView(p: PageProps) {
         className="pointer-events-none absolute inset-0 h-full w-full"
         style={{ mixBlendMode: "multiply" }}
       />}
-      {sb && (
+      {cropIt && <CropBox item={cropIt} zoom={zoom} onDone={(f) => {
+        setCrop(undefined);
+        if (f && f.join() !== "0,0,1,1") p.onCrop(cropIt.id, f);
+      }} />}
+      {sb && !cropIt && (
         <div
           className="pointer-events-none absolute border border-dashed border-accent"
           style={{ left: sb.x0 * zoom - 3, top: sb.y0 * zoom - 3, width: (sb.x1 - sb.x0) * zoom + 6, height: (sb.y1 - sb.y0) * zoom + 6 }}

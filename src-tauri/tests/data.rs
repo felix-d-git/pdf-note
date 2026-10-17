@@ -695,3 +695,40 @@ fn ebenen() {
     assert!(pdf::layer_names(&pdf::open(&flat).unwrap()).unwrap().is_empty(), "flach: Ebenen bleiben");
     println!("word.pdf: Ebenen OK");
 }
+
+#[test]
+#[ignore]
+fn bild_zuschneiden_drehen() {
+    use base64::Engine;
+    use pdf::Kind;
+    let e = base64::engine::general_purpose::STANDARD;
+    // PNG-Kopf: Breite/Höhe big-endian ab Byte 16
+    let dims = |b: &str| {
+        let p = e.decode(b).unwrap();
+        (u32::from_be_bytes(p[16..20].try_into().unwrap()), u32::from_be_bytes(p[20..24].try_into().unwrap()))
+    };
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-bild");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let src = pdf::open(&dir.join("latex.pdf")).unwrap();
+    let full = b64(&pdf::render_png(&src, 0, 1.0).unwrap());
+    let (w, h) = dims(&full);
+    let mut size = Vec::new();
+    for (name, image, rot) in [("ganz", full.clone(), 0.0), ("zugeschnitten", pdf::crop_b64(&full, [0.25, 0.25, 0.75, 0.75]).unwrap(), 30.0)] {
+        let copy = solo.join(format!("{name}.pdf"));
+        std::fs::copy(dir.join("word.pdf"), &copy).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        let mut items = pdf::take_own(&d, 0..1).unwrap();
+        items.push(pdf::Item { image: image.clone(), rot, ..item(0, Kind::Image, vec![[50.0, 50.0, 0.5], [300.0, 400.0, 0.5]], "") });
+        pdf::save(&d, &items, &copy, false).unwrap();
+        size.push(std::fs::metadata(&copy).unwrap().len());
+        let back = pdf::take_own(&pdf::open(&copy).unwrap(), 0..1).unwrap();
+        let img = back.iter().find(|it| it.kind == Kind::Image).expect("Bild nach Neu-Öffnen bearbeitbar");
+        assert!((img.rot - rot).abs() < 0.01, "{name}: Drehung");
+        assert_eq!(dims(&img.image), dims(&image), "{name}: Pixelmaße");
+    }
+    assert_eq!(dims(&pdf::crop_b64(&full, [0.25, 0.25, 0.75, 0.75]).unwrap()), (((w as f32 * 0.75).round() - (w as f32 * 0.25).round()) as u32, ((h as f32 * 0.75).round() - (h as f32 * 0.25).round()) as u32));
+    assert!(size[1] < size[0], "zugeschnitten nicht kleiner: {size:?}");
+    println!("Bild: {w}×{h} → Zuschnitt, Datei {} → {} Bytes", size[0], size[1]);
+}

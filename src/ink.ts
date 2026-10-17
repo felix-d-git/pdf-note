@@ -391,6 +391,29 @@ export function rotateItem(it: Item, cx: number, cy: number, deg: number): Item 
   return { ...moveItem(it, nx - mx, ny - my), rot };
 }
 
+/** Zuschnitt `[l, t, r, b]` als Anteile 0…1 des ungedrehten Bilds. */
+export type Crop = [number, number, number, number];
+const CROP_MIN = 0.05;
+/** Zuschnitt-Griff ziehen: `handle` wie HANDLES ("n", "se" …), dx/dy als Anteile; bleibt in 0…1, Mindestgröße. */
+export function cropDrag([l, t, r, b]: Crop, handle: string, dx: number, dy: number): Crop {
+  const cl = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  if (handle.includes("w")) l = cl(l + dx, 0, r - CROP_MIN);
+  if (handle.includes("e")) r = cl(r + dx, l + CROP_MIN, 1);
+  if (handle.includes("n")) t = cl(t + dy, 0, b - CROP_MIN);
+  if (handle.includes("s")) b = cl(b + dy, t + CROP_MIN, 1);
+  return [l, t, r, b];
+}
+/** Bild auf den Zuschnitt verkleinern (neue Pixel `b64`); der sichtbare Ausschnitt bleibt auf der Seite stehen. */
+export function cropItem(it: Item, [l, t, r, b]: Crop, b64: string): Item {
+  const bx = box({ ...it, rot: 0 }), [w, h] = [bx.x1 - bx.x0, bx.y1 - bx.y0];
+  const rad = ((it.rot ?? 0) * Math.PI) / 180, [c, s] = [Math.cos(rad), Math.sin(rad)];
+  // Versatz der neuen Mitte im Bild, gedreht wie das Bild (rotMatrix)
+  const [ox, oy] = [((l + r) / 2 - 0.5) * w, ((t + b) / 2 - 0.5) * h];
+  const [cx, cy] = [(bx.x0 + bx.x1) / 2 + c * ox - s * oy, (bx.y0 + bx.y1) / 2 + s * ox + c * oy];
+  const [hw, hh] = [((r - l) * w) / 2, ((b - t) * h) / 2];
+  return { ...it, image: b64, points: [[cx - hw, cy - hh, 0.5], [cx + hw, cy + hh, 0.5]] };
+}
+
 // Seitenoperationen: Objekte mitnehmen
 export const afterInsert = (items: Item[], at: number, n: number) =>
   items.map((it) => (it.page >= at ? { ...it, page: it.page + n } : it));
