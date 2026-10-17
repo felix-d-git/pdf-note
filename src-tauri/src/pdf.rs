@@ -85,6 +85,8 @@ pub enum Kind {
     Image,
     /// Textmarker auf PDF-Text: Punkte paarweise = Zeilenrechtecke (Highlight mit QuadPoints)
     Highlight,
+    /// Koordinatensystem im Rechteck der zwei Punkte (`xyz`, `grid`); in der PDF Ink mit eigenem Aussehen
+    Axes,
 }
 
 impl Kind {
@@ -122,10 +124,111 @@ pub struct Item {
     /// Bild: Drehung in Grad im Uhrzeigersinn um die Mitte (Punkte = ungedrehtes Rechteck)
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rot: f32,
+    /// Koordinatensystem: Schrägbild x/y/z statt x/y
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub xyz: bool,
+    /// Koordinatensystem: Karo-Gitter im Achsenbereich
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub grid: bool,
 }
 
 fn is_zero(v: &f32) -> bool {
     *v == 0.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
+/// Karo-Gitter: 5 mm
+pub const KARO: f32 = 72.0 / 25.4 * 5.0;
+
+/// Linien eines Koordinatensystems (wie `axesLines` im Frontend): (Achsen samt Pfeilspitzen, Gitter), je Polylinie.
+/// xy: Ursprung unten links. xyz (Schrägbild): y rechts, z oben, x schräg nach vorn-links (45°, Verkürzung über `d`).
+pub fn axes_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
+    let (a, b) = (it.points[0], it.points[1]);
+    let (x0, x1, y0, y1) = (a[0].min(b[0]), a[0].max(b[0]), a[1].min(b[1]), a[1].max(b[1]));
+    let len = (it.size * 3.0).max(6.0);
+    let d = if it.xyz { ((x1 - x0).min(y1 - y0) * 0.3).max(len / 2.0) } else { len / 2.0 };
+    let o = [x0 + d, y1 - d];
+    let mut tips = vec![[x1, o[1]], [o[0], y0]];
+    if it.xyz {
+        tips.push([x0, y1]);
+    }
+    let mut axes = Vec::new();
+    for t in tips {
+        let ang = (t[1] - o[1]).atan2(t[0] - o[0]);
+        let leg = |s: f32| {
+            let g = ang + std::f32::consts::PI + s * std::f32::consts::PI / 6.0;
+            [t[0] + len * g.cos(), t[1] + len * g.sin()]
+        };
+        axes.push(vec![o, t]);
+        axes.push(vec![leg(-1.0), t, leg(1.0)]);
+    }
+    let mut grid = Vec::new();
+    if it.grid {
+        // volle Karos bis eine Pfeillänge vor die Spitzen; Obergrenze gegen absichtlich riesige Rechtecke
+        let n = |v: f32| ((v / KARO + 1e-4).floor().max(0.0) as usize).min(1000);
+        let (nx, ny) = (n(x1 - len - o[0]), n(o[1] - y0 - len));
+        let (gx, gy) = (o[0] + nx as f32 * KARO, o[1] - ny as f32 * KARO);
+        for k in 1..=nx {
+            let x = o[0] + k as f32 * KARO;
+            grid.push(vec![[x, o[1]], [x, gy]]);
+        }
+        for k in 1..=ny {
+            let y = o[1] - k as f32 * KARO;
+            grid.push(vec![[o[0], y], [gx, y]]);
+        }
+    }
+    (axes, grid)
+}
+
+/// Gitterlinien dünner als die Achsen
+fn grid_width(w: f32) -> f32 {
+    (w * 0.3).max(0.3)
+}
+
+/// Aussehen des Koordinatensystems: MuPDF zeichnet Ink nur in einer Breite → nach `update` eigenes
+/// Erscheinungsbild (Gitter dünn, Achsen in Strichbreite), in PDF-Koordinaten, BBox = Rect.
+fn axes_ap(doc: &mut PdfDocument, page: &PdfPage, annot: &PdfAnnotation, it: &Item) -> Result<(), Error> {
+    let bad = || Error::InvalidArgument("Annotation ohne Rect".into());
+    let b = page.bounds()?;
+    let inv = page.ctm()?.invert().ok_or_else(bad)?;
+    let mut ap = annot.object().get_dict("AP")?.ok_or_else(bad)?;
+    let rect = annot.object().get_dict("Rect")?.ok_or_else(bad)?;
+    let w = it.width.clamp(0.1, 200.0);
+    let [r, g, bl] = it.color.map(|v| v.clamp(0.0, 1.0));
+    let (axes, grid) = axes_lines(it);
+    let mut s = format!("q /H gs {r} {g} {bl} RG 1 J 1 j\n");
+    for (lines, lw) in [(grid, grid_width(w)), (axes, w)] {
+        if lines.is_empty() {
+            continue;
+        }
+        s += &format!("{lw} w\n");
+        for l in lines {
+            for (i, p) in l.iter().enumerate() {
+                let (x, y) = inv.transform_xy(b.x0 + p[0], b.y0 + p[1]);
+                s += &format!("{x:.2} {y:.2} {}\n", if i == 0 { "m" } else { "l" });
+            }
+        }
+        s += "S\n";
+    }
+    s += "Q";
+    let mut gs = doc.new_dict()?;
+    let op = PdfObject::new_real(it.opacity.clamp(0.05, 1.0))?;
+    gs.dict_put("CA", op.clone())?;
+    gs.dict_put("ca", op)?;
+    let mut egs = doc.new_dict()?;
+    egs.dict_put("H", gs)?;
+    let mut res = doc.new_dict()?;
+    res.dict_put("ExtGState", egs)?;
+    let mut form = doc.new_dict()?;
+    form.dict_put("Type", PdfObject::new_name("XObject")?)?;
+    form.dict_put("Subtype", PdfObject::new_name("Form")?)?;
+    form.dict_put("BBox", rect)?;
+    form.dict_put("Resources", res)?;
+    let n = doc.add_stream(&mupdf::Buffer::from_bytes(s.as_bytes())?, Some(&form), false)?;
+    ap.dict_put("N", n)
 }
 
 const IMAGE_MAX: usize = 64 << 20; // Base64-Länge
@@ -347,6 +450,10 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
             a
         }
         Kind::Rect => page.add_rect_annotation(rect())?,
+        Kind::Axes => {
+            let (axes, grid) = axes_lines(it);
+            page.add_ink_annotation(axes.iter().chain(&grid).map(|l| l.iter().map(|p| pt(&[p[0], p[1], 0.0]))))?
+        }
         Kind::Ellipse => page.add_circle_annotation(rect())?,
         Kind::Text => {
             let mut a = page.add_free_text_annotation(rect(), &it.text)?;
@@ -395,6 +502,9 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
     }
     if it.kind == Kind::Image && it.rot != 0.0 {
         rotate_stamp(doc, &annot, it)?;
+    }
+    if it.kind == Kind::Axes {
+        axes_ap(doc, page, &annot, it)?;
     }
     Ok(())
 }
@@ -765,7 +875,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0 }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -777,6 +887,8 @@ mod tests {
             item(Kind::Arrow, two.clone()),
             item(Kind::Rect, two.clone()),
             item(Kind::Ellipse, two.clone()),
+            item(Kind::Axes, two.clone()),
+            Item { xyz: true, grid: true, ..item(Kind::Axes, vec![[100.0, 500.0, 0.5], [250.0, 650.0, 0.5]]) },
             Item { size: 14.0, text: "Grüße €".into(), ..item(Kind::Text, vec![[300.0, 400.0, 0.5], [450.0, 430.0, 0.5]]) },
         ]
     }
@@ -798,7 +910,8 @@ mod tests {
         let back = open(&path).unwrap();
         let types: Vec<_> = annotations(&back, 0).unwrap().into_iter().map(|(t, own)| (t, own.is_some())).collect();
         assert_eq!(types, vec![
-            (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true), (T::FreeText, true),
+            (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true),
+            (T::Ink, true), (T::Ink, true), (T::FreeText, true),
         ]);
         let taken = take_own(&back, 0..1).unwrap();
         assert_eq!(taken, items, "Objekte gehen beim Zurücklesen nicht verloren");

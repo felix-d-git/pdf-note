@@ -53,7 +53,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
       onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
-      layer={layer} textSel={null} onTextSel={() => {}}
+      layer={layer} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
     />
   );
 }

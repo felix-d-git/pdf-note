@@ -46,6 +46,7 @@ const TOOL_LABELS: [Tool, string, string, string][] = [
   ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
   ["lasso", "↖", "Auswahl/Text: Klick setzt Cursor/Textfeld, Ziehen wählt aus", "a/t"], ["line", "╱", "Linie", "l"],
   ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
+  ["axes", "∟", "Koordinatensystem (xy/xyz, Gitter: ⚙)", "x"],
   ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
   ["link", "Link", "Anker-Links: Rechteck ziehen, dann Zielstelle anklicken; Klick auf Link springt", "g"],
 ];
@@ -56,8 +57,8 @@ const LAYERS: [Layer, string, string][] = [
   [3, "✎", "Ebene 3: Notizen – Stift, Marker, Textfelder"],
 ];
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
-const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, form: 1 };
-const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
+const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"], ["axes", "Koordinatensystem"]];
 
 const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
 const readUrl = (b: Blob) => new Promise<string>((res, rej) => {
@@ -113,6 +114,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   useEffect(() => storePalettes(pal), [pal]);
   const [preset, setPreset] = useState<Preset>(pal.pen.find((p) => p.name === DEFAULT_PRESET.name) ?? pal.pen[0] ?? DEFAULT_PRESET);
   const [marker, setMarker] = useState<Preset>(pal.marker[0] ?? DEFAULT_PRESET);
+  /** Koordinatensystem: gilt fürs nächste Aufziehen */
+  const [axes, setAxes] = useState({ xyz: false, grid: false });
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
@@ -422,7 +425,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : [60, 40];
     place([{
       id: newId(), page, kind, color: preset.color, opacity: 1, size: preset.size, simulated: false,
-      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "",
+      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "", ...(kind === "axes" ? axes : {}),
     }]);
   }
 
@@ -874,6 +877,19 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
             <button className={btn} disabled={!palette.some((p) => p.name === pick.name)}
               onClick={() => setPalette(palette.map((p) => (p.name === pick.name ? pick : p)))}
               title={`„${pick.name}" mit den aktuellen Werten überschreiben`}>Preset überschreiben</button>
+            {(tool === "axes" || penTool === "axes") && (
+              <div className="flex flex-col gap-1 border-t border-line pt-2">
+                <div className="flex gap-1">
+                  {([[false, "xy"], [true, "xyz"]] as const).map(([v, l]) => (
+                    <button key={l} className={btn + on(axes.xyz === v)} onClick={() => setAxes((a) => ({ ...a, xyz: v }))}>{l}</button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={axes.grid} onChange={(e) => setAxes((a) => ({ ...a, grid: e.target.checked }))} />
+                  Karo-Gitter
+                </label>
+              </div>
+            )}
           </div>
         </details>
         {sep}
@@ -1106,6 +1122,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 typers={typers}
                 preset={preset}
                 marker={marker}
+                axes={axes}
                 textSize={pal.text}
                 settings={settings}
                 layer={layer}

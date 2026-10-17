@@ -5,7 +5,7 @@ import { z } from "zod";
 export type InkPoint = [x: number, y: number, p: number];
 export type Rgb = [number, number, number];
 
-export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight"] as const;
+export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight", "axes"] as const;
 export type Kind = (typeof KINDS)[number];
 
 /**
@@ -31,6 +31,10 @@ export interface Item {
   layer?: 2 | 3;
   /** Bild: Drehung in Grad im Uhrzeigersinn um die Mitte; Punkte = ungedrehtes Rechteck */
   rot?: number;
+  /** Koordinatensystem (kind "axes"): Schrägbild x/y/z statt x/y */
+  xyz?: boolean;
+  /** Koordinatensystem: Karo-Gitter im Achsenbereich */
+  grid?: boolean;
 }
 
 /** Ebene 1 = PDF-Inhalt (keine eigenen Objekte), 2 = Elemente, 3 = Notizen */
@@ -59,11 +63,14 @@ export const ItemData = z.object({
   image: z.string().optional(),
   layer: z.number().optional(),
   rot: num.optional(),
+  xyz: z.boolean().optional(),
+  grid: z.boolean().optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
   simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
   layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind), ...(d.rot ? { rot: d.rot } : {}),
+  ...(d.xyz ? { xyz: true } : {}), ...(d.grid ? { grid: true } : {}),
 });
 
 export interface Preset {
@@ -127,6 +134,7 @@ export const toData = (it: Item) => ({
   page: it.page, kind: it.kind, color: it.color, opacity: it.opacity, size: it.size,
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
   ...(it.image ? { image: it.image } : {}), layer: layerOf(it), ...(it.rot ? { rot: it.rot } : {}),
+  ...(it.xyz ? { xyz: true } : {}), ...(it.grid ? { grid: true } : {}),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
@@ -157,6 +165,39 @@ export function unionBox(items: Item[]) {
     x0: Math.min(...bs.map((b) => b.x0)), y0: Math.min(...bs.map((b) => b.y0)),
     x1: Math.max(...bs.map((b) => b.x1)), y1: Math.max(...bs.map((b) => b.y1)),
   };
+}
+
+type Pt = [number, number];
+/** Karo-Gitter: 5 mm */
+export const KARO = (72 / 25.4) * 5;
+/** Gitterlinien dünner als die Achsen (wie `grid_width` in Rust) */
+export const gridWidth = (w: number) => Math.max(w * 0.3, 0.3);
+
+/**
+ * Linien eines Koordinatensystems je Polylinie (wie `axes_lines` in Rust – beide gleich halten).
+ * xy: Ursprung unten links. xyz (Schrägbild): y rechts, z oben, x schräg nach vorn-links (45°).
+ */
+export function axesLines(it: Item): { axes: Pt[][]; grid: Pt[][] } {
+  const [a = ORIGIN, b = a] = it.points;
+  const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+  const len = Math.max(it.size * 3, 6);
+  const d = it.xyz ? Math.max(Math.min(x1 - x0, y1 - y0) * 0.3, len / 2) : len / 2;
+  const o: Pt = [x0 + d, y1 - d];
+  const tips: Pt[] = [[x1, o[1]], [o[0], y0], ...(it.xyz ? [[x0, y1] as Pt] : [])];
+  const axes = tips.flatMap((t): Pt[][] => {
+    const ang = Math.atan2(t[1] - o[1], t[0] - o[0]);
+    const leg = (s: number): Pt => [t[0] + len * Math.cos(ang + Math.PI + (s * Math.PI) / 6), t[1] + len * Math.sin(ang + Math.PI + (s * Math.PI) / 6)];
+    return [[o, t], [leg(-1), t, leg(1)]];
+  });
+  const grid: Pt[][] = [];
+  if (it.grid) {
+    // volle Karos bis eine Pfeillänge vor die Spitzen
+    const n = (v: number) => Math.min(1000, Math.max(0, Math.floor(v / KARO + 1e-4)));
+    const [nx, ny] = [n(x1 - len - o[0]), n(o[1] - y0 - len)];
+    for (let k = 1; k <= nx; k++) grid.push([[o[0] + k * KARO, o[1]], [o[0] + k * KARO, o[1] - ny * KARO]]);
+    for (let k = 1; k <= ny; k++) grid.push([[o[0], o[1] - k * KARO], [o[0] + nx * KARO, o[1] - k * KARO]]);
+  }
+  return { axes, grid };
 }
 
 function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
@@ -219,6 +260,16 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
     }
     case "highlight":
       for (const r of pairs(it)) ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+      return;
+    case "axes": {
+      const { axes, grid } = axesLines(it);
+      for (const [lines, w] of [[grid, gridWidth(it.size)], [axes, it.size]] as const) {
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        for (const l of lines) l.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+      }
+    }
   }
 }
 
@@ -347,6 +398,10 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
       // ponytail: Näherung über normierten Radius; genügt für Treffer-Toleranz
       const d = Math.hypot((x - cx) / rx, (y - cy) / ry);
       return Math.abs(d - 1) * Math.min(rx, ry) <= r;
+    }
+    case "axes": {
+      const { axes, grid } = axesLines(it);
+      return [...axes, ...grid].some((l) => l.some((p, i) => i > 0 && segDist(x, y, [...(l[i - 1] ?? p), 0], [...p, 0]) <= r));
     }
     case "text":
     case "image":

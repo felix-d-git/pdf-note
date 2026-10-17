@@ -159,6 +159,8 @@ export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
   /** `tool` = Maus-Werkzeug, `penTool` = Stift-Werkzeug (gleich, wenn „Automatisch wechseln" aus ist) */
   items: Item[]; selected: number[]; tool: Tool; penTool: Tool; preset: Preset; marker: Preset; textSize: number; settings: Settings;
+  /** Koordinatensystem-Werkzeug: Art fürs nächste Aufziehen */
+  axes: { xyz: boolean; grid: boolean };
   /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
   layer: Layer;
   textSel: TextSel | null;
@@ -537,7 +539,7 @@ export function PageView(p: PageProps) {
       g.current = { t: "space", y, dy: 0 };
       rerender();
     } else {
-      g.current = { t: "shape", item: { ...make(t, preset, q, false), points: [q, q] } };
+      g.current = { t: "shape", item: { ...make(t, preset, q, false), ...(t === "axes" ? p.axes : {}), points: [q, q] } };
     }
   };
 
