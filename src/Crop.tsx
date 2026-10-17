@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
+import { tip, T } from "./i18n";
 import { box, cropDrag, type Crop, type Item } from "./ink";
 
 export const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
@@ -71,11 +73,11 @@ export function CropBox({ item, zoom, onDone }: { item: Item; zoom: number; onDo
         />
       ))}
       <button
-        type="button" title="Zuschneiden (Enter) – Esc bricht ab"
-        className="absolute -translate-x-1/2 rounded-xs bg-accent px-2 text-sm text-white"
+        type="button" title={tip(T.crop, "Enter")} aria-label={T.crop}
+        className="absolute -translate-x-1/2 rounded-xs bg-accent px-2 py-0.5 text-white"
         style={{ left: `${((f[0] + f[2]) / 2) * 100}%`, top: `calc(${f[3] * 100}% + 8px)` }}
         onClick={() => onDone(f)}
-      >✓</button>
+      ><Check size={16} aria-hidden /></button>
     </div>
   );
 }

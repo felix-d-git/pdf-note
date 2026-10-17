@@ -14,6 +14,7 @@
 | base64 | 0.22 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
 | perfect-freehand (Stephen Ruiz Ltd) | 1.2.3 | MIT | Ink-Glättung + Druckbreite |
 | React, React DOM | 19.3 | MIT | UI |
+| lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.59 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
 | Zod | 4.6 | MIT | Validierung an Grenzen |
 | Tailwind CSS | 4.3 | MIT | Styles (Build) |
 | Manrope (Mikhail Sharanda), Paket `@fontsource-variable/manrope` | 5.3.0 | SIL OFL 1.1 (Schrift), MIT (Paket) | UI-Schrift, lokal gebündelt |

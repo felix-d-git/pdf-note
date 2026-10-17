@@ -5,7 +5,10 @@ import {
   box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
   rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset,
 } from "./ink";
+import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
+import { T } from "./i18n";
+import { IconBtn } from "./ui";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
 
@@ -200,9 +203,9 @@ export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "imag
 /** Griffleiste oben (verschieben, Klick wählt als Objekt) + Breitengriff rechts; Attributwert = Id/Absatz */
 const grips = (grip: string, width: string, id: number) => (
   <>
-    <span {...{ [`data-${grip}`]: id }} title="Verschieben – Klick wählt als Objekt"
+    <span {...{ [`data-${grip}`]: id }} title={T.move}
       className="pointer-events-auto absolute -top-2.5 left-0 h-2 w-full cursor-move rounded-xs bg-accent/50" />
-    <span {...{ [`data-${width}`]: id }} title="Breite – Text bricht um"
+    <span {...{ [`data-${width}`]: id }} title={T.width}
       className="pointer-events-auto absolute top-0 -right-2 h-full w-1.5 cursor-ew-resize rounded-xs bg-accent/50" />
   </>
 );
@@ -914,7 +917,7 @@ export function PageView(p: PageProps) {
               }} />
           ))}
           {rotatable && (
-            <span data-handle="rot" title="Drehen (Umschalt: 15°-Schritte)"
+            <span data-handle="rot" title={`${T.turn} (${T.shift}: 15°)`}
               className="pointer-events-auto absolute -top-6 left-1/2 h-3 w-3 -translate-x-1/2 cursor-grab rounded-full border border-white bg-accent" />
           )}
         </div>
@@ -923,29 +926,29 @@ export function PageView(p: PageProps) {
       {sb && !cropIt && !gs && !edit && !menu && (() => {
         const above = sb.y0 * zoom - (rotatable ? 30 : 6) - 34;
         return (
-          <div data-pedit data-menu role="toolbar" aria-label="Auswahl"
+          <div data-pedit data-menu role="toolbar" aria-label={T.selection}
             className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-sm border border-line bg-surface p-0.5 shadow-raised"
             style={{ left: Math.min(Math.max((sb.x0 + sb.x1) / 2 * zoom, 120), w - 120), top: above >= 0 ? above : Math.min(sb.y1 * zoom + 8, h - 34) }}>
-            {own && <button title="Ausschneiden" className={ICON} onClick={cmd("cut")}>✂</button>}
-            {own && <button title="Kopieren" className={ICON} onClick={cmd("copy")}>⧉</button>}
-            <button title="Löschen" className={ICON} onClick={cmd("delete")}>🗑</button>
+            {own && <IconBtn icon={Scissors} label={T.cut} keys="Strg+X" className={ICON} onClick={cmd("cut")} />}
+            {own && <IconBtn icon={Copy} label={T.copy} keys="Strg+C" className={ICON} onClick={cmd("copy")} />}
+            <IconBtn icon={Trash} label={T.del} keys="Entf" className={ICON} onClick={cmd("delete")} />
             {allText && first && <>
-              <input type="number" min={4} max={200} step={1} title="Schriftgröße" defaultValue={first.size} key={`s${first.id}${first.size}`}
+              <input type="number" min={4} max={200} step={1} title={T.fontSize} aria-label={T.fontSize} defaultValue={first.size} key={`s${first.id}${first.size}`}
                 data-restyle="size"
                 className="h-7 w-12 rounded-xs border border-line bg-surface px-1 text-sm" />
-              <input type="color" title="Schriftfarbe" defaultValue={hex(first.color)} key={`c${first.id}${hex(first.color)}`}
+              <input type="color" title={T.fontColor} aria-label={T.fontColor} defaultValue={hex(first.color)} key={`c${first.id}${hex(first.color)}`}
                 data-restyle="color" className="h-7 w-7 cursor-pointer" />
             </>}
-            {sel.length === 1 && first?.kind === "image" && first.id >= 0 && <button title="Zuschneiden" className={ICON} onClick={() => setCrop(first.id)}>⛶</button>}
-            {rotatable && <button title="Drehen 90°" className={ICON} onClick={rotate90}>⟳</button>}
+            {sel.length === 1 && first?.kind === "image" && first.id >= 0 && <IconBtn icon={CropIcon} label={T.crop} className={ICON} onClick={() => setCrop(first.id)} />}
+            {rotatable && <IconBtn icon={RotateCw} label={T.rotate90} className={ICON} onClick={rotate90} />}
             {styled.length > 0 && !allText && styled.length === sel.length && (
               <span className="relative">
-                <button title="Farbe/Stärke" className={ICON} aria-expanded={gear} onClick={() => setGear(!gear)}>⚙</button>
+                <IconBtn icon={SlidersHorizontal} label={`${T.color}/${T.size}`} className={ICON} aria-expanded={gear} onClick={() => setGear(!gear)} />
                 {gear && first && (
                   <div className="absolute top-8 left-0 flex items-center gap-2 rounded-sm border border-line bg-surface p-2 shadow-raised">
-                    <input type="range" min={0.5} max={30} step={0.5} title="Stärke" defaultValue={first.size} key={`g${first.id}${first.size}`}
+                    <input type="range" min={0.5} max={30} step={0.5} title={T.size} aria-label={T.size} defaultValue={first.size} key={`g${first.id}${first.size}`}
                       data-restyle="size" className="w-28" />
-                    <input type="color" title="Farbe" defaultValue={hex(first.color)} key={`h${first.id}${hex(first.color)}`}
+                    <input type="color" title={T.color} aria-label={T.color} defaultValue={hex(first.color)} key={`h${first.id}${hex(first.color)}`}
                       data-restyle="color" className="h-7 w-7 cursor-pointer" />
                   </div>
                 )}
@@ -959,26 +962,26 @@ export function PageView(p: PageProps) {
         <div data-pedit data-menu role="menu"
           className="absolute z-30 flex items-center gap-0.5 rounded-sm border border-line bg-surface p-0.5 shadow-raised"
           style={{ left: Math.max(0, Math.min(menu.x * zoom, w - 200)), top: Math.max(0, Math.min(menu.y * zoom, h - 36)) }}>
-          {menu.on === "text" && <button role="menuitem" title="Kopieren" className={ICON} onClick={cmd("copy")}>⧉</button>}
+          {menu.on === "text" && <IconBtn icon={Copy} label={T.copy} keys="Strg+C" role="menuitem" className={ICON} onClick={cmd("copy")} />}
           {menu.on === "sel" && <>
-            {own && <button role="menuitem" title="Ausschneiden" className={ICON} onClick={cmd("cut")}>✂</button>}
-            {own && <button role="menuitem" title="Kopieren" className={ICON} onClick={cmd("copy")}>⧉</button>}
-            <button role="menuitem" title="Einfügen" className={ICON} onClick={cmd("paste", [menu.x, menu.y])}>📋</button>
-            <button role="menuitem" title="Löschen" className={ICON} onClick={cmd("delete")}>🗑</button>
-            {own && <button role="menuitem" title="Nach vorn" className={ICON} onClick={cmd("front")}>⤒</button>}
-            {own && <button role="menuitem" title="Nach hinten" className={ICON} onClick={cmd("back")}>⤓</button>}
+            {own && <IconBtn icon={Scissors} label={T.cut} keys="Strg+X" role="menuitem" className={ICON} onClick={cmd("cut")} />}
+            {own && <IconBtn icon={Copy} label={T.copy} keys="Strg+C" role="menuitem" className={ICON} onClick={cmd("copy")} />}
+            <IconBtn icon={ClipboardPaste} label={T.paste} keys="Strg+V" role="menuitem" className={ICON} onClick={cmd("paste", [menu.x, menu.y])} />
+            <IconBtn icon={Trash} label={T.del} keys="Entf" role="menuitem" className={ICON} onClick={cmd("delete")} />
+            {own && <IconBtn icon={BringToFront} label={T.front} role="menuitem" className={ICON} onClick={cmd("front")} />}
+            {own && <IconBtn icon={SendToBack} label={T.back} role="menuitem" className={ICON} onClick={cmd("back")} />}
           </>}
           {menu.on === "empty" && <>
-            <button role="menuitem" title="Einfügen an dieser Stelle" className={ICON} onClick={cmd("paste", [menu.x, menu.y])}>📋</button>
-            <button role="menuitem" title="Textfeld hier" className={ICON} onClick={() => {
+            <IconBtn icon={ClipboardPaste} label={T.paste} keys="Strg+V" role="menuitem" className={ICON} onClick={cmd("paste", [menu.x, menu.y])} />
+            <IconBtn icon={Type} label={T.textHere} role="menuitem" className={ICON} onClick={() => {
               setMenu(undefined);
               // Ebene 1 hat keine eigenen Textfelder → auf Notizen (Ebene 3) wechseln
               if (p.layer === 1) p.onCmd("notes");
               caret.current = [0, 0];
               setEdit({ item: make("text", preset, [menu.x, menu.y, 0.5], false), isNew: true });
-            }}>T</button>
-            <button role="menuitem" title="Bild hier" className={ICON} onClick={cmd("image", [menu.x, menu.y])}>🖼</button>
-            <button role="menuitem" title="Platz einfügen" className={ICON} onClick={cmd("space")}>↕</button>
+            }} />
+            <IconBtn icon={ImagePlus} label={T.imageHere} role="menuitem" className={ICON} onClick={cmd("image", [menu.x, menu.y])} />
+            <IconBtn icon={BetweenHorizontalStart} label={T.space} role="menuitem" className={ICON} onClick={cmd("space")} />
           </>}
         </div>
       )}
@@ -1068,8 +1071,8 @@ export function PageView(p: PageProps) {
         <div key={`l${n}`} className="pointer-events-none absolute border border-dashed border-accent bg-accent/10"
           style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }}>
           <span className="absolute -top-4 left-0 font-mono text-[10px] whitespace-nowrap text-accent">→ S. {page + 1}</span>
-          <button data-pedit title="Link löschen" onClick={() => p.onUnlink(n)}
-            className="pointer-events-auto absolute -top-2 -right-2 h-4 w-4 rounded-full bg-accent text-[10px] leading-4 text-white">×</button>
+          <IconBtn data-pedit icon={X} label={T.unlink} onClick={() => p.onUnlink(n)}
+            className="pointer-events-auto absolute -top-2 -right-2 grid h-4 w-4 place-items-center rounded-full bg-accent text-white [&>svg]:size-3" />
         </div>
       ))}
       {fieldBox && (
@@ -1098,11 +1101,11 @@ export function PageView(p: PageProps) {
               <option value="check">Checkbox</option>
               <option value="combo">Auswahlliste</option>
             </select>
-            <input name="name" required autoFocus placeholder="Name (eindeutig, ohne Punkt)" className="rounded-xs border border-line bg-transparent p-1" />
-            <textarea name="options" rows={3} placeholder="Optionen der Auswahlliste, eine je Zeile" className="resize-y rounded-xs border border-line bg-transparent p-1" />
+            <input name="name" required autoFocus placeholder={T.fieldName} className="rounded-xs border border-line bg-transparent p-1" />
+            <textarea name="options" rows={3} placeholder={T.fieldOptions} className="resize-y rounded-xs border border-line bg-transparent p-1" />
             <div className="flex gap-2">
-              <button type="button" className="ml-auto" onClick={() => setNewf(undefined)}>Abbrechen</button>
-              <button type="submit" className="text-accent">Anlegen</button>
+              <IconBtn icon={X} label={T.cancel} keys="Esc" text className="ml-auto inline-flex items-center gap-1" onClick={() => setNewf(undefined)} />
+              <IconBtn icon={Check} label={T.create} text type="submit" className="inline-flex items-center gap-1 text-accent" />
             </div>
           </form>
         </>
@@ -1142,14 +1145,14 @@ export function PageView(p: PageProps) {
               } as React.CSSProperties}
             />
             <div className="absolute top-full left-0 mt-1 flex items-center gap-1 rounded-xs bg-surface p-1 text-sm shadow-raised">
-              <select name="font" defaultValue="" title="Schrift" className={field}>
+              <select name="font" defaultValue="" title={T.font} aria-label={T.font} className={field}>
                 <option value="">Original</option>
                 <option value="sans">Sans</option>
                 <option value="serif">Serif</option>
                 <option value="mono">Mono</option>
               </select>
-              <input name="size" type="number" min={2} max={500} step={0.5} defaultValue={Math.round(para.size * 10) / 10} title="Größe (pt)" className={`w-16 ${field}`} />
-              <input name="color" type="color" defaultValue={hex(para.color)} title="Farbe" className="h-6 w-8" />
+              <input name="size" type="number" min={2} max={500} step={0.5} defaultValue={Math.round(para.size * 10) / 10} title={`${T.fontSize} (pt)`} aria-label={T.fontSize} className={`w-16 ${field}`} />
+              <input name="color" type="color" defaultValue={hex(para.color)} title={T.color} aria-label={T.color} className="h-6 w-8" />
             </div>
           </form>
         );

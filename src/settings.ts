@@ -15,6 +15,10 @@ const Settings = z.object({
   pressureMax: z.number().min(0.3).max(1),
   /** Gerät bestimmt das Werkzeug: Stift → Stift-Werkzeug, Maus → Auswahl/Text (fehlt in alten Einstellungen → an) */
   auto: z.boolean().default(true),
+  /** Ansicht; System = Windows-Einstellung. Je Gerät (localStorage), erster Start dunkel */
+  theme: z.enum(["light", "dark", "system"]).default("dark"),
+  /** Seitenleiste offen (ohne Split View; im Split startet sie eingeklappt) */
+  side: z.boolean().default(true),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -23,7 +27,17 @@ export const DEFAULT_SETTINGS: Settings = {
   eraser: { pointerType: "pen", buttons: 32 },
   pressureMax: PRESSURE_MAX,
   auto: true,
+  theme: "dark",
+  side: true,
 };
+
+const prefersLight = () => globalThis.matchMedia?.("(prefers-color-scheme: light)").matches ?? false;
+/** Hell-Tokens per data-theme an <html>; PDF-Seiten bleiben immer weiß (nie invertiert) */
+export function applyTheme(t: Settings["theme"]) {
+  const light = t === "light" || (t === "system" && prefersLight());
+  if (light) document.documentElement.dataset.theme = "light";
+  else delete document.documentElement.dataset.theme;
+}
 
 const KEY = "pdfnote.settings";
 

@@ -1,11 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import {
+  ArrowDown, ArrowUp, ArrowUpRight, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, ClipboardPen, Eraser, File, FileCode,
+  FileImage, FileMinus, FileOutput, FilePenLine, FilePlus, Files, FileText, Grid3x3, Grip, Highlighter, ImagePlus, Link, ListIndentDecrease,
+  ListIndentIncrease, LocateFixed, Lock, MousePointer2, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Pen, PenLine, Plus, Redo2, RotateCw,
+  Rows3, Save, ScanText, Shapes, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+} from "lucide-react";
 import { z } from "zod";
 import {
   afterDelete, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
   layerOf, moveItem, newId, textRect, toData, unionBox, type Item, type Layer, type Preset,
 } from "./ink";
+import { useDoc } from "./docstore";
+import { BTN as btn, IconBtn, Menu, MenuItem, on } from "./ui";
+import { T, tip } from "./i18n";
 import * as ol from "./outline";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
@@ -41,24 +50,21 @@ export const toSnap = (r: z.infer<typeof PageState>): Snap => ({ items: r.items.
  */
 const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
-/** Werkzeug, Beschriftung, Tooltip, Kürzel */
-const TOOL_LABELS: [Tool, string, string, string][] = [
-  ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
-  ["lasso", "↖", "Auswahl/Text: Klick setzt Cursor/Textfeld, Ziehen wählt aus", "a/t"], ["line", "╱", "Linie", "l"],
-  ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
-  ["axes", "∟", "Koordinatensystem (xy/xyz, Gitter: ⚙)", "x"],
-  ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
-  ["link", "Link", "Anker-Links: Rechteck ziehen, dann Zielstelle anklicken; Klick auf Link springt", "g"],
+/** Werkzeug, Symbol, Name, Kürzel */
+const TOOL_LABELS: [Tool, LucideIcon, string, string][] = [
+  ["pen", Pen, T.pen, "p"], ["marker", Highlighter, T.marker, "m"], ["eraser", Eraser, T.eraser, "e"],
+  ["lasso", MousePointer2, T.lasso, "a/t"], ["line", Slash, T.line, "l"], ["arrow", ArrowUpRight, T.arrow, "f"],
+  ["rect", Square, T.rect, "r"], ["ellipse", Circle, T.ellipse, "k"], ["axes", Axis3d, T.axes, "x"],
+  ["form", ClipboardPen, T.form, "o"], ["link", Link, T.link, "g"],
 ];
-/** Ebene, Symbol, Tooltip; Kürzel = Nummer */
-const LAYERS: [Layer, string, string][] = [
-  [1, "▤", "Ebene 1: PDF-Inhalt – Bilder wählen, Text markieren (Strg+C), Klick in Absatz bearbeitet ihn"],
-  [2, "◇", "Ebene 2: Elemente – Bilder, Formen, Linien"],
-  [3, "✎", "Ebene 3: Notizen – Stift, Marker, Textfelder"],
-];
+/** Ebene, Symbol, Name; Kürzel = Nummer */
+const LAYERS: [Layer, LucideIcon, string][] = [[1, FileText, T.layer1], [2, Shapes, T.layer2], [3, PenLine, T.layer3]];
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
 const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
-const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"], ["axes", "Koordinatensystem"]];
+const SHAPES: [Item["kind"], LucideIcon, string][] = [
+  ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes],
+];
+const PAGE_KINDS: [string, LucideIcon, string][] = [["blank", File, T.blank], ["lined", Rows3, T.lined], ["grid", Grid3x3, T.squared], ["dots", Grip, T.dots]];
 
 const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
 const readUrl = (b: Blob) => new Promise<string>((res, rej) => {
@@ -93,13 +99,17 @@ export interface DocApi {
  * Ein offenes Dokument mit eigenem Undo, Zoom, Scroll und Werkzeug. Bleibt gemountet, solange der Tab offen ist;
  * versteckt (`visible` = false) gibt es seine Seitenbilder frei (IntersectionObserver in PageView).
  */
-export function DocView({ id, path, init, visible, active, marked, settings, style, apis, onDirty, onFocus }: {
-  id: number; path: string; init: Snap; visible: boolean; active: boolean; marked: boolean; settings: Settings;
-  style: CSSProperties; apis: Map<number, DocApi>; onDirty: (id: number, dirty: boolean) => void; onFocus: () => void;
+export function DocView({ id, view, path, init, visible, active, marked, settings, style, apis, sideOpen, onSide, onDirty, onFocus }: {
+  id: number; view: string; path: string; init: Snap; visible: boolean; active: boolean; marked: boolean; settings: Settings;
+  style: CSSProperties; apis: Map<string, DocApi>; sideOpen: boolean; onSide: () => void;
+  onDirty: (id: number, dirty: boolean) => void; onFocus: () => void;
 }) {
-  const [hist, setHist] = useState<History>({ list: [init], at: 0 });
-  const [saved, setSaved] = useState<Snap>(init);
-  const [version, setVersion] = useState(0);
+  // Undo, Speicherstand, Seitenstand und Sperre teilt sich jede Ansicht dieses Dokuments (gleiche PDF in beiden Hälften)
+  const [doc, setDoc] = useDoc(id, () => ({ hist: { list: [init], at: 0 } as History, saved: init, version: 0, busy: { current: false } }));
+  const { hist, saved, version, busy } = doc;
+  const setHist = (f: (h: History) => History) => setDoc((d) => ({ ...d, hist: f(d.hist) }));
+  const setSaved = (s: Snap) => setDoc((d) => ({ ...d, saved: s }));
+  const setVersion = (f: (v: number) => number) => setDoc((d) => ({ ...d, version: f(d.version) }));
   const [zoom, setZoom] = useState(1);
   /** Werkzeug der Maus (bei `settings.auto`) bzw. aller Geräte; `penTool` = Werkzeug des Stifts bei `auto` */
   const [tools, setTools] = useState(() => initTools(settings.auto));
@@ -137,7 +147,6 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
   const scroller = useRef<HTMLDivElement>(null);
   const scrollPos = useRef({ left: 0, top: 0 });
-  const busy = useRef(false);
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const snap = hist.list[hist.at] ?? EMPTY;
@@ -173,10 +182,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       setError(undefined);
     } catch (e) {
       if (!force && String(e) === "EXTERN_GEAENDERT") {
-        const r = await message("Die PDF wurde seit dem Öffnen außerhalb von PDF Note geändert. Beim Speichern gehen diese Änderungen verloren.", {
-          title: "PDF Note", kind: "warning", buttons: { ok: "Trotzdem speichern", cancel: "Abbrechen" },
-        });
-        if (r === "Trotzdem speichern") return save(true);
+        const r = await message(T.extern, { title: "PDF Note", kind: "warning", buttons: { ok: T.saveAnyway, cancel: T.cancel } });
+        if (r === T.saveAnyway) return save(true);
         setError("Nicht gespeichert: Datei extern geändert");
       } else setError(`Speichern fehlgeschlagen: ${String(e)}`);
       throw e;
@@ -558,9 +565,9 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   }
 
   useEffect(() => {
-    apis.set(id, { save, dropImage });
+    apis.set(view, { save, dropImage });
   });
-  useEffect(() => () => void apis.delete(id), [apis, id]);
+  useEffect(() => () => void apis.delete(view), [apis, view]);
   useEffect(() => onDirty(id, dirty), [onDirty, id, dirty]);
 
   // Beim Öffnen auf Seitenbreite zoomen
@@ -771,8 +778,6 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     setCurrent(i);
   };
 
-  const btn = "rounded-xs px-2.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
-  const on = (b: boolean) => (b ? " bg-accent-soft text-ink" : "");
   const sep = <span className="mx-1 h-5 w-px bg-line" />;
   const mk = tool === "marker";
   const palette = mk ? pal.marker : pal.pen;
@@ -789,57 +794,46 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       onPointerDownCapture={onFocus}
     >
       <div className="flex flex-wrap items-center gap-1 border-b border-line bg-surface px-3 py-1.5">
-        <button className={btn} onClick={() => void save().catch(() => {})} disabled={!dirty} title="Strg+S">Speichern</button>
-        <button className={btn} onClick={() => void saveAs()} title="Strg+Umschalt+S – Anmerkungen eingebrannt">Speichern unter (flach)</button>
+        <IconBtn icon={sideOpen ? PanelLeftClose : PanelLeftOpen} label={T.sidebar} onClick={onSide} aria-pressed={sideOpen} />
+        <IconBtn icon={Save} label={T.save} keys="Strg+S" onClick={() => void save().catch(() => {})} disabled={!dirty} />
+        <IconBtn icon={FileOutput} label={T.saveFlat} keys="Strg+Umschalt+S" onClick={() => void saveAs()} />
         {sep}
-        <button className={btn} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} title="Strg+Z">↶</button>
-        <button className={btn} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} title="Strg+Y">↷</button>
+        <IconBtn icon={Undo2} label={T.undo} keys="Strg+Z" onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} />
+        <IconBtn icon={Redo2} label={T.redo} keys="Strg+Y" onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
         {sep}
         {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
-        {TOOL_LABELS.map(([t, label, title, key]) => (
-          <button
+        {TOOL_LABELS.map(([t, icon, label, key]) => (
+          <IconBtn
             key={t}
+            icon={icon}
+            label={label}
+            keys={key.toUpperCase()}
             className={`${btn} relative${settings.auto ? (tool === t ? " ring-1 ring-inset ring-accent text-ink" : "") : on(tool === t)}`}
             onClick={(e) => chooseTool(t, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
             onDoubleClick={() => SHAPE_TOOLS.includes(t) && setTools((s) => ({ ...s, locked: true }))}
-            title={`${title} (${key.toUpperCase()})${SHAPE_TOOLS.includes(t) ? " – Doppelklick: bleibt aktiv" : ""}`}
           >
-            {label}
-            {locked && (tool === t || (settings.auto && penTool === t)) && <span className="ml-0.5 text-xs" aria-label="gesperrt">🔒</span>}
-            {settings.auto && penTool === t && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label="Stift" />}
-          </button>
+            {locked && (tool === t || (settings.auto && penTool === t)) && <Lock size={10} aria-label={T.locked} className="absolute bottom-0.5 right-0.5" />}
+            {settings.auto && penTool === t && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label={T.penMark} />}
+          </IconBtn>
         ))}
         {sep}
-        {LAYERS.map(([l, icon, title]) => (
-          <button key={l} className={btn + on(layer === l)} onClick={() => switchLayer(l)} title={`${title} (${l})`} aria-pressed={layer === l}>
-            {icon}<sub className="ml-0.5 font-mono">{l}</sub>
-          </button>
+        {LAYERS.map(([l, icon, label]) => (
+          <IconBtn key={l} icon={icon} label={label} keys={String(l)} className={btn + on(layer === l)} onClick={() => switchLayer(l)} aria-pressed={layer === l}>
+            <sub className="font-mono">{l}</sub>
+          </IconBtn>
         ))}
-        <button className={btn} onClick={() => void insertImageFile()} title="Bild einfügen (I) – auch per Drag & Drop aus dem Explorer">🖼</button>
-        <select
-          value=""
-          aria-label="Einfügen"
-          title="Einfügen (auch Strg+V aus der Zwischenablage)"
-          className="rounded-xs bg-transparent px-1.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink"
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "image") void insertImageFile();
-            else if (v === "text") insertText("Text");
-            else if (v === "space") chooseTool("space");
-            else if (v) insertShape(v as Item["kind"]);
-          }}
-        >
-          <option value="" disabled hidden>Einfügen …</option>
-          <option value="image">Bild-Datei …</option>
-          <option value="text">Textfeld</option>
-          {SHAPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          <option value="space">Platz einfügen (Linie ziehen)</option>
-        </select>
+        <IconBtn icon={ImagePlus} label={T.image} keys="I" onClick={() => void insertImageFile()} />
+        <Menu icon={Plus} label={T.insert} keys="Strg+V">
+          <MenuItem icon={ImagePlus} label={T.imageFile} onClick={() => void insertImageFile()} />
+          <MenuItem icon={Type} label={T.textBox} onClick={() => insertText("Text")} />
+          {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
+          <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
+        </Menu>
         {sep}
         {palette.map((p) => (
           <button
             key={p.name}
-            title={p.name}
+            title={p.name} aria-label={p.name}
             onClick={() => setPick(p)}
             className={`grid h-7 w-7 place-items-center rounded-pill ring-2 ${same(p, pick) ? "ring-accent" : "ring-transparent"}`}
           >
@@ -847,12 +841,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           </button>
         ))}
         {/* Zahnrad: Stärke/Farbe stufenlos, wirkt sofort aufs aktive Werkzeug; Presets speichern/überschreiben */}
-        <details className="relative">
-          <summary className={btn + " list-none cursor-pointer"} title="Stärke, Farbe, Presets">⚙</summary>
-          <div className="absolute left-0 top-full z-20 mt-1 flex w-56 flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm shadow-lg">
+        <Menu icon={Palette} label={T.style} panel="w-56 gap-2 p-3">
             <label className="flex flex-col gap-1">
-              {tool === "lasso" ? `Textgröße ${pal.text} pt` : `Stärke ${pick.size.toFixed(1)}`}
-              <input type="range" aria-label="Stärke"
+              {tool === "lasso" ? `${T.textSize} ${pal.text} pt` : `${T.size} ${pick.size.toFixed(1)}`}
+              <input type="range" aria-label={T.size}
                 min={tool === "lasso" ? 6 : 0.5} max={tool === "lasso" ? 72 : mk ? 40 : 20} step={tool === "lasso" ? 1 : 0.1}
                 value={tool === "lasso" ? pal.text : pick.size}
                 onChange={(e) => {
@@ -862,67 +854,50 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 }} />
             </label>
             <label className="flex items-center justify-between">
-              Farbe
-              <input type="color" aria-label="Farbe" value={hex(pick.color)}
+              {T.color}
+              <input type="color" aria-label={T.color} value={hex(pick.color)}
                 onChange={(e) => {
                   const n = parseInt(e.target.value.slice(1), 16);
                   setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
                 }} />
             </label>
-            <button className={btn} onClick={() => {
-              const p = { ...pick, name: `Eigenes ${palette.length + 1}` };
+            <IconBtn icon={Plus} label={T.presetAdd} text onClick={() => {
+              const p = { ...pick, name: `${T.custom} ${palette.length + 1}` };
               setPalette([...palette, p]);
               setPick(p);
-            }}>als Preset speichern</button>
-            <button className={btn} disabled={!palette.some((p) => p.name === pick.name)}
-              onClick={() => setPalette(palette.map((p) => (p.name === pick.name ? pick : p)))}
-              title={`„${pick.name}" mit den aktuellen Werten überschreiben`}>Preset überschreiben</button>
+            }} />
+            <IconBtn icon={Save} label={T.presetSet} text disabled={!palette.some((p) => p.name === pick.name)}
+              onClick={() => setPalette(palette.map((p) => (p.name === pick.name ? pick : p)))} />
             {(tool === "axes" || penTool === "axes") && (
               <div className="flex flex-col gap-1 border-t border-line pt-2">
                 <div className="flex gap-1">
-                  {([[false, "xy"], [true, "xyz"]] as const).map(([v, l]) => (
+                  {([[false, T.axesXy], [true, T.axesXyz]] as const).map(([v, l]) => (
                     <button key={l} className={btn + on(axes.xyz === v)} onClick={() => setAxes((a) => ({ ...a, xyz: v }))}>{l}</button>
                   ))}
                 </div>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={axes.grid} onChange={(e) => setAxes((a) => ({ ...a, grid: e.target.checked }))} />
-                  Karo-Gitter
+                  {T.grid}
                 </label>
               </div>
             )}
-          </div>
-        </details>
+        </Menu>
         {sep}
-        <select
-          value=""
-          aria-label="Seite einfügen"
-          title="Neue Seite nach der aktuellen"
-          className="rounded-xs bg-transparent px-1.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink"
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "markdown") setMdEdit({ page: Math.min(current + 1, sizes.length), source: "# Titel\n\n", insert: true });
-            else if (v) insertBlank(v === "blank" ? undefined : v);
-          }}
-        >
-          <option value="" disabled hidden>Seite + …</option>
-          <option value="blank">Leer</option>
-          <option value="lined">Liniert</option>
-          <option value="grid">Kariert</option>
-          <option value="dots">Punkte</option>
-          <option value="markdown">Markdown-Seite</option>
-        </select>
-        {md !== null && (
-          <button className={btn} onClick={() => setMdEdit({ page: current, source: md, insert: false })} title="Markdown der aktuellen Seite bearbeiten">Markdown ✎</button>
-        )}
-        <button className={btn} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} title="PDF hinten anhängen">PDF anhängen</button>
-        <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} title="Bild als neue Seite nach der aktuellen">📄 Bild-Seite</button>
-        <button className={btn} onClick={rotate} title="Aktuelle Seite 90° drehen">⟳</button>
-        <button className={btn} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} title="Text gescannter Seiten erkennen (lokal, macht sie durchsuchbar)">OCR</button>
-        <button className={btn} onClick={deletePage} disabled={sizes.length < 2} title="Aktuelle Seite löschen">Seite −</button>
+        <Menu icon={FilePlus} label={T.pageAdd}>
+          {PAGE_KINDS.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertBlank(k === "blank" ? undefined : k)} />)}
+          <MenuItem icon={FileCode} label={T.markdownPage}
+            onClick={() => setMdEdit({ page: Math.min(current + 1, sizes.length), source: `# ${T.title}\n\n`, insert: true })} />
+        </Menu>
+        {md !== null && <IconBtn icon={FilePenLine} label={T.markdownEdit} onClick={() => setMdEdit({ page: current, source: md, insert: false })} />}
+        <IconBtn icon={Paperclip} label={T.appendPdf} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} />
+        <IconBtn icon={FileImage} label={T.imagePage} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} />
+        <IconBtn icon={RotateCw} label={T.rotate} onClick={rotate} />
+        <IconBtn icon={ScanText} label={T.ocr} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} />
+        <IconBtn icon={FileMinus} label={T.pageDelete} onClick={deletePage} disabled={sizes.length < 2} />
         {sep}
-        <button className={btn} onClick={() => applyZoom(zoom / 1.2)}>−</button>
+        <IconBtn icon={ZoomOut} label={T.zoomOut} keys="Strg+−" onClick={() => applyZoom(zoom / 1.2)} />
         <span className="w-12 text-center font-mono text-xs text-ink-2">{Math.round(zoom * 100)} %</span>
-        <button className={btn} onClick={() => applyZoom(zoom * 1.2)}>+</button>
+        <IconBtn icon={ZoomIn} label={T.zoomIn} keys="Strg++" onClick={() => applyZoom(zoom * 1.2)} />
         <form
           className="flex items-center gap-1 text-sm text-ink-2"
           onSubmit={(e) => {
@@ -937,7 +912,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
             onChange={(e) => setJump(e.target.value)}
             placeholder={String(current + 1)}
             inputMode="numeric"
-            aria-label="Seite"
+            aria-label={T.page}
+            title={T.page}
             className="w-12 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-center font-mono text-xs text-ink"
           />
           / {sizes.length}
@@ -963,56 +939,52 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                   step(-1);
                 }
               }}
-              placeholder="Suchen …"
-              aria-label="Suchen"
-              title="Enter = nächster, Umschalt+Enter = vorheriger Treffer, Esc = schließen"
+              placeholder={`${T.search} …`}
+              aria-label={T.search}
+              title={tip(T.search, "Strg+F")}
               className="w-40 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-xs text-ink"
             />
             <span className="w-14 font-mono text-xs">{find.done === null ? "" : `${find.at + 1}/${hits.length}`}</span>
-            <button type="button" className={btn} onClick={() => setFind(null)} title="Suche schließen (Esc)">×</button>
+            <IconBtn icon={X} label={T.searchClose} keys="Esc" onClick={() => setFind(null)} />
           </form>
         )}
-        {tool === "link" && linkFrom && <span className="text-sm text-accent">Ziel anklicken (Esc bricht ab)</span>}
+        {tool === "link" && linkFrom && <span className="text-sm text-accent">{T.linkTarget}</span>}
         {error && <span className="ml-auto text-sm text-red-400">{error}</span>}
       </div>
       <div className="relative flex min-h-0 flex-1">
-        <div className="flex shrink-0 flex-col border-r border-line bg-sunken">
+        {sideOpen && <div className="flex shrink-0 flex-col border-r border-line bg-sunken">
         <div className="flex gap-1 border-b border-line p-1">
-          <button className={btn + on(side === "pages") + " flex-1"} onClick={() => setSide("pages")}>Seiten</button>
-          <button className={btn + on(side === "marks") + " flex-1"} onClick={() => setSide("marks")}>Lesezeichen</button>
+          <IconBtn icon={Files} label={T.pages} className={btn + on(side === "pages") + " flex-1 justify-center"} onClick={() => setSide("pages")} />
+          <IconBtn icon={Bookmark} label={T.marks} className={btn + on(side === "marks") + " flex-1 justify-center"} onClick={() => setSide("marks")} />
         </div>
         {side === "marks" ? (
           <div className="flex min-h-0 w-56 flex-1 flex-col">
             <div className="flex flex-wrap gap-0.5 border-b border-line p-1">
-              <button
-                className={btn}
-                title="Lesezeichen auf die aktuelle Seite"
+              <IconBtn
+                icon={BookmarkPlus}
+                label={T.markAdd}
                 onClick={() => {
-                  const [next, i] = ol.add(marks, `Seite ${current + 1}`, current);
+                  const [next, i] = ol.add(marks, `${T.page} ${current + 1}`, current);
                   void setOutline(next, i).then((ok) => ok && setRenaming(i));
                 }}
-              >+</button>
-              <button className={btn} disabled={markSel < 0} title="Nach oben" onClick={() => void setOutline(...ol.moveUp(marks, markSel))}>↑</button>
-              <button className={btn} disabled={markSel < 0} title="Nach unten" onClick={() => void setOutline(...ol.moveDown(marks, markSel))}>↓</button>
-              <button className={btn} disabled={markSel < 0} title="Ausrücken" onClick={() => void setOutline(...ol.outdent(marks, markSel))}>←</button>
-              <button className={btn} disabled={markSel < 0} title="Einrücken" onClick={() => void setOutline(ol.indent(marks, markSel))}>→</button>
-              <button
-                className={btn}
-                disabled={markSel < 0}
-                title="Ziel = aktuelle Seite"
-                onClick={() => void setOutline(marks.map((m, k) => (k === markSel ? { ...m, page: current } : m)))}
-              >⇥</button>
-              <button className={btn} disabled={markSel < 0} title="Löschen (Unterpunkte rücken hoch)" onClick={() => void setOutline(ol.remove(marks, markSel), -1)}>×</button>
+              />
+              <IconBtn icon={ArrowUp} label={T.up} disabled={markSel < 0} onClick={() => void setOutline(...ol.moveUp(marks, markSel))} />
+              <IconBtn icon={ArrowDown} label={T.down} disabled={markSel < 0} onClick={() => void setOutline(...ol.moveDown(marks, markSel))} />
+              <IconBtn icon={ListIndentDecrease} label={T.outdent} disabled={markSel < 0} onClick={() => void setOutline(...ol.outdent(marks, markSel))} />
+              <IconBtn icon={ListIndentIncrease} label={T.indent} disabled={markSel < 0} onClick={() => void setOutline(ol.indent(marks, markSel))} />
+              <IconBtn icon={LocateFixed} label={T.markTarget} disabled={markSel < 0}
+                onClick={() => void setOutline(marks.map((m, k) => (k === markSel ? { ...m, page: current } : m)))} />
+              <IconBtn icon={Trash} label={T.del} disabled={markSel < 0} onClick={() => void setOutline(ol.remove(marks, markSel), -1)} />
             </div>
             <ul data-scroll className="flex-1 overflow-y-auto py-1 text-sm">
-              {marks.length === 0 && <li className="px-3 py-2 text-ink-2">Keine Lesezeichen</li>}
+              {marks.length === 0 && <li className="px-3 py-2 text-ink-2">{T.noMarks}</li>}
               {marks.map((m, i) => (
                 <li key={i} style={{ paddingLeft: 8 + 14 * m.level }} className={`pr-2 ${i === markSel ? "bg-accent-soft" : ""}`}>
                   {renaming === i ? (
                     <input
                       autoFocus
                       defaultValue={m.title}
-                      aria-label="Titel"
+                      aria-label={T.title}
                       className="w-full rounded-xs border border-line bg-surface px-1 text-ink"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") e.currentTarget.blur();
@@ -1031,7 +1003,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                   ) : (
                     <button
                       className="w-full truncate py-0.5 text-left text-ink-2 hover:text-ink"
-                      title={m.page >= 0 ? `${m.title} – Seite ${m.page + 1} (Doppelklick: umbenennen)` : `${m.title} – ohne Ziel`}
+                      title={m.page >= 0 ? `${m.title} – ${T.page} ${m.page + 1}` : m.title}
                       onClick={() => {
                         setMarkSel(i);
                         if (m.page >= 0) goTo(m.page);
@@ -1066,7 +1038,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           ))}
         </nav>
         )}
-        </div>
+        </div>}
         {mdEdit && (
           <div className="absolute inset-4 z-20 flex flex-col gap-2 rounded-xs border border-line bg-surface p-3">
             <div className="text-sm text-ink-2">
@@ -1085,8 +1057,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
               }}
             />
             <div className="flex justify-end gap-2">
-              <button className={btn} onClick={() => setMdEdit(undefined)}>Abbrechen (Esc)</button>
-              <button className={btn + on(true)} onClick={() => void saveMarkdown()}>Übernehmen (Strg+Enter)</button>
+              <IconBtn icon={X} label={T.cancel} keys="Esc" text onClick={() => setMdEdit(undefined)} />
+              <IconBtn icon={Check} label={T.apply} keys="Strg+Enter" text className={btn + on(true)} onClick={() => void saveMarkdown()} />
             </div>
           </div>
         )}

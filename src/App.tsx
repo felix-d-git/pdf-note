@@ -3,12 +3,16 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeftRight, Columns2, FolderOpen, Keyboard, Monitor, Moon, NotebookPen, Settings as Gear, Sun, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { dropDoc } from "./docstore";
 import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
-import { captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
+import { T } from "./i18n";
+import { applyTheme, captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
 import {
-  activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, setDirty, show, toggleSplit, type Pane, type Tab,
+  activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, setDirty, show, toggleSplit, toPane, type Pane, type Tab,
 } from "./tabs";
+import { BTN as btn, IconBtn, on } from "./ui";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -20,12 +24,17 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [capture, setCapture] = useState<"lasso" | "eraser">();
   const [error, setError] = useState<string>();
-  const [drop, setDrop] = useState<{ from: number; to: number }>();
+  /** Tab-Ziehen: Ziel in der Tab-Leiste (`to`) oder Hälfte im Split View (`pane`) */
+  const [drop, setDrop] = useState<{ from: number; to?: number; pane?: Pane }>();
+  /** Seitenleiste im Split View: startet eingeklappt, Symbol holt sie zurück (ändert nicht die gespeicherte Wahl) */
+  const [splitSide, setSplitSide] = useState({ split: false, open: false });
+  if (splitSide.split !== state.split) setSplitSide({ split: state.split, open: false });
   const nextId = useRef(1);
   const opening = useRef<string[]>([]);
-  const [apis] = useState(() => new Map<number, DocApi>());
+  /** je Ansicht: `${id}`, zweite Ansicht derselben PDF `${id}b` */
+  const [apis] = useState(() => new Map<string, DocApi>());
   const split = useRef<HTMLDivElement>(null);
-  const tabDrag = useRef<{ from: number; x: number; moved: boolean }>(null);
+  const tabDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const { tabs, panes } = state;
   const current = tabs.find((t) => t.id === activeId(state));
@@ -41,11 +50,11 @@ export default function App() {
   /** true = weitermachen (gespeichert oder verworfen), false = abbrechen */
   async function confirmLeave(t: Tab) {
     if (!t.dirty) return true;
-    const r = await message(`„${fileName(t.path)}" hat ungespeicherte Änderungen. Speichern?`, {
-      title: "PDF Note", kind: "warning", buttons: { yes: "Speichern", no: "Verwerfen", cancel: "Abbrechen" },
+    const r = await message(T.unsaved(fileName(t.path)), {
+      title: "PDF Note", kind: "warning", buttons: { yes: T.save, no: T.discard, cancel: T.cancel },
     });
-    if (r === "Speichern") return (apis.get(t.id)?.save() ?? Promise.resolve()).then(() => true, () => false);
-    return r === "Verwerfen";
+    if (r === T.save) return (apis.get(String(t.id))?.save() ?? Promise.resolve()).then(() => true, () => false);
+    return r === T.discard;
   }
 
   /** Bilder aus dem Explorer: auf die Seite unter (x, y) (auch im geteilten Fenster), sonst mittig ins aktive Dokument. */
@@ -54,7 +63,7 @@ export default function App() {
       try {
         const b64 = await invoke<string>("read_image", { path: p });
         const hit = await Promise.all([...apis.values()].map((a) => a.dropImage(b64, x, y)));
-        if (!hit.includes(true) && current) await apis.get(current.id)?.dropImage(b64);
+        if (!hit.includes(true) && current) await apis.get(String(current.id))?.dropImage(b64);
       } catch (e) {
         setError(`Bild einfügen fehlgeschlagen: ${String(e)}`);
       }
@@ -64,6 +73,7 @@ export default function App() {
   async function close(t: Tab) {
     if (!(await confirmLeave(t))) return;
     setState((s) => closeTab(s, t.id));
+    dropDoc(t.id);
     setInits((m) => {
       const n = new Map(m);
       n.delete(t.id);
@@ -117,6 +127,16 @@ export default function App() {
   useEffect(() => {
     live.current = { tabs, openPath, confirmLeave, dropImages };
   });
+
+  // Ansicht: System folgt Windows auch während die App läuft
+  useLayoutEffect(() => {
+    applyTheme(settings.theme);
+    if (settings.theme !== "system") return;
+    const mq = matchMedia("(prefers-color-scheme: light)");
+    const f = () => applyTheme("system");
+    mq.addEventListener("change", f);
+    return () => mq.removeEventListener("change", f);
+  }, [settings.theme]);
 
   // Titel mit * bei ungespeicherten Änderungen (aktiver Tab)
   useEffect(() => {
@@ -190,46 +210,86 @@ export default function App() {
 
   // Tabs per Zeiger umsortieren (wie Vorschaubilder: HTML5-Drag&Drop geht in Tauri bei aktivem Datei-Drop nicht)
   const tabDown = (i: number) => (e: React.PointerEvent) => {
-    if (e.buttons === 1) tabDrag.current = { from: i, x: e.clientX, moved: false };
+    if (e.buttons === 1) tabDrag.current = { from: i, x: e.clientX, y: e.clientY, moved: false };
   };
   const barMove = (e: React.PointerEvent) => {
     const d = tabDrag.current;
     if (!d) return;
-    if (!d.moved && Math.abs(e.clientX - d.x) > 6) {
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) {
       d.moved = true;
       e.currentTarget.setPointerCapture(e.pointerId);
     }
     if (!d.moved) return;
     const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-tab]");
-    setDrop(el ? { from: d.from, to: Number(el.dataset.tab) } : undefined);
+    if (el) return setDrop({ from: d.from, to: Number(el.dataset.tab) });
+    // im Split View: auf eine Hälfte ziehen
+    const r = split.current?.getBoundingClientRect();
+    const inside = r && state.split && e.clientY > r.top && e.clientY < r.bottom && e.clientX > r.left && e.clientX < r.right;
+    setDrop(inside ? { from: d.from, pane: e.clientX < r.left + r.width * ratio ? 0 : 1 } : undefined);
   };
-  const barUp = () => {
+  const barUp = (e: React.PointerEvent) => {
     const d = tabDrag.current;
     tabDrag.current = null;
-    if (d?.moved && drop && drop.to !== d.from) setState((s) => moveTab(s, d.from, drop.to));
+    const t = d && tabs[d.from];
+    if (d?.moved && drop?.to !== undefined && drop.to !== d.from) setState((s) => moveTab(s, d.from, drop.to ?? d.from));
+    // Strg beim Loslassen: in beiden Hälften zeigen
+    if (d?.moved && t && drop?.pane !== undefined) setState((s) => toPane(s, t.id, drop.pane ?? 0, e.ctrlKey));
     setDrop(undefined);
   };
 
-  // Trennlinie ziehen
-  const dividerMove = (e: React.PointerEvent) => {
+  // Trennlinie ziehen: nur CSS-Variable setzen (kein React-Render je Bewegung → bleibt flüssig über Seitenbildern),
+  // beim Loslassen übernehmen
+  const ratioAt = (e: React.PointerEvent) => {
     const r = split.current?.getBoundingClientRect();
-    if (!r || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    setRatio(Math.min(0.8, Math.max(0.2, (e.clientX - r.left) / r.width)));
+    return r ? Math.min(0.8, Math.max(0.2, (e.clientX - r.left) / r.width)) : ratio;
+  };
+  const dividerMove = (e: React.PointerEvent) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const r = ratioAt(e);
+    split.current?.style.setProperty("--r", String(r));
+    split.current?.style.setProperty("--r2", String(1 - r));
+  };
+  const dividerUp = (e: React.PointerEvent) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) setRatio(ratioAt(e));
   };
 
   const paneOf = (id: number): Pane | undefined =>
     panes[0] === id ? 0 : state.split && panes[1] === id ? 1 : undefined;
-  const paneStyle = (p: Pane) => ({ order: p * 2, flex: state.split ? `${p === 0 ? ratio : 1 - ratio} 1 0` : "1 1 0" });
-
-  const btn = "rounded-xs px-2.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
-  const on = (b: boolean) => (b ? " bg-accent-soft text-ink" : "");
+  const paneStyle = (p: Pane) => ({ order: p * 2, flex: `${state.split ? `var(--r${p === 0 ? "" : "2"})` : 1} 1 0` });
+  const sideOpen = state.split ? splitSide.open : settings.side;
+  const toggleSide = () => (state.split ? setSplitSide((s) => ({ ...s, open: !s.open })) : updateSettings({ ...settings, side: !settings.side }));
+  const view = (t: Tab, p: Pane, dup: boolean) => {
+    const init = inits.get(t.id);
+    return init && (
+      <DocView
+        key={dup ? `${t.id}b` : t.id}
+        id={t.id}
+        view={dup ? `${t.id}b` : String(t.id)}
+        path={t.path}
+        init={init}
+        visible={dup || paneOf(t.id) !== undefined}
+        active={p === state.active}
+        marked={state.split && p === state.active}
+        settings={settings}
+        style={paneStyle(p)}
+        apis={apis}
+        sideOpen={sideOpen}
+        onSide={toggleSide}
+        onDirty={onDirty}
+        onFocus={() => paneOf(t.id) !== undefined && setState((s) => focus(s, p))}
+      />
+    );
+  };
 
   return (
     <div className="flex h-full flex-col">
       <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
-        <button className={btn} onClick={() => void newFile()} title="Neue Notiz-PDF anlegen">Neu</button>
-        <button className={btn} onClick={() => void pickFile()} title="Strg+O">Öffnen</button>
-        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={barUp}>
+        <IconBtn icon={NotebookPen} label={T.newFile} onClick={() => void newFile()} />
+        <IconBtn icon={FolderOpen} label={T.open} keys="Strg+O" onClick={() => void pickFile()} />
+        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={() => {
+          tabDrag.current = null;
+          setDrop(undefined);
+        }}>
           {tabs.map((t, i) => {
             const p = paneOf(t.id);
             const mark = drop?.to === i && i !== drop.from ? (i < drop.from ? " border-l-accent" : " border-r-accent") : "";
@@ -245,38 +305,46 @@ export default function App() {
                 }${mark}`}
               >
                 <span className="max-w-48 truncate">{t.dirty && <span className="text-accent">* </span>}{fileName(t.path)}</span>
-                <button
-                  className="rounded-xs px-1 text-ink-3 hover:bg-line hover:text-ink"
-                  title="Schließen (Strg+W)"
+                <IconBtn
+                  icon={X}
+                  label={T.close}
+                  keys="Strg+W"
+                  className="rounded-xs p-0.5 text-ink-3 hover:bg-line hover:text-ink"
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     void close(t);
                   }}
-                >
-                  ×
-                </button>
+                />
               </div>
             );
           })}
         </div>
-        <button className={btn + on(state.split)} onClick={() => setState(toggleSplit)} title="Fenster teilen: zwei PDFs nebeneinander">Teilen</button>
-        <button className={btn + on(settings.auto)} aria-pressed={settings.auto} onClick={() => updateSettings({ ...settings, auto: !settings.auto })}
-          title={`Automatisch wechseln: Stift zeichnet mit dem Stift-Werkzeug (Punkt), Maus wählt aus und tippt (Rahmen) – ${settings.auto ? "an" : "aus"}`}>⇄</button>
-        <button className={btn + on(showSettings)} onClick={() => setShowSettings((s) => !s)} title="Stifttasten und Druck">Stift …</button>
+        <IconBtn icon={Columns2} label={T.split} className={btn + on(state.split)} aria-pressed={state.split} onClick={() => setState(toggleSplit)} />
+        <IconBtn icon={ArrowLeftRight} label={T.auto} className={btn + on(settings.auto)} aria-pressed={settings.auto}
+          onClick={() => updateSettings({ ...settings, auto: !settings.auto })} />
+        <IconBtn icon={Gear} label={T.settings} className={btn + on(showSettings)} aria-pressed={showSettings} onClick={() => setShowSettings((s) => !s)} />
         {error && <span className="text-sm text-red-400">{error}</span>}
         {showSettings && (
           <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
+            <div className="flex items-center justify-between gap-2">
+              {T.view}
+              <div className="flex gap-1" role="radiogroup" aria-label={T.view}>
+                {([["light", Sun, T.light], ["dark", Moon, T.dark], ["system", Monitor, T.system]] as const).map(([k, icon, l]) => (
+                  <IconBtn key={k} icon={icon} label={l} role="radio" aria-checked={settings.theme === k} className={btn + on(settings.theme === k)}
+                    onClick={() => updateSettings({ ...settings, theme: k })} />
+                ))}
+              </div>
+            </div>
             {(["lasso", "eraser"] as const).map((k) => (
               <div key={k} className="flex items-center justify-between gap-2">
-                <span>{k === "lasso" ? "Auswahl" : "Radierer"}: <span className="font-mono text-xs text-ink">{describe(settings[k])}</span></span>
-                <button className={btn + on(capture === k)} onClick={() => setCapture(capture === k ? undefined : k)}>
-                  {capture === k ? "Taste jetzt drücken …" : "Ändern"}
-                </button>
+                <span>{k === "lasso" ? T.keyLasso : T.keyEraser}: <span className="font-mono text-xs text-ink">{capture === k ? T.pressKey : describe(settings[k])}</span></span>
+                <IconBtn icon={Keyboard} label={T.learn} className={btn + on(capture === k)} aria-pressed={capture === k}
+                  onClick={() => setCapture(capture === k ? undefined : k)} />
               </div>
             ))}
             <label className="flex flex-col gap-1">
-              Druck-Maximum: <span className="font-mono text-xs text-ink">{settings.pressureMax.toFixed(2)}</span>
+              {T.pressure}: <span className="font-mono text-xs text-ink">{settings.pressureMax.toFixed(2)}</span>
               <input
                 type="range" min={0.3} max={1} step={0.05} value={settings.pressureMax}
                 onChange={(e) => updateSettings({ ...settings, pressureMax: Number(e.target.value) })}
@@ -288,27 +356,10 @@ export default function App() {
       </header>
       {/* Alle Dokumente bleiben gemountet (eigener Undo/Zoom/Scroll); Position per CSS-order, damit
           Wechsel zwischen den Hälften nichts neu mountet. */}
-      <div ref={split} className="flex min-h-0 flex-1">
-        {tabs.map((t) => {
-          const p = paneOf(t.id);
-          const init = inits.get(t.id);
-          return init && (
-            <DocView
-              key={t.id}
-              id={t.id}
-              path={t.path}
-              init={init}
-              visible={p !== undefined}
-              active={p === state.active}
-              marked={state.split && p === state.active}
-              settings={settings}
-              style={paneStyle(p ?? 0)}
-              apis={apis}
-              onDirty={onDirty}
-              onFocus={() => p !== undefined && setState((s) => focus(s, p))}
-            />
-          );
-        })}
+      <div ref={split} className="relative flex min-h-0 flex-1" style={{ "--r": ratio, "--r2": 1 - ratio } as React.CSSProperties}>
+        {tabs.map((t) => view(t, paneOf(t.id) ?? 0, false))}
+        {/* gleiche PDF in beiden Hälften: zweite Ansicht, teilt Undo/Speicherstand über den Dokument-Speicher */}
+        {state.split && panes[0] !== undefined && panes[0] === panes[1] && tabs.filter((t) => t.id === panes[1]).map((t) => view(t, 1, true))}
         {([0, 1] as const).filter((p) => (p === 0 || state.split) && panes[p] === undefined).map((p) => (
           <div
             key={`leer-${p}`}
@@ -317,19 +368,32 @@ export default function App() {
             className={`grid min-w-0 place-items-center border-t-2 text-center text-ink-2 ${state.split && state.active === p ? "border-accent" : "border-transparent"}`}
           >
             <p>
-              Keine PDF geöffnet
+              {T.empty}
               <br />
-              <span className="text-sm text-ink-3">Strg+O oder Datei hierher ziehen</span>
+              <span className="text-sm text-ink-3">{T.emptyHint}</span>
             </p>
           </div>
         ))}
         {state.split && (
           <div
-            className="w-1.5 shrink-0 cursor-col-resize bg-line hover:bg-accent"
+            role="separator"
+            aria-label={T.divider}
+            className="w-2 shrink-0 cursor-col-resize bg-line select-none hover:bg-accent"
             style={{ order: 1, touchAction: "none" }}
-            title="Trennlinie verschieben"
-            onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+            title={T.divider}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
             onPointerMove={dividerMove}
+            onPointerUp={dividerUp}
+            onLostPointerCapture={() => setRatio(Number(split.current?.style.getPropertyValue("--r")) || ratio)}
+          />
+        )}
+        {drop?.pane !== undefined && (
+          <div
+            className="pointer-events-none absolute inset-y-0 z-30 border-2 border-accent bg-accent-soft opacity-60"
+            style={drop.pane === 0 ? { left: 0, width: `${ratio * 100}%` } : { left: `${ratio * 100}%`, right: 0 }}
           />
         )}
       </div>

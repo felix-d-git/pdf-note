@@ -316,6 +316,15 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let _ = ocr::TESSDATA.set(app.path().resource_dir()?.join("tessdata"));
+            // Fenster startet versteckt und zeigt sich nach dem ersten Bild mit der gewählten Ansicht (kein Aufblitzen);
+            // Rückfall, falls die Oberfläche nicht lädt
+            let w = app.get_webview_window("main");
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                if let Some(w) = w {
+                    let _ = w.show();
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links])

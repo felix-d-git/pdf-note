@@ -64,6 +64,18 @@ export function toggleSplit(s: Tabs): Tabs {
   return { ...s, split: true, active: second ? 1 : 0, panes: [s.panes[0], second?.id] };
 }
 
+/**
+ * Tab in Hälfte `p` ziehen (Split View). Kommt er aus der anderen Hälfte, tauschen beide Hälften ihre Dokumente;
+ * `both` (Strg) oder leere Zielhälfte → dieselbe PDF in beiden Hälften (zwei Ansichten eines Dokuments).
+ */
+export function toPane(s: Tabs, id: number, p: Pane, both = false): Tabs {
+  if (!s.split) return show(s, id);
+  const prev = s.panes[p];
+  let next = setPane({ ...s, active: p }, p, id);
+  if (!both && prev !== undefined && s.panes[other(p)] === id) next = setPane(next, other(p), prev);
+  return next;
+}
+
 export const focus = (s: Tabs, p: Pane): Tabs => (s.split && s.active !== p ? { ...s, active: p } : s);
 
 export function moveTab(s: Tabs, from: number, to: number): Tabs {
