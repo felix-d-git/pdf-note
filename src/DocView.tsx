@@ -4,10 +4,10 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSPrope
 import { z } from "zod";
 import {
   afterDelete, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  layerOf, moveItem, newId, textRect, toData, type Item, type Layer, type Preset,
+  layerOf, moveItem, newId, textRect, toData, unionBox, type Item, type Layer, type Preset,
 } from "./ink";
 import * as ol from "./outline";
-import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
+import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -378,10 +378,13 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     return [page, clamp(((vr.left + vr.right) / 2 - pr.left) / zoom, w), clamp(((vr.top + vr.bottom) / 2 - pr.top) / zoom, h), w, h];
   }
 
-  function paste() {
+  /** `at`: linke obere Ecke an diese Stelle (Rechtsklick-Menü), sonst 10 pt versetzt */
+  function paste(at?: [page: number, x: number, y: number]) {
     if (!clip.items.length || !sizes.length) return;
-    const page = Math.min(current, sizes.length - 1);
-    const pasted = clip.items.map((it) => ({ ...moveItem(it, 10, 10), id: newId(), page }));
+    const page = at?.[0] ?? Math.min(current, sizes.length - 1);
+    const b = unionBox(clip.items);
+    const [dx, dy] = at ? [at[1] - b.x0, at[2] - b.y0] : [10, 10];
+    const pasted = clip.items.map((it) => ({ ...moveItem(it, dx, dy), id: newId(), page }));
     clip.items = pasted; // nochmal einfügen → weiter versetzt
     place(pasted);
   }
@@ -398,17 +401,18 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     place([imageItem(page, b64, img.naturalWidth * 0.75, img.naturalHeight * 0.75, x, y, 0.8 * Math.min(w, h))]);
   }
 
-  function insertText(text: string) {
+  /** ohne `at` mittig in der Ansicht, mit `at` linke obere Ecke dort */
+  function insertText(text: string, at?: [page: number, x: number, y: number]) {
     const c = viewCenter();
     const ctx = document.createElement("canvas").getContext("2d");
     if (!c || !ctx) return;
-    const [page, x, y] = c;
+    const [page, x, y] = at ?? c;
     const t = text.replace(/\r\n?/g, "\n").slice(0, 100_000);
     const points = textRect(ctx, t, pal.text, 0, 0);
     const [, [bw, bh] = [0, 0]] = points;
     place([moveItem({
       id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t,
-    }, x - bw / 2, y - bh / 2)]);
+    }, at ? x : x - bw / 2, at ? y : y - bh / 2)]);
   }
 
   function insertShape(kind: Item["kind"]) {
@@ -422,11 +426,11 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     }]);
   }
 
-  async function insertImageFile() {
+  async function insertImageFile(at?: [page: number, x: number, y: number]) {
     const p = await openDialog({ filters: [{ name: "Bild", extensions: ["png", "jpg", "jpeg"] }] });
     if (typeof p !== "string") return;
     try {
-      await insertImage(await invoke<string>("read_image", { path: p }));
+      await insertImage(await invoke<string>("read_image", { path: p }), at);
     } catch (e) {
       setError(`Bild einfügen fehlgeschlagen: ${String(e)}`);
     }
@@ -462,6 +466,93 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     edit((its) => its.filter((it) => !ids.has(it.id)));
     clearSel();
   };
+
+  /** Kopieren/Ausschneiden (Strg+C/X und Menü): interne Zwischenablage füllen; Ergebnis = Text fürs System, null = nichts */
+  const copySel = (cut: boolean): string | null => {
+    // markierter PDF-Text (auch OCR) → nur Text; Ausschneiden geht nicht
+    if (!selItems.length && textSel?.text && textSel.v === version) {
+      clip.text = null;
+      return textSel.text;
+    }
+    if (!selItems.length) return null;
+    clip.items = selItems;
+    clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
+    if (cut) removeSel(true); // Original-Objekte nicht in der Zwischenablage → nicht ausschneiden
+    return clip.text;
+  };
+
+  /** Einfügen aus dem Menü (kein paste-Event): System-Zwischenablage lesen wie Strg+V; ohne Leserecht die interne */
+  async function pasteAt(at?: [page: number, x: number, y: number]) {
+    let list: ClipboardItems;
+    try {
+      list = await navigator.clipboard.read();
+    } catch {
+      return paste(at);
+    }
+    for (const ci of list) {
+      const type = ci.types.find((t) => t.startsWith("image/"));
+      if (type) {
+        try {
+          return await insertImage(await blobToB64(await ci.getType(type)), at);
+        } catch (err) {
+          return setError(`Bild einfügen fehlgeschlagen: ${String(err)}`);
+        }
+      }
+      if (!ci.types.includes("text/plain")) continue;
+      const text = await (await ci.getType("text/plain")).text();
+      if (clip.items.length && text === clip.text) return paste(at);
+      if (text.trim()) return insertText(text, at);
+    }
+    paste(at);
+  }
+
+  /** Nach vorn/hinten = Zeichenreihenfolge; nur unter Objekten derselben Seite und Ebene */
+  function order(front: boolean) {
+    const [one] = selItems;
+    if (!one) return;
+    const ids = new Set(selItems.map((it) => it.id));
+    const peer = (it: Item) => !ids.has(it.id) && it.page === one.page && layerOf(it) === layerOf(one);
+    const reorder = (all: Item[]) => {
+      const rest = all.filter((it) => !ids.has(it.id));
+      const k = front ? rest.findLastIndex(peer) + 1 : rest.findIndex(peer);
+      return [...rest.slice(0, k), ...all.filter((it) => ids.has(it.id)), ...rest.slice(k)];
+    };
+    // schon ganz vorn/hinten (oder allein) → kein leerer Undo-Schritt
+    if (!items.some(peer) || reorder(items).every((it, i) => it === items[i])) return;
+    edit(reorder);
+  }
+
+  function pageCmd(page: number, c: Cmd, at?: [number, number]) {
+    const where = at && ([page, ...at] as [number, number, number]);
+    switch (c) {
+      case "cut":
+      case "copy": {
+        const t = copySel(c === "cut");
+        if (t !== null) void navigator.clipboard.writeText(t).catch(() => {});
+        break;
+      }
+      case "paste": return void pasteAt(where);
+      case "delete": return removeSel();
+      case "front":
+      case "back": return order(c === "front");
+      case "image": return void insertImageFile(where);
+      case "space": return chooseTool("space");
+      case "notes": return switchLayer(3);
+    }
+  }
+
+  /** Kontextmenü-Taste/Umschalt+F10: Menü an der Auswahl bzw. Ansichtsmitte (synthetisches contextmenu an der Seite) */
+  function openMenu() {
+    const c = viewCenter();
+    const page = selection.page >= 0 ? selection.page : c?.[0] ?? 0;
+    const el = scroller.current?.querySelector(`[data-page="${page}"]`);
+    if (!el) return;
+    const b = selItems.length ? unionBox(selItems) : null;
+    const [w, h] = sizes[page] ?? A4;
+    const [x, y] = b ? [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2] : c?.[0] === page ? [c[1], c[2]] : [w / 2, h / 2];
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + x * zoom, clientY: r.top + y * zoom }));
+  }
 
   useEffect(() => {
     apis.set(id, { save, dropImage });
@@ -529,6 +620,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           setTextSel(null);
         },
         i: () => void insertImageFile(),
+        contextmenu: openMenu,
+        ...(e.shiftKey ? { f10: openMenu } : {}),
         ...Object.fromEntries(TOOL_LABELS.flatMap(([t, , , key]) => key.split("/").map((k) => [k, () => chooseTool(t)]))),
         // Pfeiltasten schieben eigene ausgewählte Objekte (Umschalt = 10 pt)
         ...(selItems.length ? Object.fromEntries(([["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, -1], ["arrowdown", 0, 1]] as const)
@@ -546,18 +639,10 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     };
     const onCopy = (e: ClipboardEvent) => {
       if (inField(e.target) || !e.clipboardData) return;
-      // markierter PDF-Text (auch OCR) → nur Text; Ausschneiden geht nicht
-      if (!selItems.length && textSel?.text && textSel.v === version) {
-        e.preventDefault();
-        clip.text = null;
-        return e.clipboardData.setData("text/plain", textSel.text);
-      }
-      if (!selItems.length) return;
+      const t = copySel(e.type === "cut");
+      if (t === null) return;
       e.preventDefault();
-      clip.items = selItems;
-      clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
-      e.clipboardData.setData("text/plain", clip.text);
-      if (e.type === "cut") removeSel(true); // Original-Objekte nicht in der Zwischenablage → nicht ausschneiden
+      e.clipboardData.setData("text/plain", t);
     };
     // Reihenfolge: Bild → eigene Objekte (Text unverändert seit dem Kopieren) → Text als Textfeld
     const onPaste = (e: ClipboardEvent) => {
@@ -737,6 +822,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
             const v = e.target.value;
             if (v === "image") void insertImageFile();
             else if (v === "text") insertText("Text");
+            else if (v === "space") chooseTool("space");
             else if (v) insertShape(v as Item["kind"]);
           }}
         >
@@ -744,6 +830,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           <option value="image">Bild-Datei …</option>
           <option value="text">Textfeld</option>
           {SHAPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          <option value="space">Platz einfügen (Linie ziehen)</option>
         </select>
         {sep}
         {palette.map((p) => (
@@ -1060,6 +1147,11 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 }}
                 onJump={goTo}
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
+                onCmd={(c, at) => pageCmd(i, c, at)}
+                onSpace={(moved) => {
+                  if (moved.length) edit((all) => all.map((it) => moved.find((n) => n.id === it.id) ?? it));
+                  setTools(afterShape);
+                }}
               />
             ))}
           </div>
