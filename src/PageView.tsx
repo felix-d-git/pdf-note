@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
-  box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
+  box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
   rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset,
 } from "./ink";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
@@ -84,6 +84,8 @@ const HOLD_TOL = 2; // pt Bewegung, die das Ruhen nicht unterbricht
 const ERASER_PX = 8; // Radierer-Radius in Bildschirmpixeln
 const css = (c: [number, number, number]) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
 const hex = (c: [number, number, number]) => `#${c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`;
+const rgb = (v: string) => [1, 3, 5].map((k) => parseInt(v.slice(k, k + 2), 16) / 255) as [number, number, number];
+const ICON = "grid h-7 min-w-7 place-items-center rounded-xs px-1 text-sm text-ink-2 hover:bg-sunken hover:text-ink";
 /** Ersatz-Schriftfamilie für die Absatz-Textarea */
 const family = (font: string) => /mono|courier/i.test(font) ? "monospace" : /sans|helvet|arial|calibri/i.test(font) ? FONT : "serif";
 
@@ -106,7 +108,9 @@ type Gesture =
   /** Marker auf PDF-Text: folgt den Zeilen von a bis b */
   | { t: "hl"; a: Pos; b: Pos; item: Item }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
-  | { t: "field" | "link"; x: number; y: number; dx: number; dy: number };
+  | { t: "field" | "link"; x: number; y: number; dx: number; dy: number }
+  /** Platz einfügen: Linie bei `y`, um `dy` gezogen */
+  | { t: "space"; y: number; dy: number };
 
 /** Anker-Link der Seite (Backend `links`); `page` −1 = externer Link, nur Platzhalter für die Nummerierung */
 const Anchor = z.object({ rect: z.tuple([z.number(), z.number(), z.number(), z.number()]), page: z.number(), y: z.number() });
@@ -181,9 +185,15 @@ export interface PageProps {
   onLinkTo: (x: number, y: number) => void;
   onJump: (page: number, y: number) => void;
   onUnlink: (n: number) => void;
+  /** Mini-Leiste/Rechtsklick-Menü; `at` = Stelle in pt (Einfügen/Bild hier) */
+  onCmd: (cmd: Cmd, at?: [number, number]) => void;
+  /** Platz einfügen fertig: verschobene Objekte (leer = nichts verschoben), ein Schritt */
+  onSpace: (moved: Item[]) => void;
 }
 
 export interface OrigEdit { index: number; matrix?: number[] }
+/** Aktionen aus Mini-Leiste/Rechtsklick-Menü, die DocView ausführt; `notes` = auf Ebene 3 wechseln (Textfeld hier auf Ebene 1) */
+export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "notes";
 
 /** Griffleiste oben (verschieben, Klick wählt als Objekt) + Breitengriff rechts; Attributwert = Id/Absatz */
 const grips = (grip: string, width: string, id: number) => (
@@ -301,14 +311,35 @@ export function PageView(p: PageProps) {
   // Zuschnitt-Modus: id des eigenen Bilds; verschwindet es (Undo, Entf), endet der Modus von selbst
   const [crop, setCrop] = useState<number>();
   const cropIt = items.find((it) => it.id === crop && it.kind === "image");
+  // Rechtsklick-Menü an Stelle (pt); `on` = worauf geklickt wurde
+  const [menu, setMenu] = useState<{ x: number; y: number; on: "sel" | "empty" | "text" }>();
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-menu]")) && setMenu(undefined));
+    const key = (e: KeyboardEvent) => void (e.key === "Escape" && setMenu(undefined));
+    addEventListener("pointerdown", close, true);
+    addEventListener("keydown", key);
+    return () => {
+      removeEventListener("pointerdown", close, true);
+      removeEventListener("keydown", key);
+    };
+  }, [menu]);
+  // Zahnrad der Mini-Leiste: zu, sobald sich die Auswahl ändert
+  const [gear, setGear] = useState(false);
+  const [gearKey, setGearKey] = useState(selected.join());
+  if (gearKey !== selected.join()) {
+    setGearKey(selected.join());
+    setGear(false);
+  }
+  const spaced = gs?.t === "space" ? makeSpace(items, index, gs.y, gs.dy, size[1]) : [];
   const transform = (it: Item) =>
-    gs?.t === "tmove" && gs.id === it.id ? moveItem(it, gs.dx, gs.dy)
+    spaced.find((s) => s.id === it.id) ?? (gs?.t === "tmove" && gs.id === it.id ? moveItem(it, gs.dx, gs.dy)
     : gs?.t === "twidth" && gs.id === it.id ? (({ x0, y0, y1 }) => ({ ...it, points: [[x0, y0, 0.5], [x0 + gs.w, y1, 0.5]] as InkPoint[] }))(box(it))
     : !selected.includes(it.id) ? it
     : gs?.t === "move" ? moveItem(it, gs.dx, gs.dy)
     : gs?.t === "scale" ? scaleItem(it, gs.ox, gs.oy, gs.sx, gs.sy)
     : gs?.t === "rot" ? rotateItem(it, gs.cx, gs.cy, gs.deg)
-    : it;
+    : it);
   const shown = () => {
     const c = g.current;
     const out = items
@@ -420,6 +451,7 @@ export function PageView(p: PageProps) {
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
     const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
     if (!t || g.current) return;
+    setMenu(undefined);
     owner.current = e.pointerId;
     e.stopPropagation();
     const q = pt(e);
@@ -501,6 +533,9 @@ export function PageView(p: PageProps) {
       // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck, Stift ein Lasso
       g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false, fresh } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen", fresh };
       rerender();
+    } else if (t === "space") {
+      g.current = { t: "space", y, dy: 0 };
+      rerender();
     } else {
       g.current = { t: "shape", item: { ...make(t, preset, q, false), points: [q, q] } };
     }
@@ -563,6 +598,9 @@ export function PageView(p: PageProps) {
       case "twidth":
       case "pwidth":
         c.w = Math.max(20, c.w0 + x - c.x);
+        break;
+      case "space":
+        c.dy = y - c.y;
         break;
       case "fsel": {
         const { x0, y0, x1 } = box(c.it);
@@ -694,6 +732,9 @@ export function PageView(p: PageProps) {
       case "hl":
         if (c.item.points.length) p.onAdd(c.item);
         break;
+      case "space":
+        p.onSpace(e.type === "pointercancel" ? [] : makeSpace(items, index, c.y, c.dy, size[1]));
+        break;
     }
     rerender();
   };
@@ -742,7 +783,7 @@ export function PageView(p: PageProps) {
     if (pe.w !== undefined) edit.width = pe.w;
     if (font === "sans" || font === "serif" || font === "mono") edit.font = font;
     if (Number.isFinite(size) && Math.abs(size - para.size) > 0.05) edit.size = size;
-    if (/^#[0-9a-f]{6}$/i.test(color) && color !== hex(para.color)) edit.color = [1, 3, 5].map((k) => parseInt(color.slice(k, k + 2), 16) / 255) as TextEdit["color"];
+    if (/^#[0-9a-f]{6}$/i.test(color) && color !== hex(para.color)) edit.color = rgb(color);
     if (text !== para.text || Object.keys(edit).length > 2) p.onText(edit);
   };
 
@@ -759,6 +800,50 @@ export function PageView(p: PageProps) {
   const lasso = gs?.t === "lasso" ? gs.poly : null;
   const ts = gs?.t === "tsel" ? gs : p.textSel;
   const tsRects = ts && clist.length ? selRange(clist, ts.a, ts.b).rects : [];
+  // ausgewähltes Textfeld mit Auswahl-Werkzeug: Klick setzt den Cursor → I-Cursor statt Vier-Pfeil
+  const textOnly = tool === "lasso" && sel.length === 1 && sel[0]?.kind === "text";
+  const cursor = gs?.t === "scale" ? `${HANDLE_CURSOR[gs.h] ?? "move"}-resize` : gs?.t === "rot" ? "grabbing"
+    : (overSel && !textOnly) || gs?.t === "move" || gs?.t === "tmove" || gs?.t === "para" ? "move"
+    : gs?.t === "twidth" || gs?.t === "pwidth" ? "ew-resize"
+    : gs?.t === "tsel" || gs?.t === "fsel" ? "text"
+    : gs?.t === "space" || tool === "space" ? "row-resize"
+    : tool === "lasso" ? (hovT !== undefined || (hovP ?? -1) >= 0 || overSel ? "text" : "default")
+    : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair";
+  const own = sel.length > 0 && sel.every((it) => it.id >= 0);
+  /** Zahnrad/Text-Größe/-Farbe auf die eigene Auswahl (Bilder ausgenommen); Text wird neu umbrochen */
+  const restyle = (f: { size?: number; color?: [number, number, number] }) => {
+    const ctx = ctx2d();
+    p.onReplace(sel.filter((it) => it.id >= 0 && it.kind !== "image").map((it) => {
+      const n = { ...it, ...f };
+      if (it.kind !== "text" || !ctx?.measureText) return n;
+      const { x0, y0 } = box(it);
+      return { ...n, points: textRect(ctx, n.text, n.size, x0, y0, fixedWidth(ctx, it)) };
+    }));
+  };
+  // natives `change` (Loslassen/Schließen/Enter) statt Reacts `input`: ein Undo-Schritt je Änderung, nicht je Mausbewegung
+  useEffect(() => {
+    const el = ref.current;
+    const on = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof HTMLInputElement) || !t.dataset.restyle) return;
+      if (t.dataset.restyle === "color") restyle({ color: rgb(t.value) });
+      else if (Number(t.value) > 0) restyle({ size: Number(t.value) });
+    };
+    el?.addEventListener("change", on);
+    return () => el?.removeEventListener("change", on);
+  });
+  const rotate90 = () => {
+    const b = unionBox(sel);
+    const [cx, cy] = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
+    commit((it) => rotateItem(it, cx, cy, 90), rotMatrix(cx, cy, 90));
+  };
+  const cmd = (c: Cmd, at?: [number, number]) => () => {
+    setMenu(undefined);
+    p.onCmd(c, at);
+  };
+  const styled = sel.filter((it) => it.id >= 0 && it.kind !== "image");
+  const allText = sel.length > 0 && sel.every((it) => it.kind === "text" && it.id >= 0);
+  const [first] = sel;
   const hoverD = hover && (hover.tool === "eraser" ? 2 * ERASER_PX
     : hover.tool === "pen" ? preset.size * zoom : hover.tool === "marker" ? marker.size * zoom : 0);
 
@@ -767,9 +852,7 @@ export function PageView(p: PageProps) {
       ref={ref}
       data-page={index}
       className="relative mx-auto bg-white shadow-raised"
-      style={{ width: w, height: h, touchAction: "none", cursor: overSel || gs?.t === "move" || gs?.t === "tmove" || gs?.t === "para" ? "move"
-        : gs?.t === "twidth" || gs?.t === "pwidth" ? "ew-resize"
-        : tool === "lasso" ? (hovT !== undefined || (hovP ?? -1) >= 0 ? "text" : "default") : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair" }}
+      style={{ width: w, height: h, touchAction: "none", cursor }}
       onPointerDown={down}
       onMouseDown={(e) => {
         if (textDown.current) e.preventDefault();
@@ -782,7 +865,19 @@ export function PageView(p: PageProps) {
         setHover(undefined);
         setOverSel(false);
       }}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        // Stift-Langdruck/Finger öffnen kein Menü; synthetisch (Kontextmenü-Taste) hat keinen pointerType
+        const pe = e.nativeEvent as Partial<PointerEvent>;
+        if (g.current || (pe.pointerType && pe.pointerType !== "mouse")) return;
+        const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
+        const [x, y] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
+        if (tsRects.some(([x0, y0, x1, y1]) => inBox({ x0, y0, x1, y1 }, x, y))) return setMenu({ x, y, on: "text" });
+        if (sel.length && (!e.isTrusted || inBox(unionBox(sel), x, y))) return setMenu({ x, y, on: "sel" });
+        const hit = p.layer === 1 ? smallestAt(origs, x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, 4 / zoom + 1));
+        if (hit) p.onSelect(index, [hit.id]);
+        setMenu({ x, y, on: hit ? "sel" : "empty" });
+      }}
       onDoubleClick={(e) => {
         const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
         const [it] = sel;
@@ -821,6 +916,75 @@ export function PageView(p: PageProps) {
               className="pointer-events-auto absolute -top-6 left-1/2 h-3 w-3 -translate-x-1/2 cursor-grab rounded-full border border-white bg-accent" />
           )}
         </div>
+      )}
+      {/* Mini-Leiste: über der Auswahl (über dem Drehgriff), ohne Platz darüber darunter; beim Ziehen weg */}
+      {sb && !cropIt && !gs && !edit && !menu && (() => {
+        const above = sb.y0 * zoom - (rotatable ? 30 : 6) - 34;
+        return (
+          <div data-pedit data-menu role="toolbar" aria-label="Auswahl"
+            className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-sm border border-line bg-surface p-0.5 shadow-raised"
+            style={{ left: Math.min(Math.max((sb.x0 + sb.x1) / 2 * zoom, 120), w - 120), top: above >= 0 ? above : Math.min(sb.y1 * zoom + 8, h - 34) }}>
+            {own && <button title="Ausschneiden" className={ICON} onClick={cmd("cut")}>✂</button>}
+            {own && <button title="Kopieren" className={ICON} onClick={cmd("copy")}>⧉</button>}
+            <button title="Löschen" className={ICON} onClick={cmd("delete")}>🗑</button>
+            {allText && first && <>
+              <input type="number" min={4} max={200} step={1} title="Schriftgröße" defaultValue={first.size} key={`s${first.id}${first.size}`}
+                data-restyle="size"
+                className="h-7 w-12 rounded-xs border border-line bg-surface px-1 text-sm" />
+              <input type="color" title="Schriftfarbe" defaultValue={hex(first.color)} key={`c${first.id}${hex(first.color)}`}
+                data-restyle="color" className="h-7 w-7 cursor-pointer" />
+            </>}
+            {sel.length === 1 && first?.kind === "image" && first.id >= 0 && <button title="Zuschneiden" className={ICON} onClick={() => setCrop(first.id)}>⛶</button>}
+            {rotatable && <button title="Drehen 90°" className={ICON} onClick={rotate90}>⟳</button>}
+            {styled.length > 0 && !allText && styled.length === sel.length && (
+              <span className="relative">
+                <button title="Farbe/Stärke" className={ICON} aria-expanded={gear} onClick={() => setGear(!gear)}>⚙</button>
+                {gear && first && (
+                  <div className="absolute top-8 left-0 flex items-center gap-2 rounded-sm border border-line bg-surface p-2 shadow-raised">
+                    <input type="range" min={0.5} max={30} step={0.5} title="Stärke" defaultValue={first.size} key={`g${first.id}${first.size}`}
+                      data-restyle="size" className="w-28" />
+                    <input type="color" title="Farbe" defaultValue={hex(first.color)} key={`h${first.id}${hex(first.color)}`}
+                      data-restyle="color" className="h-7 w-7 cursor-pointer" />
+                  </div>
+                )}
+              </span>
+            )}
+          </div>
+        );
+      })()}
+      {/* Rechtsklick-Menü: nur Icons mit Tooltip */}
+      {menu && (
+        <div data-pedit data-menu role="menu"
+          className="absolute z-30 flex items-center gap-0.5 rounded-sm border border-line bg-surface p-0.5 shadow-raised"
+          style={{ left: Math.max(0, Math.min(menu.x * zoom, w - 200)), top: Math.max(0, Math.min(menu.y * zoom, h - 36)) }}>
+          {menu.on === "text" && <button role="menuitem" title="Kopieren" className={ICON} onClick={cmd("copy")}>⧉</button>}
+          {menu.on === "sel" && <>
+            {own && <button role="menuitem" title="Ausschneiden" className={ICON} onClick={cmd("cut")}>✂</button>}
+            {own && <button role="menuitem" title="Kopieren" className={ICON} onClick={cmd("copy")}>⧉</button>}
+            <button role="menuitem" title="Einfügen" className={ICON} onClick={cmd("paste", [menu.x, menu.y])}>📋</button>
+            <button role="menuitem" title="Löschen" className={ICON} onClick={cmd("delete")}>🗑</button>
+            {own && <button role="menuitem" title="Nach vorn" className={ICON} onClick={cmd("front")}>⤒</button>}
+            {own && <button role="menuitem" title="Nach hinten" className={ICON} onClick={cmd("back")}>⤓</button>}
+          </>}
+          {menu.on === "empty" && <>
+            <button role="menuitem" title="Einfügen an dieser Stelle" className={ICON} onClick={cmd("paste", [menu.x, menu.y])}>📋</button>
+            <button role="menuitem" title="Textfeld hier" className={ICON} onClick={() => {
+              setMenu(undefined);
+              // Ebene 1 hat keine eigenen Textfelder → auf Notizen (Ebene 3) wechseln
+              if (p.layer === 1) p.onCmd("notes");
+              caret.current = [0, 0];
+              setEdit({ item: make("text", preset, [menu.x, menu.y, 0.5], false), isNew: true });
+            }}>T</button>
+            <button role="menuitem" title="Bild hier" className={ICON} onClick={cmd("image", [menu.x, menu.y])}>🖼</button>
+            <button role="menuitem" title="Platz einfügen" className={ICON} onClick={cmd("space")}>↕</button>
+          </>}
+        </div>
+      )}
+      {gs?.t === "space" && (
+        <svg className="pointer-events-none absolute inset-0" width={w} height={h}>
+          <line x1={0} x2={w} y1={gs.y * zoom} y2={gs.y * zoom} stroke="var(--accent)" strokeDasharray="4 3" />
+          <line x1={0} x2={w} y1={(gs.y + gs.dy) * zoom} y2={(gs.y + gs.dy) * zoom} stroke="var(--accent)" />
+        </svg>
       )}
       {lasso && (
         <svg className="pointer-events-none absolute inset-0" width={w} height={h}>

@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { DEFAULT_PRESET, type Item, type Layer } from "./ink";
+import { box, DEFAULT_PRESET, type Item, type Layer } from "./ink";
 import { PageView } from "./PageView";
 import { DEFAULT_SETTINGS, type Tool } from "./settings";
 
@@ -52,6 +52,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
+      onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
       layer={layer} textSel={null} onTextSel={() => {}}
     />
   );
@@ -246,4 +247,23 @@ test("Doppelklick auf Bild: Zuschneiden, Enter übernimmt, Esc bricht ab", () =>
   expect(crops).toHaveLength(1);
   expect(host.querySelector("[data-crop]")).toBeNull();
   expect(host.querySelector('[data-handle="se"]')).not.toBeNull();
+});
+
+test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seitenrand", () => {
+  const page = mount("space", 3, [obj(1, "rect", 10, 10, 100, 80), obj(2, "image", 10, 200, 100, 300), obj(3, "ink", 200, 150, 260, 400)]);
+  const tops = () => ui.added.map((it) => Math.round(box(it).y0));
+  const drag = (y0: number, y1: number) => {
+    fire(page, "pointerdown", 50, y0);
+    fire(page, "pointermove", 50, y1);
+    fire(page, "pointerup", 50, y1, 0);
+  };
+  drag(100, 150);
+  expect(tops()).toEqual([9, 250, 199]);
+  // weit nach unten: unterstes Objekt stößt an den Rand, Abstände bleiben
+  drag(100, 2000);
+  expect(Math.max(...ui.added.map((it) => box(it).y1))).toBeCloseTo(800);
+  expect(tops()).toEqual([9, 599, 548]);
+  // weit nach oben: Platz entfernen, nie über den oberen Rand
+  drag(300, -1000);
+  expect(tops()).toEqual([9, 51, 0]);
 });

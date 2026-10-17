@@ -433,3 +433,15 @@ export const afterMove = (items: Item[], from: number, to: number) =>
 /** Seite k um 90° im Uhrzeigersinn gedreht; h = Höhe vor dem Drehen. Text und Bilder bleiben waagrecht. */
 export const afterRotate = (items: Item[], k: number, h: number) =>
   items.map((it) => (it.page === k ? mapItem(it, (x, y) => [h - y, x]) : it));
+
+/**
+ * Platz einfügen: Objekte der Seite, die bei `y` oder tiefer beginnen, um `dy` verschieben (negativ = Platz entfernen).
+ * Begrenzt auf die Seite (0…h), nichts rutscht über den Rand. Liefert nur die verschobenen Objekte.
+ */
+export function makeSpace(items: Item[], page: number, y: number, dy: number, h: number): Item[] {
+  const below = items.filter((it) => it.page === page && box(it).y0 >= y);
+  if (!below.length) return [];
+  const top = Math.min(...below.map((it) => box(it).y0)), bottom = Math.max(...below.map((it) => box(it).y1));
+  const d = dy > 0 ? Math.min(dy, Math.max(0, h - bottom)) : Math.max(dy, Math.min(0, -top));
+  return d ? below.map((it) => moveItem(it, 0, d)) : [];
+}
