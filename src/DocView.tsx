@@ -3,7 +3,7 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDown, ArrowUp, ArrowUpRight, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, ClipboardPen, Eraser, File, FileCode,
-  FileImage, FileMinus, FileOutput, FilePenLine, FilePlus, Files, FileText, Grid3x3, Grip, Highlighter, ImagePlus, Link, ListIndentDecrease,
+  FileImage, FileMinus, Flame, FileOutput, FilePenLine, FilePlus, Files, FileText, Grid3x3, Grip, Highlighter, ImagePlus, Link, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, MousePointer2, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Pen, PenLine, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Shapes, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
@@ -13,7 +13,7 @@ import {
   layerOf, moveItem, newId, textRect, toData, unionBox, type Item, type Layer, type Preset,
 } from "./ink";
 import { useDoc } from "./docstore";
-import { BTN as btn, IconBtn, Menu, MenuItem, on } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem } from "./ui";
 import { T, tip } from "./i18n";
 import * as ol from "./outline";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
@@ -145,6 +145,8 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
   /** Markdown-Quelltext der aktuellen Seite (`null` = keine Markdown-Seite) und offener Editor. */
   const [md, setMd] = useState<string | null>(null);
   const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
+  // Passwort nur in diesem Zustand, verworfen beim Schließen des Dialogs
+  const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
   const scroller = useRef<HTMLDivElement>(null);
   const scrollPos = useRef({ left: 0, top: 0 });
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
@@ -190,18 +192,23 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
     }
   }
 
-  /** Speichern unter, flach: Objekte eingebrannt, nicht mehr bearbeitbar. Weitergearbeitet wird an der offenen PDF. */
+  /** Speichern unter: neue Datei, optional eingebrannt und/oder mit Passwort. Weitergearbeitet wird an der offenen PDF. */
   async function saveAs() {
-    if (busy.current) return;
-    const target = await saveDialog({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: path.replace(/\.pdf$/i, "") + "-flach.pdf" });
+    if (busy.current || !saveDlg) return;
+    const { flat, encrypt, pw, pw2 } = saveDlg;
+    const bad = encrypt ? pwProblem(pw, pw2) : undefined;
+    if (bad) return setSaveDlg({ ...saveDlg, error: bad });
+    const suffix = flat ? "-flach" : encrypt ? "-geschuetzt" : "-kopie";
+    const target = await saveDialog({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: path.replace(/\.pdf$/i, "") + suffix + ".pdf" });
     if (!target) return;
-    // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + noch im Speicher)
-    if (target.toLowerCase() === path.toLowerCase()) return setError("Flach nicht über die offene Datei speichern – anderen Namen wählen");
+    // die offene Datei bleibt unberührt: eingebrannt wären Objekte doppelt, Passwort gilt nur für die neue Datei
+    if (target.toLowerCase() === path.toLowerCase()) return setSaveDlg({ ...saveDlg, error: T.ownTarget });
     try {
-      await invoke("save_pdf", { id, items: items.map(toData), target, flat: true, force: false });
+      await invoke("save_pdf", { id, items: items.map(toData), target, flat, force: false, password: encrypt ? pw : null });
+      setSaveDlg(undefined);
       setError(undefined);
     } catch (e) {
-      setError(`Speichern unter fehlgeschlagen: ${String(e)}`);
+      setSaveDlg({ ...saveDlg, error: `Speichern unter fehlgeschlagen: ${String(e)}` });
     }
   }
 
@@ -603,7 +610,7 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
       }
       const k = e.key.toLowerCase();
       const act: Record<string, () => void> = e.ctrlKey ? {
-        s: () => void (e.shiftKey ? saveAs() : save().catch(() => {})),
+        s: () => void (e.shiftKey ? setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" }) : save().catch(() => {})),
         z: () => void travel(e.shiftKey ? hist.at + 1 : hist.at - 1),
         y: () => void travel(hist.at + 1),
         a: () => {
@@ -796,7 +803,7 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
       <div className="flex flex-wrap items-center gap-1 border-b border-line bg-surface px-3 py-1.5">
         <IconBtn icon={sideOpen ? PanelLeftClose : PanelLeftOpen} label={T.sidebar} onClick={onSide} aria-pressed={sideOpen} />
         <IconBtn icon={Save} label={T.save} keys="Strg+S" onClick={() => void save().catch(() => {})} disabled={!dirty} />
-        <IconBtn icon={FileOutput} label={T.saveFlat} keys="Strg+Umschalt+S" onClick={() => void saveAs()} />
+        <IconBtn icon={FileOutput} label={T.saveAs} keys="Strg+Umschalt+S" onClick={() => setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" })} />
         {sep}
         <IconBtn icon={Undo2} label={T.undo} keys="Strg+Z" onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} />
         <IconBtn icon={Redo2} label={T.redo} keys="Strg+Y" onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
@@ -1039,6 +1046,23 @@ export function DocView({ id, view, path, init, visible, active, marked, setting
         </nav>
         )}
         </div>}
+        {saveDlg && (
+          <Dialog title={T.saveAs} ok={T.chooseTarget} onOk={() => void saveAs()} onCancel={() => setSaveDlg(undefined)}>
+            <div className="flex gap-1">
+              <IconBtn icon={Flame} label={T.burnIn} aria-pressed={saveDlg.flat} className={btn + on(saveDlg.flat)}
+                onClick={() => setSaveDlg({ ...saveDlg, flat: !saveDlg.flat, error: undefined })} />
+              <IconBtn icon={Lock} label={T.encrypt} aria-pressed={saveDlg.encrypt} className={btn + on(saveDlg.encrypt)}
+                onClick={() => setSaveDlg({ ...saveDlg, encrypt: !saveDlg.encrypt, error: undefined })} />
+            </div>
+            {saveDlg.encrypt && <>
+              <input type="password" autoFocus aria-label={T.password} placeholder={T.password} className={FIELD} value={saveDlg.pw}
+                onChange={(e) => setSaveDlg({ ...saveDlg, pw: e.target.value, error: undefined })} />
+              <input type="password" aria-label={T.passwordRepeat} placeholder={T.passwordRepeat} className={FIELD} value={saveDlg.pw2}
+                onChange={(e) => setSaveDlg({ ...saveDlg, pw2: e.target.value, error: undefined })} />
+            </>}
+            {saveDlg.error && <div role="alert" className="text-red-400">{saveDlg.error}</div>}
+          </Dialog>
+        )}
         {mdEdit && (
           <div className="absolute inset-4 z-20 flex flex-col gap-2 rounded-xs border border-line bg-surface p-3">
             <div className="text-sm text-ink-2">

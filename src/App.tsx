@@ -12,7 +12,7 @@ import { applyTheme, captureBinding, describe, loadSettings, storeSettings, type
 import {
   activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, setDirty, show, toggleSplit, toPane, type Pane, type Tab,
 } from "./tabs";
-import { BTN as btn, IconBtn, on } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem } from "./ui";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -24,6 +24,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [capture, setCapture] = useState<"lasso" | "eraser">();
   const [error, setError] = useState<string>();
+  const [pwAsk, setPwAsk] = useState<{ file: string; wrong: boolean; done: (pw: string | null) => void }>();
   /** Tab-Ziehen: Ziel in der Tab-Leiste (`to`) oder Hälfte im Split View (`pane`) */
   const [drop, setDrop] = useState<{ from: number; to?: number; pane?: Pane }>();
   /** Seitenleiste im Split View: startet eingeklappt, Symbol holt sie zurück (ändert nicht die gespeicherte Wahl) */
@@ -82,6 +83,16 @@ export default function App() {
     void invoke("close_pdf", { id: t.id });
   }
 
+  // Passwort-Abfragen nacheinander (mehrere verschlüsselte PDFs gleichzeitig gezogen)
+  const pwQueue = useRef<Promise<unknown>>(Promise.resolve());
+  function askPassword(file: string, wrong: boolean): Promise<string | null> {
+    const p = pwQueue.current
+      .then(() => new Promise<string | null>((done) => setPwAsk({ file, wrong, done })))
+      .finally(() => setPwAsk(undefined));
+    pwQueue.current = p.catch(() => {});
+    return p;
+  }
+
   async function openPath(p: string) {
     const hit = live.current.tabs.find((t) => samePath(t.path, p));
     if (hit) return setState((s) => show(s, hit.id));
@@ -90,7 +101,21 @@ export default function App() {
     opening.current.push(p);
     const id = nextId.current++;
     try {
-      const snap = toSnap(PageState.parse(await invoke("open_pdf", { id, path: p })));
+      // Öffnen-Passwort: fragen, bis es passt oder abgebrochen wird; lebt nur im RAM (hier + Backend)
+      let password: string | null = null;
+      let state: unknown;
+      for (;;) {
+        try {
+          state = await invoke("open_pdf", { id, path: p, password });
+          break;
+        } catch (e) {
+          if (String(e) !== "PASSWORT_NOETIG" && String(e) !== "PASSWORT_FALSCH") throw e;
+          const wrong = String(e) === "PASSWORT_FALSCH";
+          password = await askPassword(fileName(p), wrong);
+          if (password === null) return;
+        }
+      }
+      const snap = toSnap(PageState.parse(state));
       setInits((m) => new Map(m).set(id, snap));
       setState((s) => openTab(s, id, p));
       setError(undefined);
@@ -397,6 +422,27 @@ export default function App() {
           />
         )}
       </div>
+      {pwAsk && <PasswordPrompt {...pwAsk} />}
     </div>
+  );
+}
+
+/** Passwort-Abfrage beim Öffnen; `done(null)` = Abbrechen (kein Tab). */
+function PasswordPrompt({ file, wrong, done }: { file: string; wrong: boolean; done: (pw: string | null) => void }) {
+  const [pw, setPw] = useState("");
+  const [bad, setBad] = useState<string>();
+  return (
+    <Dialog title={T.pwFor(file)} ok={T.unlock} onCancel={() => done(null)} onOk={() => {
+      const b = pwProblem(pw);
+      if (b) setBad(b);
+      else done(pw);
+    }}>
+      <input type="password" autoFocus aria-label={T.password} placeholder={T.password} className={FIELD} value={pw}
+        onChange={(e) => {
+          setPw(e.target.value);
+          setBad(undefined);
+        }} />
+      {(bad ?? wrong) && <div role="alert" className="text-red-400">{bad ?? T.pwWrong}</div>}
+    </Dialog>
   );
 }

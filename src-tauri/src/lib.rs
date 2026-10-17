@@ -21,6 +21,8 @@ pub struct Open {
     rev: usize,
     /// Änderungszeit + Größe beim Öffnen/letzten Speichern – Ersatz für eine Sperrdatei.
     stamp: Option<FileStamp>,
+    /// Öffnen-Passwort der Datei: nur im RAM, Strg+S verschlüsselt damit wieder (nie gespeichert/geloggt).
+    password: Option<String>,
 }
 
 type FileStamp = (std::time::SystemTime, u64);
@@ -38,30 +40,39 @@ const SNAP_LIMIT: usize = 256 << 20;
 
 impl Open {
     /// Öffnen: eigene Annotationen werden zu bearbeitbaren Objekten, fremde bleiben im Seitenbild.
-    pub fn open(path: PathBuf) -> Result<(Self, PageState), String> {
+    pub fn open(path: PathBuf, password: Option<String>) -> Result<(Self, PageState), String> {
         let stamp = file_stamp(&path);
-        let doc = pdf::open(&path)?;
+        let (doc, locked) = pdf::open_with(&path, password.as_deref())?;
+        let password = password.filter(|_| locked);
         // Rest eines abgebrochenen Speicherns (Absturz/Kill) wegräumen: keine Zusatzdatei neben der PDF
         let _ = std::fs::remove_file(pdf::tmp_path(&path));
         let n = doc.page_count().map_err(|e| e.to_string())?;
         let items = pdf::take_own(&doc, 0..n).map_err(|e| e.to_string())?;
-        let open = Open { path, doc, snaps: Vec::new(), rev: 0, stamp };
+        let open = Open { path, doc, snaps: Vec::new(), rev: 0, stamp, password };
         let sizes = open.sizes()?;
         Ok((open, PageState { sizes, rev: 0, inserted: 0, items, warning: None }))
     }
 
     /// Kopie des Arbeitsdokuments + Objekte atomar schreiben. Ohne `target` in die offene PDF.
     /// Wurde die offene PDF seit dem Öffnen/Speichern extern geändert → `EXTERN_CHANGED`, außer `force`.
-    pub fn save(&mut self, items: &[pdf::Item], target: Option<&std::path::Path>, flat: bool, force: bool) -> Result<(), String> {
+    /// Offene Datei: bleibt so verschlüsselt wie geöffnet. Anderes Ziel: AES-256 mit `password`, ohne → unverschlüsselt.
+    pub fn save(&mut self, items: &[pdf::Item], target: Option<&std::path::Path>, flat: bool, force: bool, password: Option<&str>) -> Result<(), String> {
         let own = target.is_none_or(|t| same_file(t, &self.path));
-        // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + bearbeitbar)
-        if flat && own {
-            return Err("Flach nicht über die offene Datei speichern".into());
+        // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + bearbeitbar);
+        // Passwort nur für eine neue Datei: die offene bleibt unberührt
+        if (flat || password.is_some()) && own {
+            return Err("Einbrennen/Passwort nicht über die offene Datei speichern".into());
         }
         if own && !force && file_stamp(&self.path) != self.stamp {
             return Err(EXTERN_CHANGED.into());
         }
-        pdf::save(&self.doc, items, target.unwrap_or(&self.path), flat)?;
+        let crypt = match (own, &self.password, password) {
+            (true, Some(pw), _) => pdf::Crypt::Aes256(pw),
+            (true, None, _) => pdf::Crypt::Keep,
+            (false, _, Some(pw)) => pdf::Crypt::Aes256(pw),
+            (false, _, None) => pdf::Crypt::None,
+        };
+        pdf::save(&self.doc, items, target.unwrap_or(&self.path), flat, crypt)?;
         if own {
             self.stamp = file_stamp(&self.path);
         }
@@ -174,9 +185,9 @@ fn doc(d: &mut Docs, id: u32) -> Result<&mut Open, String> {
 }
 
 #[tauri::command]
-async fn open_pdf(w: tauri::State<'_, Worker>, id: u32, path: PathBuf) -> Result<PageState, String> {
+async fn open_pdf(w: tauri::State<'_, Worker>, id: u32, path: PathBuf, password: Option<String>) -> Result<PageState, String> {
     w.run(move |d| {
-        let (open, state) = Open::open(path)?;
+        let (open, state) = Open::open(path, password)?;
         d.insert(id, open);
         Ok(state)
     })
@@ -209,8 +220,9 @@ async fn save_pdf(
     target: Option<PathBuf>,
     flat: bool,
     force: bool,
+    password: Option<String>,
 ) -> Result<(), String> {
-    w.run(move |d| doc(d, id)?.save(&items, target.as_deref(), flat, force)).await
+    w.run(move |d| doc(d, id)?.save(&items, target.as_deref(), flat, force, password.as_deref())).await
 }
 
 #[tauri::command]
@@ -341,16 +353,48 @@ mod tests {
         let path = std::env::temp_dir().join("pdf-note-unit-extern.pdf");
         let mut d = PdfDocument::new();
         d.new_page(mupdf::Size::A4).unwrap();
-        pdf::save_atomic(&d, &path).unwrap();
-        let (mut open, _) = Open::open(path.clone()).unwrap();
-        open.save(&[], None, false, false).unwrap();
-        open.save(&[], None, false, false).expect("eigenes Speichern ist keine externe Änderung");
+        pdf::save_atomic(&d, &path, pdf::Crypt::Keep).unwrap();
+        let (mut open, _) = Open::open(path.clone(), None).unwrap();
+        open.save(&[], None, false, false, None).unwrap();
+        open.save(&[], None, false, false, None).expect("eigenes Speichern ist keine externe Änderung");
         // anderes Programm schreibt die Datei
         d.new_page(mupdf::Size::A4).unwrap();
-        pdf::save_atomic(&d, &path).unwrap();
-        assert_eq!(open.save(&[], None, false, false), Err(EXTERN_CHANGED.into()));
-        open.save(&[], None, false, true).unwrap();
-        open.save(&[], None, false, false).unwrap();
+        pdf::save_atomic(&d, &path, pdf::Crypt::Keep).unwrap();
+        assert_eq!(open.save(&[], None, false, false, None), Err(EXTERN_CHANGED.into()));
+        open.save(&[], None, false, true, None).unwrap();
+        open.save(&[], None, false, false, None).unwrap();
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn passwort() {
+        let dir = std::env::temp_dir();
+        let (plain, enc, dec) = (dir.join("pdf-note-unit-pw.pdf"), dir.join("pdf-note-unit-pw-enc.pdf"), dir.join("pdf-note-unit-pw-dec.pdf"));
+        let mut d = PdfDocument::new();
+        d.new_page(mupdf::Size::A4).unwrap();
+        pdf::save_atomic(&d, &plain, pdf::Crypt::Keep).unwrap();
+        let (mut open, _) = Open::open(plain.clone(), Some("x".into())).unwrap();
+        assert!(open.password.is_none(), "unverschlüsselte Datei merkt sich kein Passwort");
+        // Passwort nur in eine neue Datei, nicht über die offene; überlang → Fehler statt Panik
+        assert!(open.save(&[], None, false, false, Some("geheim")).is_err());
+        assert!(open.save(&[], Some(&enc), false, false, Some(&"a".repeat(128))).is_err());
+        open.save(&[], Some(&enc), false, false, Some("geheim")).unwrap();
+        assert!(pdf::open_with(&plain, None).is_ok(), "offene Datei bleibt unverschlüsselt");
+        assert_eq!(pdf::open(&enc).err().as_deref(), Some(pdf::NEED_PASSWORD));
+        assert_eq!(Open::open(enc.clone(), Some("falsch".into())).err().as_deref(), Some(pdf::WRONG_PASSWORD));
+        // Öffnen mit Passwort → Undo-Stände laden ohne Passwort, Strg+S bleibt verschlüsselt (auch die Temp-Datei)
+        let (mut open, _) = Open::open(enc.clone(), Some("geheim".into())).unwrap();
+        open.page_op(&pdf::PageOp::Rotate { index: 0 }).unwrap();
+        open.load(0).unwrap();
+        open.load(1).unwrap();
+        open.save(&[], None, false, false, None).unwrap();
+        assert_eq!(pdf::open(&enc).err().as_deref(), Some(pdf::NEED_PASSWORD));
+        assert!(pdf::open_with(&enc, Some("geheim")).unwrap().1);
+        // Entschlüsseln = Speichern unter ohne Passwort
+        open.save(&[], Some(&dec), false, false, None).unwrap();
+        assert_eq!(pdf::page_sizes(&pdf::open(&dec).unwrap()).unwrap().len(), 1);
+        for p in [plain, enc, dec] {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }

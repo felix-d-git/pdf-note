@@ -3,7 +3,7 @@ const de = {
   ctrl: "Strg", shift: "Umschalt",
   newFile: "Neue Notiz-PDF", open: "Öffnen", close: "Schließen", split: "Split View",
   auto: "Gerät bestimmt Werkzeug", settings: "Einstellungen", sidebar: "Seitenleiste",
-  save: "Speichern", saveFlat: "Speichern unter (eingebrannt)", undo: "Rückgängig", redo: "Wiederholen",
+  save: "Speichern", saveAs: "Speichern unter …", undo: "Rückgängig", redo: "Wiederholen",
   pen: "Stift", marker: "Textmarker", eraser: "Radierer", lasso: "Auswahl/Text", line: "Linie", arrow: "Pfeil",
   rect: "Rechteck", ellipse: "Kreis/Ellipse", axes: "Koordinatensystem", form: "Formular", link: "Anker-Link", space: "Platz einfügen",
   locked: "bleibt aktiv", penMark: "Stift-Werkzeug",
@@ -29,6 +29,11 @@ const de = {
   unsaved: (f: string) => `„${f}" hat ungespeicherte Änderungen. Speichern?`, discard: "Verwerfen",
   extern: "Die PDF wurde seit dem Öffnen außerhalb von PDF Note geändert. Beim Speichern gehen diese Änderungen verloren.",
   saveAnyway: "Trotzdem speichern",
+  burnIn: "Einbrennen (Objekte fest in die Seite, Ebenen entfallen)", password: "Passwort", passwordRepeat: "Passwort wiederholen",
+  encrypt: "Mit Passwort verschlüsseln (AES-256)", chooseTarget: "Ziel wählen …",
+  pwRule: "Passwort: 1–127 Byte", pwMismatch: "Passwörter stimmen nicht überein", pwWrong: "Falsches Passwort – erneut eingeben",
+  pwFor: (f: string) => `„${f}" ist mit einem Passwort geschützt`, unlock: "Öffnen",
+  ownTarget: "Nicht über die offene Datei – anderen Namen wählen",
 };
 type Strings = typeof de;
 
@@ -36,7 +41,7 @@ const en: Strings = {
   ctrl: "Ctrl", shift: "Shift",
   newFile: "New note PDF", open: "Open", close: "Close", split: "Split View",
   auto: "Device picks tool", settings: "Settings", sidebar: "Sidebar",
-  save: "Save", saveFlat: "Save as (flattened)", undo: "Undo", redo: "Redo",
+  save: "Save", saveAs: "Save as …", undo: "Undo", redo: "Redo",
   pen: "Pen", marker: "Highlighter", eraser: "Eraser", lasso: "Select/Text", line: "Line", arrow: "Arrow",
   rect: "Rectangle", ellipse: "Circle/Ellipse", axes: "Coordinate system", form: "Form", link: "Anchor link", space: "Insert space",
   locked: "stays active", penMark: "Pen tool",
@@ -62,6 +67,11 @@ const en: Strings = {
   unsaved: (f: string) => `"${f}" has unsaved changes. Save?`, discard: "Discard",
   extern: "The PDF was changed outside PDF Note since it was opened. Saving discards those changes.",
   saveAnyway: "Save anyway",
+  burnIn: "Flatten (objects burned into the page, layers dropped)", password: "Password", passwordRepeat: "Repeat password",
+  encrypt: "Encrypt with password (AES-256)", chooseTarget: "Choose target …",
+  pwRule: "Password: 1–127 bytes", pwMismatch: "Passwords do not match", pwWrong: "Wrong password – try again",
+  pwFor: (f: string) => `"${f}" is password protected`, unlock: "Open",
+  ownTarget: "Not over the open file – choose another name",
 };
 
 export const STRINGS = { de, en };
