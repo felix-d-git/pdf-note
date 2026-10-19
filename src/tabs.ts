@@ -90,3 +90,13 @@ export function setDirty(s: Tabs, id: number, dirty: boolean): Tabs {
   if (s.tabs.find((t) => t.id === id)?.dirty === dirty) return s;
   return { ...s, tabs: s.tabs.map((t) => (t.id === id ? { ...t, dirty } : t)) };
 }
+
+/**
+ * Hört diese Ansicht auf Tastatur/Zwischenablage? Nur die aktive Hälfte, und nur eine Ansicht, die in einer Hälfte steht
+ * (versteckte Tabs zählen nie – sonst bekämen sie bei aktiver linker Hälfte mit: Einfügen landet im falschen Dokument).
+ * `p` = Hälfte der Ansicht, `shown` = Dokument steht in einer Hälfte.
+ */
+export const viewActive = (s: Tabs, p: Pane, shown: boolean) => shown && p === s.active;
+
+/** Dokument-Auswahl je Hälfte (Dropdown): Dokument der Hälfte `p` ersetzen; die andere Hälfte bleibt (gleiche PDF in beiden erlaubt). */
+export const pickDoc = (s: Tabs, id: number, p: Pane): Tabs => toPane(s, id, p, true);
