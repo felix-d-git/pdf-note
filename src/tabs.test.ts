@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, show, toggleSplit, toPane, type Tabs } from "./tabs";
+import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, onlyActivates, openTab, setDirty, show, toggleSplit, toPane, type Tabs } from "./tabs";
 
 const three = (): Tabs => openTab(openTab(openTab(EMPTY_TABS, 1, "C:\\a.pdf"), 2, "C:\\b.pdf"), 3, "C:\\c.pdf");
 const ids = (s: Tabs) => s.tabs.map((t) => t.id);
@@ -109,5 +109,12 @@ describe("Split", () => {
   it("focus ohne Split ändert nichts", () => {
     const s = three();
     expect(focus(s, 1)).toBe(s);
+  });
+
+  it("erster Maus-Klick in die inaktive Hälfte aktiviert nur, Stift zeichnet sofort", () => {
+    expect(onlyActivates(false, "mouse")).toBe(true);
+    expect(onlyActivates(true, "mouse")).toBe(false);
+    expect(onlyActivates(false, "pen")).toBe(false);
+    expect(onlyActivates(false, "touch")).toBe(false);
   });
 });
