@@ -210,6 +210,24 @@ const grips = (grip: string, width: string, id: number) => (
   </>
 );
 
+/** Stift-Latenz (Pointer-Event → gezeichneter Frame), nur Dev oder localStorage `pdfnote.latency`=1; Mittel/Max alle 60 Frames per console.debug */
+const lat = { n: 0, sum: 0, max: 0 };
+function logLatency(ts: number) {
+  try {
+    if (!import.meta.env.DEV && localStorage.getItem("pdfnote.latency") !== "1") return;
+  } catch {
+    return;
+  }
+  const d = performance.now() - ts;
+  lat.n++;
+  lat.sum += d;
+  lat.max = Math.max(lat.max, d);
+  if (lat.n >= 60) {
+    console.debug(`[pen] Latenz Event→Frame: Ø ${(lat.sum / lat.n).toFixed(1)} ms, max ${lat.max.toFixed(1)} ms (${lat.n} Frames)`);
+    Object.assign(lat, { n: 0, sum: 0, max: 0 });
+  }
+}
+
 export function PageView(p: PageProps) {
   const { doc, index, size, zoom, version, items, selected, tool, preset, marker, settings } = p;
   const ref = useRef<HTMLDivElement>(null);
@@ -350,17 +368,31 @@ export function PageView(p: PageProps) {
     const out = items
       .filter((it) => !(c?.t === "erase" && c.ids.has(it.id)) && it.id !== edit?.item.id)
       .map(transform);
-    return c?.t === "draw" || c?.t === "shape" || c?.t === "hl" ? [...out, c.item] : out;
+    return c?.t === "shape" || c?.t === "hl" ? [...out, c.item] : out;
   };
 
+  // Live-Strich auf eigener Canvas (desynchronized): pro Frame wird nur der laufende Strich gezeichnet, nicht die ganze Seite
+  const live = useRef<HTMLCanvasElement>(null);
+  // Vorhersage des Browsers: nur temporär gezeichnet, nie gespeichert
+  const predicted = useRef<InkPoint[]>([]);
+  const lastTs = useRef(0);
+  const drawLive = () => {
+    const lc = live.current, ctx = lc?.getContext?.("2d", { desynchronized: true });
+    if (!lc || !ctx) return;
+    const c = g.current, it = c?.t === "draw" ? c.item : undefined;
+    lc.style.mixBlendMode = it?.kind === "marker" ? "multiply" : "normal";
+    drawItems(ctx, it ? [predicted.current.length ? { ...it, points: [...it.points, ...predicted.current] } : it] : [], zoom);
+    if (it) logLatency(lastTs.current);
+  };
   const redraw = () => {
+    drawLive();
     const ctx = canvas.current?.getContext("2d");
     if (ctx) drawItems(ctx, shown(), zoom);
   };
   useEffect(redraw);
-  const schedule = () => {
+  const schedule = (fn = redraw) => {
     cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(redraw);
+    frame.current = requestAnimationFrame(fn);
   };
   // Bilder laden asynchron → danach neu zeichnen
   useEffect(() => {
@@ -368,9 +400,10 @@ export function PageView(p: PageProps) {
     return () => removeEventListener(IMAGE_LOADED, redraw);
   });
 
-  const pt = (e: PointerEvent | React.PointerEvent): InkPoint => {
+  // flat = Preset mit „Druck aus“: immer gleiche Breite
+  const pt = (e: PointerEvent | React.PointerEvent, flat = false): InkPoint => {
     const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
-    const pr = e.pointerType === "pen" ? normPressure(e.pressure, settings.pressureMax) : 0.5;
+    const pr = e.pointerType === "pen" && !flat ? normPressure(e.pressure, settings.pressureMax) : 0.5;
     return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, pr];
   };
 
@@ -526,7 +559,10 @@ export function PageView(p: PageProps) {
     if (at) {
       g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [] } };
     } else if (t === "pen" || t === "marker") {
-      const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, q, e.pointerType !== "pen");
+      const flat = t === "pen" && preset.pressure === false;
+      const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
+      predicted.current = [];
+      lastTs.current = e.timeStamp;
       g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
       armHold(x, y);
     } else if (t === "eraser") {
@@ -566,17 +602,20 @@ export function PageView(p: PageProps) {
     const evs = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const q = pt(e);
     const [x, y] = q;
+    const flat = c.t === "draw" && c.item.kind === "ink" && preset.pressure === false;
     switch (c.t) {
       case "draw":
+        lastTs.current = e.timeStamp;
+        predicted.current = c.hold?.straight || c.item.kind !== "ink" ? [] : (e.nativeEvent.getPredictedEvents?.() ?? []).map((ev) => pt(ev, flat));
         for (const ev of evs) {
-          const r = pt(ev), hd = c.hold;
+          const r = pt(ev, flat), hd = c.hold;
           if (hd?.straight) straighten(c.item, r[0], r[1]);
           else {
             c.item.points.push(r);
             if (hd && Math.hypot(r[0] - hd.x, r[1] - hd.y) > HOLD_TOL) armHold(r[0], r[1]);
           }
         }
-        return schedule();
+        return schedule(drawLive);
       case "shape":
         c.item.points[1] = q;
         return schedule();
@@ -647,6 +686,7 @@ export function PageView(p: PageProps) {
     switch (c.t) {
       case "draw":
         if (c.hold) clearTimeout(c.hold.timer);
+        predicted.current = [];
         p.onAdd(c.item);
         break;
       case "shape": {
@@ -892,6 +932,12 @@ export function PageView(p: PageProps) {
       {url && <img src={url} alt="" draggable={false} className="absolute inset-0 h-full w-full select-none" />}
       {/* Canvas nur für sichtbare Seiten: volle Auflösung je Seite kostet sonst bei hohem Zoom zu viel Speicher.
           multiply: Textmarker färbt Text nicht ab (wie Highlight in der PDF) */}
+      {visible && <canvas
+        ref={live}
+        width={Math.round(w * devicePixelRatio)}
+        height={Math.round(h * devicePixelRatio)}
+        className="pointer-events-none absolute inset-0 h-full w-full"
+      />}
       {visible && <canvas
         ref={canvas}
         width={Math.round(w * devicePixelRatio)}
