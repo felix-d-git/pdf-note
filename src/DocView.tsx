@@ -20,12 +20,14 @@ import * as ol from "./outline";
 import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { scrollAfterZoom, wheelFactor } from "./zoom";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
   sizes: Sizes, rev: z.number().int().nonnegative(), inserted: z.number().int().nonnegative(), items: z.array(ItemData),
   warning: z.string().nullish(),
 });
+const WHEEL_MS = 150;
 const clampZoom = (z: number) => Math.min(6, Math.max(0.2, z));
 const SearchHit = z.object({ page: z.number().int(), rect: z.array(z.number()).length(4) });
 type SearchHit = z.infer<typeof SearchHit>;
@@ -680,14 +682,35 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     };
   });
 
-  // Strg+Mausrad zoomt (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche)
+  // Strg+Mausrad und Touchpad-Pinch (Wheel + ctrlKey) zoomen um den Zeiger (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche).
+  // Vorschau per CSS-Transform; Neu-Rendern (setZoom) erst nach WHEEL_MS Ruhe. Ohne Strg scrollt der Container selbst (deltaX + deltaY).
+  const content = useRef<HTMLDivElement>(null);
+  const wz = useRef<{ z0: number; z: number; cx: number; cy: number; px: number; py: number; timer: number }>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      applyZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+      const b = el.getBoundingClientRect();
+      const w = wz.current ??= {
+        z0: zoom, z: zoom, px: e.clientX - b.left, py: e.clientY - b.top,
+        cx: el.scrollLeft + e.clientX - b.left, cy: el.scrollTop + e.clientY - b.top, timer: 0,
+      };
+      w.z = clampZoom(w.z * wheelFactor(e.deltaY, e.deltaMode));
+      if (content.current) {
+        content.current.style.transformOrigin = `${w.cx}px ${w.cy}px`;
+        content.current.style.transform = `scale(${w.z / w.z0})`;
+      }
+      clearTimeout(w.timer);
+      w.timer = window.setTimeout(() => {
+        wz.current = null;
+        setZoom(w.z);
+        requestAnimationFrame(() => {
+          el.scrollTo(scrollAfterZoom(el.scrollLeft, w.px, w.z / w.z0), scrollAfterZoom(el.scrollTop, w.py, w.z / w.z0));
+          if (content.current) content.current.style.transform = "";
+        });
+      }, WHEEL_MS);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -784,7 +807,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const palette = mk ? pal.marker : pal.pen;
   const pick = mk ? marker : preset;
   const setPick = mk ? setMarker : setPreset;
-  const same = (a: Preset, b: Preset) => a.name === b.name && a.size === b.size && a.color.every((c, k) => c === b.color[k]);
+  const same = (a: Preset, b: Preset) => a.name === b.name && a.size === b.size && (a.pressure !== false) === (b.pressure !== false) && a.color.every((c, k) => c === b.color[k]);
   const setPalette = (list: Preset[]) => setPal((p) => (mk ? { ...p, marker: list } : { ...p, pen: list }));
   const hex = (c: Preset["color"]) => "#" + c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
 
@@ -862,6 +885,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
                 }} />
             </label>
+            {!mk && (
+              <label className="flex items-center justify-between">
+                {T.penPressure}
+                <input type="checkbox" aria-label={T.penPressure} checked={pick.pressure !== false}
+                  onChange={(e) => setPick({ ...pick, pressure: e.target.checked })} />
+              </label>
+            )}
             <IconBtn icon={Plus} label={T.presetAdd} text onClick={() => {
               const p = { ...pick, name: `${T.custom} ${palette.length + 1}` };
               setPalette([...palette, p]);
@@ -1096,7 +1126,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           onPointerCancel={touchUp}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <div className="flex w-max min-w-full flex-col gap-4 p-6">
+          <div ref={content} className="flex w-max min-w-full flex-col gap-4 p-6">
             {sizes.map((s, i) => (
               <PageView
                 key={i}

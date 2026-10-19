@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, type Item, type Layer } from "./ink";
+import { box, DEFAULT_PRESET, savedWidth, type Item, type Layer, type Preset } from "./ink";
 import { PageView } from "./PageView";
 import { DEFAULT_SETTINGS, type Tool } from "./settings";
 
@@ -37,7 +37,7 @@ const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
-function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[] }) {
+function Page({ start, pen, layer = 3, init = [], sel = [], preset = DEFAULT_PRESET }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset }) {
   const [items, setItems] = useState<Item[]>(init);
   const [tool, st] = useState(start);
   const [selected, setSel] = useState<number[]>(sel);
@@ -45,7 +45,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
   return (
     <PageView
       doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool} penTool={pen ?? tool} typers={new Map()}
-      preset={DEFAULT_PRESET} marker={DEFAULT_PRESET} textSize={14} settings={DEFAULT_SETTINGS}
+      preset={preset} marker={DEFAULT_PRESET} textSize={14} settings={DEFAULT_SETTINGS}
       onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))}
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={() => {}}
       onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
@@ -81,7 +81,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[] } = {}) => {
+const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset } = {}) => {
   root = createRoot(host);
   act(() => root.render(<Page start={tool} layer={layer} init={init} {...more} />));
   return host.querySelector("[data-page]") as HTMLDivElement;
@@ -266,4 +266,22 @@ test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seite
   // weit nach oben: Platz entfernen, nie über den oberen Rand
   drag(300, -1000);
   expect(tops()).toEqual([9, 51, 0]);
+});
+
+test("Druck aus: Stift mit wechselndem Druck → alle Punkte gleiche Breite; Druck an: Werte bleiben", () => {
+  for (const [pressure, flat] of [[false, true], [undefined, false]] as const) {
+    lastAdd.length = 0;
+    const page = mount("pen", 3, [], { preset: { ...DEFAULT_PRESET, pressure } });
+    [0.1, 0.9, 0.3, 0.7].forEach((pr, i) => {
+      const e = new MouseEvent(i ? "pointermove" : "pointerdown", { bubbles: true, cancelable: true, clientX: 100 + 10 * i, clientY: 100, buttons: 1 });
+      Object.assign(e, { pointerId: 1, pointerType: "pen", pressure: pr });
+      act(() => void page.dispatchEvent(e));
+    });
+    fire(page, "pointerup", 130, 100, 0, "pen");
+    const it = lastAdd[0];
+    expect(new Set(it?.points.map((q) => q[2])).size === 1).toBe(flat);
+    expect(it?.simulated).toBe(false);
+    if (flat) expect(savedWidth(it as Item)).toBe(DEFAULT_PRESET.size);
+    if (flat) act(() => root.unmount());
+  }
 });
