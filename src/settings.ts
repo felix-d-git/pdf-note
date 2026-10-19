@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MARKERS, PRESETS, PRESSURE_MAX, TEXT_SIZE, type Preset } from "./ink";
+import { MARKERS, PRESETS, PRESSURE_MAX, QUICK_MARKER, QUICK_PEN, TEXT_SIZE, type Preset } from "./ink";
 
 /** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus); `space` = Platz einfügen (waagrechte Linie ziehen) */
 export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "form", "link", "space"] as const;
@@ -60,9 +60,11 @@ export function storeSettings(s: Settings) {
 
 /** Presets (Stift/Formen, Marker) und Textgröße, gerätelokal */
 const PresetData = z.object({ name: z.string(), color: z.tuple([z.number(), z.number(), z.number()]), size: z.number().positive() });
-const Palettes = z.object({ pen: z.array(PresetData), marker: z.array(PresetData), text: z.number().positive() });
-export interface Palettes { pen: Preset[]; marker: Preset[]; text: number }
-export const DEFAULT_PALETTES: Palettes = { pen: PRESETS, marker: MARKERS, text: TEXT_SIZE };
+const Quick = z.object({ pen: z.array(PresetData).length(3), marker: z.array(PresetData).length(3) });
+const Palettes = z.object({ pen: z.array(PresetData), marker: z.array(PresetData), text: z.number().positive(), quick: Quick.default({ pen: QUICK_PEN, marker: QUICK_MARKER }) });
+/** `quick` = die sechs Farbfelder der Werkzeugleiste (Zahnrad „Preset überschreiben" ändert sie per Name) */
+export interface Palettes { pen: Preset[]; marker: Preset[]; text: number; quick: { pen: Preset[]; marker: Preset[] } }
+export const DEFAULT_PALETTES: Palettes = { pen: PRESETS, marker: MARKERS, text: TEXT_SIZE, quick: { pen: QUICK_PEN, marker: QUICK_MARKER } };
 const PKEY = "pdfnote.presets";
 
 export function loadPalettes(): Palettes {
@@ -115,6 +117,12 @@ export function pickTool(s: Tools, t: Tool, dev: "pen" | "mouse", auto: boolean)
     },
     locked: false,
   };
+}
+
+/** Farbfeld-Klick: Werkzeug und Farbe in einem Schritt (Stift-Farbe → `preset`, Marker-Farbe → `marker`) */
+export interface Picked { tools: Tools; preset: Preset; marker: Preset }
+export function pickColor(s: Picked, kind: "pen" | "marker", color: Preset, dev: "pen" | "mouse", auto: boolean): Picked {
+  return { ...s, tools: pickTool(s.tools, kind, dev, auto), ...(kind === "pen" ? { preset: color } : { marker: color }) };
 }
 
 /** Nach dem Zeichnen einer Form: zurück zum vorherigen Werkzeug, außer mit Schloss. */

@@ -12,7 +12,8 @@ import type { Tool } from "./settings";
 export const KEYS = {
   open: "Strg+O", close: "Strg+W", nextTab: "Strg+Tab", prevTab: "Strg+Umschalt+Tab", help: "F1",
   save: "Strg+S", saveAs: "Strg+Umschalt+S", undo: "Strg+Z", redo: "Strg+Y / Strg+Umschalt+Z",
-  pen: "P", marker: "M", eraser: "E", lasso: "A / T", line: "L", arrow: "F", rect: "R", ellipse: "K", axes: "X", form: "O", link: "G",
+  pen: "P", marker: "M", eraser: "D", lasso: "A / T", line: "L", arrow: "F", rect: "R", ellipse: "K", axes: "X", form: "O", link: "G",
+  penRed: "Q", penGreen: "W", penBlue: "E", markRed: "Umschalt+Q", markGreen: "Umschalt+W", markBlue: "Umschalt+E",
   image: "I", layer1: "1", layer2: "2", layer3: "3",
   selectAll: "Strg+A", copy: "Strg+C", cut: "Strg+X", paste: "Strg+V", del: "Entf / Rücktaste", nudge: "← / → / ↑ / ↓",
   escape: "Esc", menu: "Menütaste / Umschalt+F10", search: "Strg+F", zoomIn: "Strg++ / Strg+=", zoomOut: "Strg+-",
@@ -27,10 +28,11 @@ const NAMES: Record<string, string> = {
 /**
  * Tastendruck → Kombination wie in `KEYS` („Strg+Umschalt+S"). Umschalt zählt nur bei Sondertasten und Strg+Buchstabe:
  * bei Zeichen hängt es vom Tastaturlayout ab (`+` auf US = Umschalt+`=`), Werkzeug-Buchstaben wirken auch groß.
+ * Ausnahme Q/W/E: Umschalt wählt dort den Marker statt des Stifts.
  */
 export function comboOf(e: { key: string; ctrlKey: boolean; shiftKey: boolean }) {
   const one = e.key.length === 1;
-  const shift = e.shiftKey && (!one || (e.ctrlKey && /\p{L}/u.test(e.key)));
+  const shift = e.shiftKey && (!one || (e.ctrlKey && /\p{L}/u.test(e.key)) || /^[qwe]$/i.test(e.key));
   return `${e.ctrlKey ? "Strg+" : ""}${shift ? "Umschalt+" : ""}${NAMES[e.key] ?? (one ? e.key.toUpperCase() : e.key)}`;
 }
 
@@ -43,6 +45,12 @@ export const TOOL_LABELS: [Tool, LucideIcon, string, string][] = ([
   ["pen", Pen], ["marker", Highlighter], ["eraser", Eraser], ["lasso", MousePointer2], ["line", Slash], ["arrow", ArrowUpRight],
   ["rect", Square], ["ellipse", Circle], ["axes", Axis3d], ["form", ClipboardPen], ["link", Link],
 ] as const).map(([t, icon]) => [t, icon, T[t], KEYS[t]]);
+
+/** Farbfelder: Art, Index in `Palettes.quick`, Name, Kürzel */
+export const QUICK: ["pen" | "marker", number, string, string][] = [
+  ["pen", 0, T.penRed, KEYS.penRed], ["pen", 1, T.penGreen, KEYS.penGreen], ["pen", 2, T.penBlue, KEYS.penBlue],
+  ["marker", 0, T.markRed, KEYS.markRed], ["marker", 1, T.markGreen, KEYS.markGreen], ["marker", 2, T.markBlue, KEYS.markBlue],
+];
 
 /** Ebene, Symbol, Name; Kürzel = Nummer */
 export const LAYERS: [Layer, LucideIcon, string][] = [[1, FileText, T.layer1], [2, Shapes, T.layer2], [3, PenLine, T.layer3]];
