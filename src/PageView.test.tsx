@@ -35,6 +35,7 @@ const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { 
 const lastAdd: Item[] = [];
 const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
+let replaces = 0;
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
 function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[] }) {
@@ -48,7 +49,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
       preset={DEFAULT_PRESET} marker={DEFAULT_PRESET} textSize={14} settings={DEFAULT_SETTINGS}
       onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))}
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={() => {}}
-      onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
+      onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
@@ -266,4 +267,41 @@ test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seite
   // weit nach oben: Platz entfernen, nie über den oberen Rand
   drag(300, -1000);
   expect(tops()).toEqual([9, 51, 0]);
+});
+
+test("Farbwähler: Hover zeigt Vorschau, Verlassen stellt zurück, Klick = genau ein Undo-Schritt", () => {
+  replaces = 0;
+  mount("lasso", 2, [obj(1, "rect", 100, 100, 200, 150)], { sel: [1] });
+  const click = (el: Element) => act(() => void el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  click(host.querySelector('[aria-label="Farbe/Stärke"], [aria-label="Colour/Width"]') as Element);
+  click(host.querySelector('[aria-label="Rahmenfarbe"], [aria-label="Border colour"]') as Element);
+  const sw = host.querySelector('[aria-label="rgb(214,46,46)"]') as Element; // PALETTE: Rot
+  const shown = () => draws.at(-1)?.[0]?.color.map((v) => Math.round(v * 255));
+  const over = (el: Element, type: string) => act(() => void el.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: type === "pointerout" ? document.body : null })));
+  over(sw, "pointerover");
+  expect(shown()).toEqual([214, 46, 46]);
+  expect(replaces).toBe(0);
+  over(sw, "pointerout");
+  expect(shown()).toEqual([0, 0, 0]);
+  expect(replaces).toBe(0);
+  click(sw);
+  expect(replaces).toBe(1);
+  expect(ui.added[0]?.color.map((v) => Math.round(v * 255))).toEqual([214, 46, 46]);
+});
+
+test("Form: Füllung und Deckkraft über das Zahnrad", () => {
+  replaces = 0;
+  mount("lasso", 2, [obj(1, "rect", 100, 100, 200, 150)], { sel: [1] });
+  const click = (el: Element) => act(() => void el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  click(host.querySelector('[aria-label="Farbe/Stärke"], [aria-label="Colour/Width"]') as Element);
+  click(host.querySelector('[aria-label="Füllfarbe"], [aria-label="Fill colour"]') as Element);
+  click(host.querySelector('[aria-label="rgb(214,46,46)"]') as Element);
+  expect(ui.added[0]?.fill?.map((v) => Math.round(v * 255))).toEqual([214, 46, 46]);
+  click(host.querySelector('[aria-label="Keine Füllung"], [aria-label="No fill"]') as Element);
+  expect(ui.added[0]?.fill).toBeUndefined();
+  const op = host.querySelector('[data-restyle="opacity"]') as HTMLInputElement;
+  op.value = "50";
+  act(() => void op.dispatchEvent(new Event("change", { bubbles: true })));
+  expect(ui.added[0]?.opacity).toBe(0.5);
+  expect(replaces).toBe(3);
 });

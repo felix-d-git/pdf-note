@@ -35,6 +35,8 @@ export interface Item {
   xyz?: boolean;
   /** Koordinatensystem: Karo-Gitter im Achsenbereich */
   grid?: boolean;
+  /** Rechteck/Ellipse: Füllfarbe (Deckkraft = `opacity`, wie `/CA` in der PDF); fehlt → keine Füllung */
+  fill?: Rgb;
 }
 
 /** Ebene 1 = PDF-Inhalt (keine eigenen Objekte), 2 = Elemente, 3 = Notizen */
@@ -65,12 +67,14 @@ export const ItemData = z.object({
   rot: num.optional(),
   xyz: z.boolean().optional(),
   grid: z.boolean().optional(),
+  fill: z.tuple([num, num, num]).optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
   simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
   layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind), ...(d.rot ? { rot: d.rot } : {}),
   ...(d.xyz ? { xyz: true } : {}), ...(d.grid ? { grid: true } : {}),
+  ...(d.fill ? { fill: d.fill } : {}),
 });
 
 export interface Preset {
@@ -135,6 +139,7 @@ export const toData = (it: Item) => ({
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
   ...(it.image ? { image: it.image } : {}), layer: layerOf(it), ...(it.rot ? { rot: it.rot } : {}),
   ...(it.xyz ? { xyz: true } : {}), ...(it.grid ? { grid: true } : {}),
+  ...(it.fill ? { fill: it.fill } : {}),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
@@ -237,6 +242,10 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
       ctx.beginPath();
       if (it.kind === "rect") ctx.rect(x, y, w, h);
       else ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 2 * Math.PI);
+      if (it.fill) {
+        ctx.fillStyle = css(it.fill);
+        ctx.fill();
+      }
       return ctx.stroke();
     }
     case "text": {
