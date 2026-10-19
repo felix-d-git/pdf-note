@@ -760,6 +760,11 @@ pub enum PageOp {
     InsertFile { at: i32, path: std::path::PathBuf },
     Rotate { index: i32 },
     Delete { index: i32 },
+    /// Mehrere Seiten in einem Schritt (Mehrfachauswahl)
+    RotatePages { indices: Vec<i32> },
+    DeletePages { indices: Vec<i32> },
+    /// Seiten aus der Seiten-Zwischenablage (`copy_pages`) vor `at` einfügen
+    Paste { at: i32 },
     Move { from: i32, to: i32 },
     /// Original-Objekte einer Seite verschieben/skalieren/löschen
     Orig { page: i32, edits: Vec<crate::orig::Edit> },
@@ -817,13 +822,7 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
             let is_pdf = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
             if is_pdf {
-                let src = PdfDocument::from_bytes(&bytes).map_err(err)?;
-                let annots = page_annots(&src).map_err(err)?;
-                let opts = InsertPdfOptions { target: InsertPosition::Before(*at as usize), ..Default::default() };
-                let n = doc.insert_pdf(&src, opts).map_err(err)?.page_count as i32;
-                copy_annots(doc, *at, &annots).map_err(err)?;
-                let items = take_own(doc, *at..*at + n).map_err(err)?;
-                Ok(OpResult { inserted: n, items, warning: None })
+                insert_pdf_bytes(doc, &bytes, *at).map_err(err)
             } else {
                 let img = Image::from_bytes(&bytes).map_err(err)?;
                 let (w, h) = (img.width() as f32, img.height() as f32);
@@ -854,6 +853,32 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             doc.delete_page(*index).map_err(err)?;
             Ok(OpResult::default())
         }
+        PageOp::RotatePages { indices } => {
+            let ix = page_set(indices, count)?;
+            for i in ix {
+                let mut page = doc.load_pdf_page(i).map_err(err)?;
+                let r = page.rotation().map_err(err)?;
+                page.set_rotation((r + 90).rem_euclid(360)).map_err(err)?;
+            }
+            Ok(OpResult::default())
+        }
+        PageOp::DeletePages { indices } => {
+            let ix = page_set(indices, count)?;
+            if ix.len() as i32 == count {
+                return Err("letzte Seite kann nicht gelöscht werden".into());
+            }
+            for i in ix.into_iter().rev() {
+                doc.delete_page(i).map_err(err)?;
+            }
+            Ok(OpResult::default())
+        }
+        PageOp::Paste { at } => {
+            let bytes = PAGE_CLIP.lock().map_err(|e| e.to_string())?.clone().ok_or("Zwischenablage leer")?;
+            if !at_ok(*at) {
+                return Err("ungültige Position".into());
+            }
+            insert_pdf_bytes(doc, &bytes, *at).map_err(err)
+        }
         PageOp::Move { from, to } => {
             if !idx_ok(*from) || !idx_ok(*to) {
                 return Err("ungültige Seite".into());
@@ -878,6 +903,45 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
         PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::Unlink { .. } => Err("ungültige Seite".into()),
     }
+}
+
+/// Sortierte, eindeutige Seitenindizes; leer oder außerhalb → Fehler.
+fn page_set(indices: &[i32], count: i32) -> Result<Vec<i32>, String> {
+    let mut v = indices.to_vec();
+    v.sort_unstable();
+    v.dedup();
+    if v.is_empty() || v.iter().any(|i| !(0..count).contains(i)) {
+        return Err("ungültige Seite".into());
+    }
+    Ok(v)
+}
+
+/// Seiten-Zwischenablage (app-intern, über Dokumente/Tabs hinweg): eine PDF aus den kopierten Seiten samt eigenen Objekten.
+static PAGE_CLIP: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+
+/// Kopiert die Seiten `pages` samt ihrer (noch nicht gespeicherten) Objekte in die Seiten-Zwischenablage.
+pub fn copy_pages(doc: &PdfDocument, pages: &[i32], items: &[Item]) -> Result<(), String> {
+    let count = doc.page_count().map_err(|e| e.to_string())?;
+    let keep = page_set(pages, count)?;
+    let mut copy = PdfDocument::from_bytes(&to_bytes(doc)?).map_err(|e| e.to_string())?;
+    let own: Vec<Item> = items.iter().filter(|it| keep.contains(&it.page)).cloned().collect();
+    add_items(&mut copy, &own, true)?;
+    for i in (0..count).rev().filter(|i| !keep.contains(i)) {
+        copy.delete_page(i).map_err(|e| e.to_string())?;
+    }
+    *PAGE_CLIP.lock().map_err(|e| e.to_string())? = Some(write(&copy, Crypt::None)?);
+    Ok(())
+}
+
+/// Fügt die Seiten der PDF `bytes` vor `at` ein (mit Annotationen; eigene Objekte kommen als `items` zurück).
+fn insert_pdf_bytes(doc: &mut PdfDocument, bytes: &[u8], at: i32) -> Result<OpResult, Error> {
+    let src = PdfDocument::from_bytes(bytes)?;
+    let annots = page_annots(&src)?;
+    let opts = InsertPdfOptions { target: InsertPosition::Before(at as usize), ..Default::default() };
+    let n = doc.insert_pdf(&src, opts)?.page_count as i32;
+    copy_annots(doc, at, &annots)?;
+    let items = take_own(doc, at..at + n)?;
+    Ok(OpResult { inserted: n, items, warning: None })
 }
 
 /// `Annots` je Seite, ohne `/P`: sonst zieht das Grafting die Quellseite als Waisenobjekt mit.

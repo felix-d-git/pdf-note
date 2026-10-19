@@ -152,7 +152,7 @@ const EN: Chapter[] = [
     [Columns2, "Split View: two PDFs side by side. Drag a tab onto a half; with Ctrl the same PDF in both halves. Move the divider."],
   ] },
   { id: "pages", icon: Files, title: "Pages", lines: [
-    [Files, "Sidebar: drag thumbnails to reorder, right-click deletes or rotates."],
+    [Files, "Sidebar: drag thumbnails to reorder, click (Ctrl/Shift for several), right-click: delete, cut, copy, paste (also into other tabs), duplicate, rotate; Del deletes."],
     [FilePlus, "Insert page: blank, lined, squared, dots, Markdown page, append PDF, image as page."],
     [Bookmark, "Bookmarks: set on the current page, indent/outdent, rename."],
   ] },

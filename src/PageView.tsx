@@ -53,9 +53,9 @@ function usePageImage(ref: RefObject<HTMLElement | null>, doc: number, index: nu
   return [url, visible] as const;
 }
 
-export function Thumb({ doc, index, size, version, active, dropMark, onPointerDown, onClick }: {
-  doc: number; index: number; size: [number, number]; version: number; active: boolean; dropMark?: "before" | "after";
-  onPointerDown: (e: React.PointerEvent) => void; onClick: () => void;
+export function Thumb({ doc, index, size, version, active, selected, dropMark, onPointerDown, onClick, onContextMenu }: {
+  doc: number; index: number; size: [number, number]; version: number; active: boolean; selected?: boolean; dropMark?: "before" | "after";
+  onPointerDown: (e: React.PointerEvent) => void; onClick: (e: React.MouseEvent) => void; onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const mark = dropMark === "before" ? "border-t-accent" : dropMark === "after" ? "border-b-accent" : "";
   const ref = useRef<HTMLButtonElement>(null);
@@ -67,10 +67,12 @@ export function Thumb({ doc, index, size, version, active, dropMark, onPointerDo
       data-thumb={index}
       onPointerDown={onPointerDown}
       onClick={onClick}
+      onContextMenu={onContextMenu}
+      aria-selected={selected}
       className={`flex flex-col items-center gap-1 border-y-2 border-transparent py-1 text-xs text-ink-3 ${mark}`}
     >
       <span
-        className={`block rounded-xs bg-white ring-2 ${active ? "ring-accent" : "ring-transparent"}`}
+        className={`block rounded-xs bg-white ring-2 ${selected ? "ring-accent" : active ? "ring-accent/50" : "ring-transparent"}`}
         style={{ width: w, height: (w * size[1]) / size[0] }}
       >
         {url && <img src={url} alt="" draggable={false} className="h-full w-full rounded-xs" />}
