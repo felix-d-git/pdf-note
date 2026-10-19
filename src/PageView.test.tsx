@@ -7,7 +7,9 @@ import { box, DEFAULT_PRESET, savedWidth, type Item, type Layer, type Preset } f
 import { PageView } from "./PageView";
 import { DEFAULT_SETTINGS, type Tool } from "./settings";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: () => new Promise(() => {}) }));
+const FELD = { xref: 9, kind: "check", name: "H", rect: [20, 60, 32, 72], value: "Off", on: "Yes", options: [], readonly: false, multiline: false };
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (c: string) => (c === "form_fields" ? Promise.resolve([FELD]) : new Promise(() => {})) }));
+const deleted: number[] = [];
 const draws = vi.hoisted(() => [] as Item[][]);
 vi.mock("./ink", async (orig) => {
   const m = await orig<typeof import("./ink")>();
@@ -51,7 +53,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [], preset = DEFAULT_PRE
       onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
-      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
+      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
       onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
       layer={layer} locked={locked} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
     />
@@ -315,4 +317,27 @@ test("gesperrte Ebene: Auswahl und Radierer greifen nicht, Marker darüber (Eben
   fire(p2, "pointermove", 330, 305);
   fire(p2, "pointerup", 330, 305, 0);
   expect(lastAdd).toHaveLength(0); // Zeichnen in gesperrte Ebene 2 blockiert
+});
+
+test("selbst angelegte Checkbox lässt sich löschen: Entf auf dem Feld und Mini-Leiste", async () => {
+  mount("form");
+  await act(async () => {});
+  const box = host.querySelector<HTMLInputElement>("input[data-field]");
+  expect(box).not.toBeNull();
+  act(() => box?.focus());
+  const x = new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true });
+  act(() => void box?.dispatchEvent(x));
+  expect(deleted).toEqual([9]);
+  expect(x.defaultPrevented).toBe(true);
+  // Mini-Leiste am fokussierten Feld
+  const bar = host.querySelector<HTMLButtonElement>("button[data-pedit]");
+  expect(bar).not.toBeNull();
+  act(() => bar?.click());
+  expect(deleted).toEqual([9, 9]);
+  // Rechtsklick wählt das Feld statt des Seitenmenüs
+  act(() => box?.blur());
+  expect(host.querySelector("button[data-pedit]")).toBeNull();
+  act(() => void box?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+  expect(host.querySelector("button[data-pedit]")).not.toBeNull();
+  expect(host.querySelector("[role=menu]")).toBeNull();
 });

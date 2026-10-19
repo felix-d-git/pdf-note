@@ -504,6 +504,18 @@ fn formular() {
     assert_eq!(again.iter().find(|f| f.xref == check.xref).unwrap().value, check.on);
     assert_eq!(again.iter().find(|f| f.xref == combo.xref).unwrap().value, "Zwei");
 
+    // selbst angelegte Checkbox löschen → speichern → neu öffnen: Feld und Widget weg, Rest unverändert
+    pdf::page_op(&mut doc, &PageOp::DeleteField { page: 0, xref: check.xref }).unwrap();
+    pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
+    let doc = pdf::open(&copy).unwrap();
+    let gone = fields(&doc, 0).unwrap();
+    assert!(gone.iter().all(|f| f.name != "Neu Haken" && f.xref != check.xref), "Checkbox noch da");
+    assert_eq!(gone.len(), again.len() - 1, "Feldanzahl");
+    assert!(doc.load_pdf_page(0).unwrap().load_widget(check.xref).unwrap().is_none(), "Widget-Rest");
+    let acro = doc.catalog().unwrap().get_dict("AcroForm").unwrap().unwrap().get_dict("Fields").unwrap().unwrap();
+    let names = (0..acro.len().unwrap() as i32).filter_map(|i| acro.get_array(i).unwrap()).filter_map(|o| o.get_dict("T").unwrap()).map(|t| t.as_string().unwrap()).collect::<Vec<_>>();
+    assert!(!names.iter().any(|t| t == "Neu Haken") && names.iter().any(|t| t == "Neu Liste"), "AcroForm/Fields: {names:?}");
+
     assert_eq!(original, std::fs::read(&src).unwrap(), "Original verändert");
     let extra: Vec<_> = std::fs::read_dir(&solo).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(extra.len(), 1, "Zusatzdatei neben der PDF: {extra:?}");
