@@ -40,7 +40,7 @@ fn b64(bytes: &[u8]) -> String {
 }
 
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0, xyz: false, grid: false }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0, xyz: false, grid: false, fill: None }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -784,6 +784,52 @@ fn koordinatensysteme() {
     }
     assert!(n > 0);
     println!("Koordinatensysteme: {n} PDFs OK");
+}
+
+/// Formen mit Füllfarbe + 50 % Deckkraft: speichern → neu öffnen → Füllung + Deckkraft erhalten, Aussehen enthält einen Fülloperator.
+#[test]
+#[ignore]
+fn formen_fuellung() {
+    use pdf::Kind;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-fill");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        let foreign = pdf::annotations(&d, 0).unwrap().len();
+        let mut items = pdf::take_own(&d, 0..1).unwrap();
+        let mine = [
+            pdf::Item { layer: 2, fill: Some([0.0, 0.8, 0.0]), opacity: 0.5, ..item(0, Kind::Rect, vec![[60.0, 60.0, 0.5], [220.0, 200.0, 0.5]], "") },
+            pdf::Item { layer: 2, fill: Some([1.0, 0.8, 0.0]), opacity: 0.5, ..item(0, Kind::Ellipse, vec![[250.0, 60.0, 0.5], [420.0, 230.0, 0.5]], "") },
+        ];
+        items.extend(mine.clone());
+        pdf::save(&d, &items, &copy, false, pdf::Crypt::Keep).unwrap();
+        let back = pdf::open(&copy).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let ours: Vec<_> = page.annotations().skip(foreign).collect();
+        assert_eq!(ours.len(), 2, "{}: je eine Annotation", src.display());
+        for a in &ours {
+            let ap = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap();
+            let s = String::from_utf8_lossy(&ap.read_stream().unwrap()).into_owned();
+            assert!(s.lines().any(|l| matches!(l.trim(), "f" | "B" | "f*" | "B*" | "b" | "b*")), "{}: kein Fülloperator: {s}", src.display());
+            assert!(a.object().get_dict("IC").unwrap().is_some() && a.object().get_dict("CA").unwrap().is_some());
+        }
+        drop(ours);
+        drop(page);
+        let taken: Vec<_> = pdf::take_own(&back, 0..1).unwrap().into_iter().filter(|it| matches!(it.kind, Kind::Rect | Kind::Ellipse) && it.fill.is_some()).collect();
+        assert_eq!(taken, mine, "{}: Parameter nach Neu-Öffnen", src.display());
+        n += 1;
+    }
+    assert!(n > 0);
+    println!("Formen-Füllung: {n} PDFs OK");
 }
 
 /// Verschlüsseln (Speichern unter + Passwort) → ohne Passwort nicht lesbar, mit Passwort Text + Objekte gleich;

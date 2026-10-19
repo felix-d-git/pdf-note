@@ -3,9 +3,10 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
   box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
-  rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset,
+  rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
+import { ColorButton } from "./ColorPicker";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
 import { IconBtn } from "./ui";
@@ -376,9 +377,12 @@ export function PageView(p: PageProps) {
   // Zahnrad der Mini-Leiste: zu, sobald sich die Auswahl ändert
   const [gear, setGear] = useState(false);
   const [gearKey, setGearKey] = useState(selected.join());
+  // Farb-Vorschau (Hover/Ziehen): nur Anzeige an der Auswahl, kein Undo-Schritt
+  const [prev, setPrev] = useState<Pick<Partial<Item>, "color" | "fill">>();
   if (gearKey !== selected.join()) {
     setGearKey(selected.join());
     setGear(false);
+    setPrev(undefined);
   }
   const spaced = gs?.t === "space" ? makeSpace(items, index, gs.y, gs.dy, size[1]) : [];
   const transform = (it: Item) =>
@@ -393,7 +397,8 @@ export function PageView(p: PageProps) {
     const c = g.current;
     const out = items
       .filter((it) => !(c?.t === "erase" && c.ids.has(it.id)) && it.id !== edit?.item.id)
-      .map(transform);
+      .map(transform)
+      .map((it) => (prev && selected.includes(it.id) ? { ...it, ...prev } : it));
     return c?.t === "shape" || c?.t === "hl" ? [...out, c.item] : out;
   };
 
@@ -900,7 +905,7 @@ export function PageView(p: PageProps) {
     : tool === "form" ? "cell" : p.linking ? "alias" : "crosshair";
   const own = sel.length > 0 && sel.every((it) => it.id >= 0);
   /** Zahnrad/Text-Größe/-Farbe auf die eigene Auswahl (Bilder ausgenommen); Text wird neu umbrochen */
-  const restyle = (f: { size?: number; color?: [number, number, number] }) => {
+  const restyle = (f: Pick<Partial<Item>, "size" | "color" | "fill" | "opacity">) => {
     const ctx = ctx2d();
     p.onReplace(sel.filter((it) => it.id >= 0 && it.kind !== "image").map((it) => {
       const n = { ...it, ...f };
@@ -915,7 +920,7 @@ export function PageView(p: PageProps) {
     const on = (e: Event) => {
       const t = e.target;
       if (!(t instanceof HTMLInputElement) || !t.dataset.restyle) return;
-      if (t.dataset.restyle === "color") restyle({ color: rgb(t.value) });
+      if (t.dataset.restyle === "opacity") restyle({ opacity: Math.min(1, Math.max(0.05, Number(t.value) / 100)) });
       else if (Number(t.value) > 0) restyle({ size: Number(t.value) });
     };
     el?.addEventListener("change", on);
@@ -933,6 +938,14 @@ export function PageView(p: PageProps) {
   const styled = sel.filter((it) => it.id >= 0 && it.kind !== "image");
   const allText = sel.length > 0 && sel.every((it) => it.kind === "text" && it.id >= 0);
   const [first] = sel;
+  const shapes = styled.length > 0 && styled.every((it) => it.kind === "rect" || it.kind === "ellipse");
+  const picker = (k: "color" | "fill") => ({
+    onPreview: (c: Rgb | undefined | null) => setPrev(c === null ? undefined : k === "fill" ? { fill: c } : c && { color: c }),
+    onCommit: (c: Rgb | undefined) => {
+      setPrev(undefined);
+      restyle(k === "fill" ? { fill: c } : c ? { color: c } : {});
+    },
+  });
   const hoverD = hover && (hover.tool === "eraser" ? 2 * ERASER_PX
     : hover.tool === "pen" ? preset.size * zoom : hover.tool === "marker" ? marker.size * zoom : 0);
 
@@ -1027,8 +1040,7 @@ export function PageView(p: PageProps) {
               <input type="number" min={4} max={200} step={1} title={T.fontSize} aria-label={T.fontSize} defaultValue={first.size} key={`s${first.id}${first.size}`}
                 data-restyle="size"
                 className="h-7 w-12 rounded-xs border border-line bg-surface px-1 text-sm" />
-              <input type="color" title={T.fontColor} aria-label={T.fontColor} defaultValue={hex(first.color)} key={`c${first.id}${hex(first.color)}`}
-                data-restyle="color" className="h-7 w-7 cursor-pointer" />
+              <ColorButton label={T.fontColor} value={first.color} {...picker("color")} />
             </>}
             {sel.length === 1 && first?.kind === "image" && first.id >= 0 && <IconBtn icon={CropIcon} label={T.crop} className={ICON} onClick={() => setCrop(first.id)} />}
             {rotatable && <IconBtn icon={RotateCw} label={T.rotate90} className={ICON} onClick={rotate90} />}
@@ -1036,11 +1048,15 @@ export function PageView(p: PageProps) {
               <span className="relative">
                 <IconBtn icon={SlidersHorizontal} label={`${T.color}/${T.size}`} className={ICON} aria-expanded={gear} onClick={() => setGear(!gear)} />
                 {gear && first && (
-                  <div className="absolute top-8 left-0 flex items-center gap-2 rounded-sm border border-line bg-surface p-2 shadow-raised">
+                  <div className="absolute top-8 left-0 flex w-max items-center gap-2 rounded-sm border border-line bg-surface p-2 shadow-raised">
                     <input type="range" min={0.5} max={30} step={0.5} title={T.size} aria-label={T.size} defaultValue={first.size} key={`g${first.id}${first.size}`}
                       data-restyle="size" className="w-28" />
-                    <input type="color" title={T.color} aria-label={T.color} defaultValue={hex(first.color)} key={`h${first.id}${hex(first.color)}`}
-                      data-restyle="color" className="h-7 w-7 cursor-pointer" />
+                    <ColorButton label={shapes ? T.stroke : T.color} value={first.color} {...picker("color")} />
+                    {shapes && <ColorButton label={T.fill} value={first.fill} none {...picker("fill")} />}
+                    {shapes && (
+                      <input type="range" min={5} max={100} step={5} title={T.opacity} aria-label={T.opacity} defaultValue={Math.round(first.opacity * 100)}
+                        key={`o${first.id}${first.opacity}`} data-restyle="opacity" className="w-20" />
+                    )}
                   </div>
                 )}
               </span>
