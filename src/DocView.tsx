@@ -155,6 +155,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [md, setMd] = useState<string | null>(null);
   const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
   // Passwort nur in diesem Zustand, verworfen beim Schließen des Dialogs
+  /** Adresse, die nach Rückfrage im Standard-Browser geöffnet wird */
+  const [openUrl, setOpenUrl] = useState<string>();
   const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
   const scroller = useRef<HTMLDivElement>(null);
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
@@ -1179,6 +1181,11 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         </nav>
         )}
         </div>}
+        {openUrl && (
+          <Dialog title={T.openBrowser} ok={T.open} onOk={() => { void invoke("open_url", { url: openUrl }).catch(() => {}); setOpenUrl(undefined); }} onCancel={() => setOpenUrl(undefined)}>
+            <div className="break-all font-mono text-xs text-muted">{openUrl}</div>
+          </Dialog>
+        )}
         {saveDlg && (
           <Dialog title={T.saveAs} ok={T.chooseTarget} onOk={() => void saveAs()} onCancel={() => setSaveDlg(undefined)}>
             <div className="flex gap-1">
@@ -1294,6 +1301,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   void pageOp({ op: "link", from: linkFrom.page, rect: linkFrom.rect, to: i, x, y }, (its) => its);
                 }}
                 onJump={goTo}
+                onOpenUrl={setOpenUrl}
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
                 onDeleteField={(xref) => void pageOp({ op: "deleteField", page: i, xref }, (its) => its)}
                 onCmd={(c, at) => pageCmd(i, c, at)}
