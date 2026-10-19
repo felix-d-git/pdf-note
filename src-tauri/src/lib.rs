@@ -230,6 +230,12 @@ async fn page_op(w: tauri::State<'_, Worker>, id: u32, op: pdf::PageOp) -> Resul
     w.run(move |d| doc(d, id)?.page_op(&op)).await
 }
 
+/// Seiten (0-basiert) samt Objekten in die app-interne Seiten-Zwischenablage; Einfügen = `page_op` `paste`.
+#[tauri::command]
+async fn copy_pages(w: tauri::State<'_, Worker>, id: u32, pages: Vec<i32>, items: Vec<pdf::Item>) -> Result<(), String> {
+    w.run(move |d| pdf::copy_pages(&doc(d, id)?.doc, &pages, &items)).await
+}
+
 /// Boxen der wählbaren Original-Objekte einer Seite.
 #[tauri::command]
 async fn orig_objects(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<[f32; 4]>, String> {
@@ -339,7 +345,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, copy_pages, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

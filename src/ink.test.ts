@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
-  rotateItem, savedWidth, scaleItem, toData, type InkPoint, type Item, type Kind,
+  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
+  rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
 const s = (p: number, simulated = false): Item => ({
@@ -141,4 +141,14 @@ test("Koordinatensystem: xy 2 Achsen + 2 Spitzen, xyz 3 + 3, Gitter nur mit Scha
   expect(g.length).toBeGreaterThan(4);
   // Gitter bleibt im Rahmen
   expect(g.flat().every(([x, y]) => x >= 0 && x <= 200 && y >= 0 && y <= 150)).toBe(true);
+});
+
+test("Mehrfachauswahl der Miniaturen und Löschen mehrerer Seiten", () => {
+  expect(thumbPick([], 0, 2, false, false)).toEqual([2]);
+  expect(thumbPick([2], 2, 4, true, false)).toEqual([2, 4]);
+  expect(thumbPick([2, 4], 4, 2, true, false)).toEqual([4]);
+  expect(thumbPick([2], 2, 0, false, true)).toEqual([0, 1, 2]);
+  const items = [0, 1, 2, 3].map((p) => it("line", [[0, 0], [1, 1]], p));
+  expect(afterDeleteMany(items, [1, 2]).map((i) => i.page)).toEqual([0, 1]);
+  expect(afterDeleteMany(items, [0, 3]).map((i) => i.page)).toEqual([0, 1]);
 });

@@ -476,6 +476,19 @@ export const afterInsert = (items: Item[], at: number, n: number) =>
 export const afterDelete = (items: Item[], k: number) =>
   items.filter((it) => it.page !== k).map((it) => (it.page > k ? { ...it, page: it.page - 1 } : it));
 
+/** Mehrere Seiten gelöscht (Objekte der Seiten weg, Rest nachgerückt). */
+export const afterDeleteMany = (items: Item[], ks: number[]) => [...ks].sort((a, b) => b - a).reduce((its, k) => afterDelete(its, k), items);
+
+/** Mehrfachauswahl der Miniaturen: Umschalt = Bereich ab `anchor`, Strg = Einzelne umschalten, sonst nur `i`. */
+export function thumbPick(sel: number[], anchor: number, i: number, ctrl: boolean, shift: boolean): number[] {
+  if (shift) {
+    const [a, b] = [Math.min(anchor, i), Math.max(anchor, i)];
+    return Array.from({ length: b - a + 1 }, (_, k) => a + k);
+  }
+  if (ctrl) return (sel.includes(i) ? sel.filter((x) => x !== i) : [...sel, i]).sort((a, b) => a - b);
+  return [i];
+}
+
 export function movedIndex(p: number, from: number, to: number) {
   if (p === from) return to;
   if (from < to && p > from && p <= to) return p - 1;

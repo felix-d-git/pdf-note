@@ -2,15 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, File, FileCode,
-  FileImage, FileMinus, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
+  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, File, FileCode,
+  FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  layerOf, moveItem, newId, textRect, toData, unionBox, type Item, type Layer, type Preset,
+  afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
+  layerOf, moveItem, newId, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Preset,
 } from "./ink";
 import { useDoc } from "./docstore";
 import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem } from "./ui";
@@ -26,6 +26,8 @@ export const PageState = z.object({
   sizes: Sizes, rev: z.number().int().nonnegative(), inserted: z.number().int().nonnegative(), items: z.array(ItemData),
   warning: z.string().nullish(),
 });
+/** Seiten-Zwischenablage liegt im Backend (für alle Tabs); hier nur, ob etwas drin ist */
+let pageClip = false;
 const clampZoom = (z: number) => Math.min(6, Math.max(0.2, z));
 const SearchHit = z.object({ page: z.number().int(), rect: z.array(z.number()).length(4) });
 type SearchHit = z.infer<typeof SearchHit>;
@@ -145,6 +147,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
   const scroller = useRef<HTMLDivElement>(null);
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
+  /** markierte Miniaturen; gelten nur für den Seitenstand `v` (Seitenoperation/Undo hebt die Markierung auf) */
+  const [thumbSel, setThumbSel] = useState<{ v: number; sel: number[]; anchor: number }>({ v: -1, sel: [], anchor: 0 });
+  const [tmenu, setTmenu] = useState<{ x: number; y: number }>();
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const snap = hist.list[hist.at] ?? EMPTY;
@@ -295,10 +300,51 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const k = current, h = sizes[k]?.[1] ?? A4[1];
     void pageOp({ op: "rotate", index: k }, (its) => afterRotate(its, k, h));
   };
-  const deletePage = () => {
-    const k = current;
-    void pageOp({ op: "delete", index: k }, (its) => afterDelete(its, k));
+  const tsel = thumbSel.v === version ? thumbSel.sel : [];
+  const tmax = Math.max(...tsel);
+  const deletePages = (ks: number[]) => {
+    if (ks.length && ks.length < sizes.length) void pageOp({ op: "deletePages", indices: ks }, (its) => afterDeleteMany(its, ks));
   };
+  const rotatePages = (ks: number[]) =>
+    void pageOp({ op: "rotatePages", indices: ks }, (its) => ks.reduce((all, k) => afterRotate(all, k, sizes[k]?.[1] ?? A4[1]), its));
+  const copyPages = async (ks: number[]) => {
+    try {
+      await invoke("copy_pages", { id, pages: ks, items: items.filter((it) => ks.includes(it.page)).map(toData) });
+      pageClip = true;
+      return true;
+    } catch (e) {
+      setError(`Kopieren fehlgeschlagen: ${String(e)}`);
+      return false;
+    }
+  };
+  /** Einfügen nach Seite `after` (Zwischenablage aus beliebigem Dokument) */
+  const pastePages = (after: number) => pageOp({ op: "paste", at: after + 1 }, (its, n) => afterInsert(its, after + 1, n));
+  const cutPages = async (ks: number[]) => {
+    if (ks.length < sizes.length && (await copyPages(ks))) deletePages(ks);
+  };
+  const duplicatePages = async (ks: number[]) => {
+    if (await copyPages(ks)) await pastePages(Math.max(...ks));
+  };
+  const clickThumb = (i: number) => (e: React.MouseEvent) => {
+    setThumbSel({ v: version, sel: thumbPick(tsel, thumbSel.anchor, i, e.ctrlKey || e.metaKey, e.shiftKey), anchor: e.shiftKey ? thumbSel.anchor : i });
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) goTo(i);
+  };
+  const menuThumb = (i: number) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!tsel.includes(i)) setThumbSel({ v: version, sel: [i], anchor: i });
+    setTmenu({ x: e.clientX, y: e.clientY });
+  };
+  useEffect(() => {
+    if (!tmenu) return;
+    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-tmenu]")) && setTmenu(undefined));
+    const key = (e: KeyboardEvent) => void (e.key === "Escape" && setTmenu(undefined));
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [tmenu]);
   const movePage = (from: number, to: number) => void pageOp({ op: "move", from, to }, (its) => afterMove(its, from, to));
 
   /** Undo/Redo: Seitenstand im Backend mitziehen, wenn er sich unterscheidet. */
@@ -627,7 +673,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           setFind((f) => f ?? { q: "", done: null, hits: [], at: -1, v: version });
           requestAnimationFrame(() => findInput.current?.select());
         }],
-        [KEYS.del, removeSel],
+        [KEYS.del, () => (tsel.length && document.activeElement?.closest("[data-thumb]") ? deletePages(tsel) : removeSel())],
         [KEYS.escape, () => {
           setLinkFrom(undefined);
           setTools((s) => ({ ...s, locked: false, mouse: settings.auto ? "lasso" : s.mouse }));
@@ -894,7 +940,6 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         <IconBtn icon={FileImage} label={T.imagePage} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} />
         <IconBtn icon={RotateCw} label={T.rotate} onClick={rotate} />
         <IconBtn icon={ScanText} label={T.ocr} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} />
-        <IconBtn icon={FileMinus} label={T.pageDelete} onClick={deletePage} disabled={sizes.length < 2} />
         {sep}
         <IconBtn icon={ZoomOut} label={T.zoomOut} keys={KEYS.zoomOut} onClick={() => applyZoom(zoom / 1.2)} />
         <span className="w-12 text-center font-mono text-xs text-ink-2">{Math.round(zoom * 100)} %</span>
@@ -1032,11 +1077,25 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
               size={s}
               version={version}
               active={i === current}
+              selected={tsel.includes(i)}
               dropMark={drop?.to === i && i !== drop.from ? (i < drop.from ? "before" : "after") : undefined}
               onPointerDown={thumbDown(i)}
-              onClick={() => goTo(i)}
+              onClick={clickThumb(i)}
+              onContextMenu={menuThumb(i)}
             />
           ))}
+          {tmenu && tsel.length > 0 && (
+            <div data-tmenu role="menu" className="fixed z-30 flex flex-col rounded-sm border border-line bg-surface p-0.5 shadow-raised"
+              style={{ left: Math.min(tmenu.x, innerWidth - 180), top: Math.min(tmenu.y, innerHeight - 200) }}
+              onClick={() => setTmenu(undefined)}>
+              <IconBtn icon={Trash} label={T.del} keys="Entf" text role="menuitem" className={btn + " px-2"} disabled={tsel.length >= sizes.length} onClick={() => deletePages(tsel)} />
+              <IconBtn icon={Scissors} label={T.cut} text role="menuitem" className={btn + " px-2"} disabled={tsel.length >= sizes.length} onClick={() => void cutPages(tsel)} />
+              <IconBtn icon={Copy} label={T.copy} text role="menuitem" className={btn + " px-2"} onClick={() => void copyPages(tsel)} />
+              <IconBtn icon={ClipboardPaste} label={T.paste} text role="menuitem" className={btn + " px-2"} disabled={!pageClip} onClick={() => void pastePages(tmax)} />
+              <IconBtn icon={CopyPlus} label={T.duplicate} text role="menuitem" className={btn + " px-2"} onClick={() => void duplicatePages(tsel)} />
+              <IconBtn icon={RotateCw} label={T.rotate90} text role="menuitem" className={btn + " px-2"} onClick={() => rotatePages(tsel)} />
+            </div>
+          )}
         </nav>
         )}
         </div>}
