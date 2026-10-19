@@ -3,8 +3,8 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDown, ArrowUp, ArrowUpRight, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, File, FileCode,
-  FileImage, FileMinus, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
-  ListIndentIncrease, LocateFixed, Lock, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
+  FileImage, FileMinus, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, Highlighter, ImagePlus, ListIndentDecrease,
+  ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Pen, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
@@ -15,11 +15,12 @@ import {
 import { useDoc } from "./docstore";
 import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem } from "./ui";
 import { T, tip } from "./i18n";
-import { comboOf, KEYS, keyMap, LAYERS, TOOL_LABELS } from "./keys";
+import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
+import { lockedLayers, setLayerLocked } from "./layers";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
-import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { afterShape, initTools, loadPalettes, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 import { scrollAfterZoom, wheelFactor } from "./zoom";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -56,6 +57,7 @@ const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
 const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
+const LAYER_EDGE: Record<Layer, string> = { 1: "var(--ink-3)", 2: "var(--accent-deep)", 3: "var(--accent)" };
 const SHAPES: [Item["kind"], LucideIcon, string][] = [
   ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes],
 ];
@@ -116,6 +118,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   /** Tippen bei ausgewähltem Textfeld: PageView je Seite öffnet das Feld mit dem Zeichen am Ende */
   const typers = useRef(new Map<number, (id: number, ch: string) => void>()).current;
   const [layer, setLayer] = useState<Layer>(start?.layer ?? 3);
+  /** gesperrte Ebenen dieses Dokuments (gerätelokal, `layers.ts`) */
+  const [locks, setLocks] = useState(() => lockedLayers(path));
+  const toggleLock = (l: Layer) => {
+    setLayerLocked(path, l, !locks.includes(l));
+    setLocks(lockedLayers(path));
+    if (l === layer) clearSel();
+  };
   /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
   const [pal, setPal] = useState(loadPalettes);
@@ -165,6 +174,16 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     setLayer(l);
     clearSel();
     setTextSel(null);
+  };
+  /** Farbfeld: Werkzeug + Farbe + Ebene 3 in einem Klick */
+  const quick = (kind: "pen" | "marker", i: number, dev: "pen" | "mouse" = "mouse") => {
+    const c = pal.quick[kind][i];
+    if (!c) return;
+    const r = pickColor({ tools, preset, marker }, kind, c, dev, settings.auto);
+    setTools(r.tools);
+    setPreset(r.preset);
+    setMarker(r.marker);
+    switchLayer(TOOL_LAYER[kind] ?? 3);
   };
   const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
     setTools((s) => pickTool(s, t, dev, settings.auto));
@@ -618,6 +637,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         [KEYS.selectAll, () => {
           const page = Math.min(current, sizes.length - 1);
           setTool("lasso");
+          if (locks.includes(layer)) return;
           if (layer !== 1) return setSelection({ page, ids: items.filter((it) => it.page === page && layerOf(it) === layer).map((it) => it.id) });
           const v = version;
           invoke<number[][]>("orig_objects", { id, index: page }).then(
@@ -640,6 +660,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         [KEYS.menu, openMenu],
         ...TOOL_LABELS.map(([t, , , key]): [string, () => void] => [key, () => chooseTool(t)]),
         ...LAYERS.map(([l]): [string, () => void] => [String(l), () => switchLayer(l)]),
+        ...QUICK.map(([kind, i, , key]): [string, () => void] => [key, () => quick(kind, i)]),
         // Pfeiltasten schieben eigene ausgewählte Objekte (Umschalt = 10 pt)
         ...(selItems.length ? ([["←", -1, 0], ["→", 1, 0], ["↑", 0, -1], ["↓", 0, 1]] as const).flatMap(([key, dx, dy]): [string, () => void][] =>
           [[key, nudge(dx, dy, 1)], [`Umschalt+${key}`, nudge(dx, dy, 10)]]) : []),
@@ -841,10 +862,15 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           </IconBtn>
         ))}
         {sep}
+        {/* Ebenen: große Ein-Klick-Felder (Nummer + Inhaltsicon), Schloss direkt daneben */}
         {LAYERS.map(([l, icon, label]) => (
-          <IconBtn key={l} icon={icon} label={label} keys={String(l)} className={btn + on(layer === l)} onClick={() => switchLayer(l)} aria-pressed={layer === l}>
-            <sub className="font-mono">{l}</sub>
-          </IconBtn>
+          <span key={l} className={`inline-flex items-center rounded-xs ring-1 ring-inset ring-line${on(layer === l)}`}>
+            <IconBtn icon={icon} label={label} keys={String(l)} className={`${btn} h-9 gap-1 px-2`} onClick={() => switchLayer(l)} aria-pressed={layer === l}>
+              <span className="font-mono text-sm">{l}</span>
+            </IconBtn>
+            <IconBtn icon={locks.includes(l) ? Lock : LockOpen} label={locks.includes(l) ? T.layerUnlock : T.layerLock} aria-pressed={locks.includes(l)}
+              className={`${btn} px-1 ${locks.includes(l) ? "text-ink" : "opacity-50"}`} onClick={() => toggleLock(l)} />
+          </span>
         ))}
         <IconBtn icon={ImagePlus} label={T.image} keys={KEYS.image} onClick={() => void insertImageFile()} />
         <Menu icon={Plus} label={T.insert} keys={KEYS.paste}>
@@ -853,6 +879,26 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
           <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
         </Menu>
+        {sep}
+        {/* Farbfelder immer sichtbar: Stift-Spitze bzw. Marker-Balken in der Farbe; Rahmen = Maus, Punkt = Stift */}
+        {QUICK.map(([kind, i, label, key]) => {
+          const c = pal.quick[kind][i];
+          if (!c) return null;
+          const act = (d: Tool) => d === kind && same(c, kind === "pen" ? preset : marker);
+          return (
+            <IconBtn
+              key={label}
+              icon={kind === "pen" ? Pen : Highlighter}
+              label={label}
+              keys={key}
+              className={`${btn} relative${settings.auto ? (act(tool) ? " ring-1 ring-inset ring-accent text-ink" : "") : on(act(tool))}`}
+              style={{ color: `rgb(${c.color.map((v) => v * 255).join(",")})` }}
+              onClick={(e) => quick(kind, i, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
+            >
+              {settings.auto && act(penTool) && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label={T.penMark} />}
+            </IconBtn>
+          );
+        })}
         {sep}
         {palette.map((p) => (
           <button
@@ -897,8 +943,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
               setPalette([...palette, p]);
               setPick(p);
             }} />
-            <IconBtn icon={Save} label={T.presetSet} text disabled={!palette.some((p) => p.name === pick.name)}
-              onClick={() => setPalette(palette.map((p) => (p.name === pick.name ? pick : p)))} />
+            <IconBtn icon={Save} label={T.presetSet} text disabled={!palette.some((p) => p.name === pick.name) && !pal.quick[mk ? "marker" : "pen"].some((p) => p.name === pick.name)}
+              onClick={() => {
+                setPalette(palette.map((p) => (p.name === pick.name ? pick : p)));
+                const q = pal.quick[mk ? "marker" : "pen"];
+                if (q.some((p) => p.name === pick.name)) setPal((x) => ({ ...x, quick: { ...x.quick, [mk ? "marker" : "pen"]: q.map((p) => (p.name === pick.name ? pick : p)) } }));
+              }} />
             {(tool === "axes" || penTool === "axes") && (
               <div className="flex flex-col gap-1 border-t border-line pt-2">
                 <div className="flex gap-1">
@@ -1114,7 +1164,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           ref={scroller}
           data-scroll
           className="flex-1 overflow-auto"
-          style={{ touchAction: "none" }}
+          // aktive Ebene als farbiger Seitenrand (Inset-Schatten scrollt nicht mit)
+          style={{ touchAction: "none", boxShadow: `inset 4px 0 0 ${LAYER_EDGE[layer]}` }}
           onScroll={onScroll}
           onPointerDownCapture={penEvent}
           onPointerMoveCapture={penEvent}
@@ -1146,6 +1197,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 textSize={pal.text}
                 settings={settings}
                 layer={layer}
+                locked={(l) => locks.includes(l)}
                 textSel={textSel?.page === i && textSel.v === version ? textSel : null}
                 onTextSel={(t) => {
                   clearSel();

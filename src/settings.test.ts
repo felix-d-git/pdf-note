@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { expect, test, vi } from "vitest";
+import type { Preset } from "./ink";
 import {
   afterShape, applyTheme, captureBinding, DEFAULT_PALETTES, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, pickTool, storePalettes,
-  storeSettings, toolFor,
+  storeSettings, toolFor, pickColor,
 } from "./settings";
 
 test("Gerät bestimmt das Werkzeug", () => {
@@ -67,4 +68,17 @@ test("Ansicht + Seitenleiste: alte Einstellungen → dunkel/offen, Auswahl über
   expect(document.documentElement.dataset.theme).toBe("light");
   applyTheme("dark");
   expect(document.documentElement.dataset.theme).toBeUndefined();
+});
+
+test("Farbfeld: Marker-Grün bei aktivem Stift-Rot → Werkzeug Marker, Farbe Grün, Stift-Farbe bleibt", () => {
+  const rot = DEFAULT_PALETTES.quick.pen[0] as Preset;
+  const gruen = DEFAULT_PALETTES.quick.marker[1] as Preset;
+  const start = { tools: pickTool(initTools(false), "pen", "mouse", false), preset: rot, marker: DEFAULT_PALETTES.quick.marker[0] as Preset };
+  const r = pickColor(start, "marker", gruen, "mouse", false);
+  expect(r.tools.mouse).toBe("marker");
+  expect(r.marker).toBe(gruen);
+  expect(r.preset).toBe(rot);
+  // Stift-Gerät bei Automatik: nur der Stift wechselt, die Maus behält Auswahl
+  const a = pickColor({ ...start, tools: initTools(true) }, "marker", gruen, "pen", true);
+  expect([a.tools.mouse, a.tools.pen]).toEqual(["lasso", "marker"]);
 });

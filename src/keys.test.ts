@@ -23,3 +23,11 @@ test("Werkzeug-Buchstaben wirken auch mit Umschalt, Strg+Buchstabe unterscheidet
   const m = keyMap([[KEYS.redo, () => {}]]);
   expect(Object.keys(m).sort()).toEqual(["Strg+Umschalt+Z", "Strg+Y"]);
 });
+
+test("Q/W/E = Stift, Umschalt+Q/W/E = Marker; Radierer wich auf D", () => {
+  expect(comboOf({ key: "q", ctrlKey: false, shiftKey: false })).toBe(KEYS.penRed);
+  expect(comboOf({ key: "W", ctrlKey: false, shiftKey: true })).toBe(KEYS.markGreen);
+  expect(KEYS.eraser).toBe("D");
+  const all = Object.values(KEYS).flatMap(combos);
+  expect(new Set(all).size).toBe(all.length); // keine doppelt belegte Taste
+});
