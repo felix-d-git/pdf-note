@@ -90,3 +90,6 @@ export function setDirty(s: Tabs, id: number, dirty: boolean): Tabs {
   if (s.tabs.find((t) => t.id === id)?.dirty === dirty) return s;
   return { ...s, tabs: s.tabs.map((t) => (t.id === id ? { ...t, dirty } : t)) };
 }
+
+/** Split View: der erste Maus-/Touchpad-Klick in die inaktive Hälfte aktiviert sie nur; Stift und Finger wirken sofort. */
+export const onlyActivates = (active: boolean, pointerType: string) => !active && pointerType === "mouse";

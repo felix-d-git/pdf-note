@@ -10,15 +10,16 @@ import {
 import { z } from "zod";
 import {
   afterDelete, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  layerOf, moveItem, newId, textRect, toData, unionBox, type Item, type Layer, type Preset,
+  isPara, layerOf, moveItem, newId, PARA0, textRect, toData, unionBox, type Item, type Layer, type Preset,
 } from "./ink";
 import { useDoc } from "./docstore";
+import { onlyActivates } from "./tabs";
 import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem } from "./ui";
 import { T, tip } from "./i18n";
 import { comboOf, KEYS, keyMap, LAYERS, TOOL_LABELS } from "./keys";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
-import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type TextEdit, type TextSel } from "./PageView";
+import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, initTools, loadPalettes, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
@@ -143,6 +144,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
   // Passwort nur in diesem Zustand, verworfen beim Schließen des Dialogs
   const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
+  const first = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
@@ -375,7 +377,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const page = first.page;
     edit((its) => [...its, ...added]);
     switchLayer(layerOf(first));
-    setSelection({ page, ids: added.map((it) => it.id) });
+    // Auswahl nur innerhalb einer Ebene (eingefügte Objekte können gemischt sein)
+    setSelection({ page, ids: added.filter((it) => layerOf(it) === layerOf(first)).map((it) => it.id) });
     setTool("lasso");
   }
 
@@ -466,14 +469,20 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   }
 
   /** Original-Objekte der PDF ändern; eigene Objekte ersetzen (`next`) bzw. entfernen (`drop`) im selben Schritt. */
-  const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = []) =>
-    void pageOp({ op: "orig", page, edits }, (its) =>
-      its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it), !drop.length && edits.every((e) => "matrix" in e));
+  const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = [], paras?: ParaMove) =>
+    void pageOp(
+      paras ? { op: "layer1", page, edits, paras: paras.i, dx: paras.dx, dy: paras.dy, delete: !!paras.del } : { op: "orig", page, edits },
+      (its) => its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it),
+      // Absätze: Reihenfolge ändert sich → Auswahl fällt weg
+      !paras && !drop.length && edits.every((e) => "matrix" in e));
 
   const removeSel = (ownOnly = false) => {
-    const orig = selection.ids.filter((i) => i < 0).map((i) => ({ index: -1 - i }));
+    const orig = selection.ids.filter((i) => i < 0 && !isPara(i)).map((i) => ({ index: -1 - i }));
+    const paras = selection.ids.filter(isPara).map((i) => PARA0 - i);
     // Original-Objekte nur auf Ebene 1: sonst unsichtbar ausgewählt
-    if (orig.length && !ownOnly && layer === 1) return origOp(selection.page, orig, [], selItems.map((it) => it.id));
+    if ((orig.length || paras.length) && !ownOnly && layer === 1) {
+      return origOp(selection.page, orig, [], selItems.map((it) => it.id), paras.length ? { i: paras, dx: 0, dy: 0, del: true } : undefined);
+    }
     if (!selItems.length) return;
     const ids = new Set(selItems.map((it) => it.id));
     edit((its) => its.filter((it) => !ids.has(it.id)));
@@ -618,8 +627,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           setTool("lasso");
           if (layer !== 1) return setSelection({ page, ids: items.filter((it) => it.page === page && layerOf(it) === layer).map((it) => it.id) });
           const v = version;
-          invoke<number[][]>("orig_objects", { id, index: page }).then(
-            (b) => v === version && setSelection({ page, ids: b.map((_, i) => -1 - i) }), () => {});
+          Promise.all([invoke<number[][]>("orig_objects", { id, index: page }), invoke<unknown[]>("text_paragraphs", { id, index: page })]).then(
+            ([b, ps]) => v === version && setSelection({ page, ids: [...b.map((_, i) => -1 - i), ...ps.map((_, i) => PARA0 - i)] }), () => {});
         }],
         [KEYS.zoomIn, () => applyZoom(zoom * 1.2)],
         [KEYS.zoomOut, () => applyZoom(zoom / 1.2)],
@@ -792,7 +801,16 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     <div
       className={`min-w-0 flex-col border-t-2 ${marked ? "border-accent" : "border-transparent"} ${visible ? "flex" : "hidden"}`}
       style={style}
-      onPointerDownCapture={onFocus}
+      onPointerDownCapture={(e) => {
+        // erster Maus-Klick in die inaktive Hälfte aktiviert nur diese (Klick folgt nicht); Stift/Finger wirken sofort
+        first.current = onlyActivates(active, e.pointerType);
+        if (first.current) e.stopPropagation();
+        onFocus();
+      }}
+      onClickCapture={(e) => {
+        if (first.current) e.stopPropagation();
+        first.current = false;
+      }}
     >
       <div className="flex flex-wrap items-center gap-1 border-b border-line bg-surface px-3 py-1.5">
         <IconBtn icon={sideOpen ? PanelLeftClose : PanelLeftOpen} label={T.sidebar} onClick={onSide} aria-pressed={sideOpen} />
@@ -1116,6 +1134,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 textSize={pal.text}
                 settings={settings}
                 layer={layer}
+                onLayer={switchLayer}
                 textSel={textSel?.page === i && textSel.v === version ? textSel : null}
                 onTextSel={(t) => {
                   clearSel();
@@ -1140,7 +1159,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setTextSel(null);
                   setSelection({ page, ids });
                 }}
-                onOrig={(edits, next) => origOp(i, edits, next)}
+                onOrig={(edits, next, paras) => origOp(i, edits, next, [], paras)}
                 onText={(edit: TextEdit) => void pageOp({ op: "text", page: i, edit }, (its) => its)}
                 onField={(xref, value) => setField(i, xref, value)}
                 onNewField={(field: NewField) => void pageOp({ op: "newField", page: i, field }, (its) => its)}

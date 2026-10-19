@@ -763,6 +763,20 @@ pub enum PageOp {
     Move { from: i32, to: i32 },
     /// Original-Objekte einer Seite verschieben/skalieren/löschen
     Orig { page: i32, edits: Vec<crate::orig::Edit> },
+    /// Ebene 1 gemeinsam (ein Schritt): Original-Objekte `edits`, dazu Absätze `paras` um (`dx`, `dy`) verschieben bzw. löschen
+    Layer1 {
+        page: i32,
+        #[serde(default)]
+        edits: Vec<crate::orig::Edit>,
+        #[serde(default)]
+        paras: Vec<usize>,
+        #[serde(default)]
+        dx: f32,
+        #[serde(default)]
+        dy: f32,
+        #[serde(default)]
+        delete: bool,
+    },
     /// Original-Textabsatz ändern/verschieben
     Text { page: i32, edit: crate::text::TextEdit },
     /// Formularfeld ausfüllen
@@ -864,6 +878,13 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         PageOp::Orig { page, edits } => {
             crate::orig::edit(doc, *page, edits)?;
             Ok(OpResult::default())
+        }
+        PageOp::Layer1 { page, edits, paras, dx, dy, delete } => {
+            if !edits.is_empty() {
+                crate::orig::edit(doc, *page, edits)?;
+            }
+            let warning = if paras.is_empty() { None } else { crate::text::move_paras(doc, *page, paras, *dx, *dy, *delete)? };
+            Ok(OpResult { warning, ..Default::default() })
         }
         PageOp::Markdown { page, source, insert } => {
             let warning = crate::notebook::render(doc, *page, source, *insert)?;
