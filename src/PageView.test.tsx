@@ -7,7 +7,8 @@ import { box, DEFAULT_PRESET, type Item, type Layer } from "./ink";
 import { PageView } from "./PageView";
 import { DEFAULT_SETTINGS, type Tool } from "./settings";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: () => new Promise(() => {}) }));
+const answers = vi.hoisted(() => ({} as Record<string, unknown>));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (cmd: string) => (cmd in answers ? Promise.resolve(answers[cmd]) : new Promise(() => {})) }));
 const draws = vi.hoisted(() => [] as Item[][]);
 vi.mock("./ink", async (orig) => {
   const m = await orig<typeof import("./ink")>();
@@ -33,6 +34,7 @@ let host: HTMLDivElement;
 // Zugriff auf den Zustand des Testelternteils (nach jedem Render gesetzt)
 const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { added: [], setTool: () => {}, selected: [] };
 const lastAdd: Item[] = [];
+const opened: string[] = [];
 const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 
@@ -51,7 +53,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
       onReplace={(next) => setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
-      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
+      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}}
       onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
       layer={layer} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
     />
@@ -87,9 +89,9 @@ const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel
   return host.querySelector("[data-page]") as HTMLDivElement;
 };
 
-const fire = (el: Element, type: string, x: number, y: number, buttons = 1, pointerType = "mouse", shiftKey = false) => {
+const fire = (el: Element, type: string, x: number, y: number, buttons = 1, pointerType = "mouse", shiftKey = false, ctrlKey = false) => {
   // jsdom kennt kein PointerEvent → MouseEvent mit den Feldern, die React liest
-  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, buttons, shiftKey });
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, buttons, shiftKey, ctrlKey });
   Object.assign(e, { pointerId: 1, pointerType, pressure: 0.5 });
   act(() => void el.dispatchEvent(e));
   return e;
@@ -266,4 +268,30 @@ test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seite
   // weit nach oben: Platz entfernen, nie über den oberen Rand
   drag(300, -1000);
   expect(tops()).toEqual([9, 51, 0]);
+});
+
+test("Links: einfacher Klick öffnet nichts, Strg+Klick meldet die Adresse (Annotation und Textfeld)", async () => {
+  opened.length = 0;
+  Object.assign(answers, { links: [{ rect: [200, 200, 300, 220], page: -1, y: 0, uri: "https://example.org/" }], text_chars: [] });
+  const it: Item = {
+    id: 5, page: 0, kind: "text", color: [0, 0, 0], opacity: 1, size: 10, simulated: false, layer: 3,
+    points: [[100, 100, 0.5], [150, 112, 0.5]], text: "Doku www.a.de",
+  };
+  const page = mount("lasso", 3, [it]);
+  const click = (x: number, y: number, ctrl: boolean) => {
+    fire(page, "pointerdown", x, y, 1, "mouse", false, ctrl);
+    fire(page, "pointerup", x, y, 0, "mouse", false, ctrl);
+  };
+  click(250, 210, false);
+  expect(opened).toEqual([]);
+  // Strg-Hover lädt die Links der Seite, Tooltip zeigt das Ziel
+  fire(page, "pointermove", 250, 210, 0, "mouse", false, true);
+  await act(async () => {});
+  fire(page, "pointermove", 251, 210, 0, "mouse", false, true);
+  expect(page.querySelector("[role=tooltip]")?.textContent).toBe("https://example.org/");
+  click(250, 210, true);
+  click(110, 105, true);
+  expect(opened).toEqual(["https://example.org/", "https://www.a.de/"]);
+  delete answers.links;
+  delete answers.text_chars;
 });
