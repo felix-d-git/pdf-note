@@ -100,3 +100,6 @@ export const viewActive = (s: Tabs, p: Pane, shown: boolean) => shown && p === s
 
 /** Dokument-Auswahl je Hälfte (Dropdown): Dokument der Hälfte `p` ersetzen; die andere Hälfte bleibt (gleiche PDF in beiden erlaubt). */
 export const pickDoc = (s: Tabs, id: number, p: Pane): Tabs => toPane(s, id, p, true);
+
+/** Split View: der erste Maus-/Touchpad-Klick in die inaktive Hälfte aktiviert sie nur; Stift und Finger wirken sofort. */
+export const onlyActivates = (active: boolean, pointerType: string) => !active && pointerType === "mouse";

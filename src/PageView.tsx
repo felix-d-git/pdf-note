@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
-  box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, rotateItem,
+  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, rotateItem,
   rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
@@ -102,7 +102,7 @@ type Gesture =
   | { t: "shape"; item: Item }
   | { t: "erase"; ids: Set<number> }
   /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
-  | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean }
+  | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean; add: number[] | null }
   | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean; fresh: boolean }
   /** Ziehen im gerade geöffneten Textfeld markiert von Stelle `a` aus */
   | { t: "fsel"; it: Item; a: number }
@@ -160,6 +160,16 @@ function smallestAt(its: Item[], x: number, y: number) {
     .sort((a, b) => area(a) - area(b))[0];
 }
 
+/** Berührt der Rahmen `b` das Rechteck bzw. Lasso `poly`? (Ebene 1: alle berührten Absätze/Bilder) */
+function touches(b: { x0: number; y0: number; x1: number; y1: number }, poly: [number, number][], rect: boolean) {
+  if (rect) {
+    const xs = poly.map((q) => q[0]), ys = poly.map((q) => q[1]);
+    return b.x0 <= Math.max(...xs) && b.x1 >= Math.min(...xs) && b.y0 <= Math.max(...ys) && b.y1 >= Math.min(...ys);
+  }
+  return poly.some(([x, y]) => inBox(b, x, y))
+    || [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1], [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]].some(([x = 0, y = 0]) => inPolygon(x, y, poly));
+}
+
 /** Markierter PDF-Text der Seite (Stellen in `text_chars`) */
 export interface TextSel { a: Pos; b: Pos; text: string }
 
@@ -173,6 +183,8 @@ export interface PageProps {
   layer: Layer;
   /** Ebenen-Sperre: gesperrte Ebene lässt sich nicht wählen, ändern oder radieren (`layers.ts`) */
   locked?: (l: Layer) => boolean;
+  /** Maus-Klick wählt die Ebene automatisch (eigenes Objekt / PDF-Inhalt / leer → Notizen) */
+  onLayer: (l: Layer) => void;
   textSel: TextSel | null;
   onTextSel: (sel: TextSel | null) => void;
   onAdd: (it: Item) => void;
@@ -186,7 +198,7 @@ export interface PageProps {
   onCrop: (id: number, f: Crop) => void;
   onSelect: (page: number, ids: number[]) => void;
   /** Original-Objekte der PDF ändern (matrix fehlt → löschen), dazu eigene Objekte – ein Schritt */
-  onOrig: (edits: OrigEdit[], next: Item[]) => void;
+  onOrig: (edits: OrigEdit[], next: Item[], paras?: ParaMove) => void;
   onText: (edit: TextEdit) => void;
   onField: (xref: number, value: string) => void;
   onNewField: (f: NewField) => void;
@@ -207,6 +219,8 @@ export interface PageProps {
   onSpace: (moved: Item[]) => void;
 }
 
+/** PDF-Absätze (Indizes wie `text_paragraphs`) um dx/dy verschieben bzw. löschen – gemeinsam mit Original-Objekten ein Schritt */
+export interface ParaMove { i: number[]; dx: number; dy: number; del?: boolean }
 export interface OrigEdit { index: number; matrix?: number[] }
 /** Aktionen aus Mini-Leiste/Rechtsklick-Menü, die DocView ausführt; `notes` = auf Ebene 3 wechseln (Textfeld hier auf Ebene 1) */
 export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "notes";
@@ -277,7 +291,8 @@ export function PageView(p: PageProps) {
   const [w, h] = [size[0] * zoom, size[1] * zoom];
 
   // Ebene 1: Original-Objekte, Absätze und Zeichen der PDF laden
-  const lassoOn = p.layer === 1 && visible;
+  // auch mit Auswahl-Werkzeug auf Ebene 2/3: der Klick auf PDF-Inhalt springt auf Ebene 1 (Treffer brauchen die Daten)
+  const lassoOn = (p.layer === 1 || tool === "lasso") && visible;
   // Original-Objekte der PDF: als Pseudo-Bild-Objekte mit Id −1 − Index, nicht gezeichnet
   // Boxen gehören zu einem Stand (`version`); veraltete Indizes nie verwenden
   const [origBoxes, setOrigBoxes] = useState<{ v: number; b: number[][] }>({ v: -1, b: [] });
@@ -292,7 +307,7 @@ export function PageView(p: PageProps) {
     points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
   })) : [];
   // Textabsätze (Klick bearbeitet) und Zeichen inkl. OCR-Text (Ziehen markiert, Marker rastet ein), je Stand
-  const textOn = visible && (p.layer === 1 || tool === "marker" || p.penTool === "marker");
+  const textOn = visible && (p.layer === 1 || tool === "lasso" || tool === "marker" || p.penTool === "marker");
   const [paras, setParas] = useState<{ v: number; list: Para[]; chars: CharLine[] }>({ v: -1, list: [], chars: [] });
   // bearbeiteter Absatz: Index, Verschiebung und feste Breite aus Griffleiste/Breitengriff
   const [pedit, setPedit] = useState<{ i: number; dx: number; dy: number; w?: number }>();
@@ -342,22 +357,39 @@ export function PageView(p: PageProps) {
   // Strg+Klick/-Hover: Link-Annotationen + PDF-Zeichen erst laden, wenn Strg über der Seite gedrückt ist
   const [lk, setLk] = useState<{ v: number; anchors: Anchor[]; chars: CharLine[] }>();
   const lkAsked = useRef(-1);
+  const lkLoad = useRef<Promise<NonNullable<typeof lk>>>(undefined);
   const loadLk = () => {
-    if (lkAsked.current === version) return;
+    if (lkAsked.current === version && lkLoad.current) return lkLoad.current;
     lkAsked.current = version;
-    Promise.all([invoke("links", { id: doc, index }), invoke("text_chars", { id: doc, index })]).then(
-      ([a, c]) => setLk({ v: version, anchors: z.array(Anchor).parse(a), chars: z.array(CharLine).parse(c) }),
-      () => setLk({ v: version, anchors: [], chars: [] }),
+    const v = version;
+    lkLoad.current = Promise.all([invoke("links", { id: doc, index }), invoke("text_chars", { id: doc, index })]).then(
+      ([a, c]) => ({ v, anchors: z.array(Anchor).parse(a), chars: z.array(CharLine).parse(c) }),
+      () => ({ v, anchors: [], chars: [] }),
     );
+    void lkLoad.current.then(setLk);
+    return lkLoad.current;
   };
   const [linkTip, setLinkTip] = useState<{ key: string; x: number; y: number; label: string }>();
-  const linkAt = (x: number, y: number): LinkTarget | undefined =>
-    lk?.v === version ? targetAt(lk.anchors, lk.chars, textAt(x, y)?.text, x, y) : undefined;
+  const linkIn = (l: NonNullable<typeof lk>, x: number, y: number) => targetAt(l.anchors, l.chars, textAt(x, y)?.text, x, y);
+  const linkAt = (x: number, y: number): LinkTarget | undefined => (lk?.v === version ? linkIn(lk, x, y) : undefined);
+  const openLink = (hit: LinkTarget) => {
+    setLinkTip(undefined);
+    return "url" in hit ? p.onOpenUrl(hit.url) : p.onJump(hit.page, hit.y);
+  };
   const paraAt = (x: number, y: number) => plist.findIndex(({ bbox: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
 
-  const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
+  // Absätze als Pseudo-Objekte (Id PARA0 − Index): Rechteck/Lasso/Strg-Klick wählen sie wie Bilder, verschoben wird im Backend
+  const pitems: Item[] = plist.map(({ bbox: [x0 = 0, y0 = 0, x1 = 0, y1 = 0] }, i) => ({
+    id: PARA0 - i, page: index, kind: "image", color: [0, 0, 0], opacity: 1, size: 0, simulated: false,
+    points: [[x0, y0, 0.5], [x1, y1, 0.5]], text: "",
+  }));
+  const sel = [...items, ...origs, ...pitems].filter((it) => selected.includes(it.id));
+  // Absätze lassen sich nur verschieben (kein Skalieren/Drehen)
+  const hasPara = sel.some((it) => isPara(it.id));
   // Drehgriff nur für Bilder (Original-Objekte zählen als Bild)
-  const rotatable = sel.length > 0 && sel.every((it) => it.kind === "image");
+  const rotatable = sel.length > 0 && !hasPara && sel.every((it) => it.kind === "image");
+  // Vorschau beim Verschieben von PDF-Inhalt: Ausschnitt des Seitenbilds per CSS-Transform; nach dem Loslassen bis zum neuen Stand
+  const [ghost, setGhost] = useState<{ v: number; dx: number; dy: number; boxes: number[][] }>();
   // Zuschnitt-Modus: id des eigenen Bilds; verschwindet es (Undo, Entf), endet der Modus von selbst
   const [crop, setCrop] = useState<number>();
   const cropIt = items.find((it) => it.id === crop && it.kind === "image");
@@ -474,10 +506,10 @@ export function PageView(p: PageProps) {
       return ctx.measureText(s).width;
     };
   };
-  // nur Textfelder der aktiven Ebene (Ebene 1: keine) – Klick wechselt nie die Ebene
-  const textAt = (x: number, y: number, m = 0) => items.findLast((it) => {
+  // nur Textfelder der (gerade gewählten) Ebene; Ebene 1 hat keine
+  const textAt = (x: number, y: number, m = 0, layer = p.layer) => items.findLast((it) => {
     const b = box(it);
-    return it.kind === "text" && layerOf(it) === p.layer && x >= b.x0 - m && x <= b.x1 + m && y >= b.y0 - 2 * m && y <= b.y1;
+    return it.kind === "text" && layerOf(it) === layer && x >= b.x0 - m && x <= b.x1 + m && y >= b.y0 - 2 * m && y <= b.y1;
   });
   /** Textfeld öffnen, Cursor an die Klickstelle; Ziehen markiert weiter (`fsel`) */
   const openText = (e: React.PointerEvent, it: Item, x: number, y: number) => {
@@ -519,11 +551,12 @@ export function PageView(p: PageProps) {
     // Strg+Klick öffnet einen Link unter dem Zeiger; einfacher Klick bleibt Cursor/Auswahl
     if (e.ctrlKey && e.button === 0 && e.pointerType !== "touch" && !tgt.closest("textarea, [data-pedit], [data-field]")) {
       const [lx, ly] = pt(e);
+      // Links noch nicht geladen (Strg+Klick ohne vorheriges Strg-Hovern): laden und danach öffnen
+      if (lk?.v !== version) void loadLk().then((l) => { const h = linkIn(l, lx, ly); if (h) openLink(h); });
       const hit = linkAt(lx, ly);
       if (hit) {
         e.stopPropagation();
-        setLinkTip(undefined);
-        return "url" in hit ? p.onOpenUrl(hit.url) : p.onJump(hit.page, hit.y);
+        return openLink(hit);
       }
     }
     const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
@@ -533,6 +566,7 @@ export function PageView(p: PageProps) {
     const lt = targetLayer(t, p.layer);
     if (lt && p.locked?.(lt)) return;
     setMenu(undefined);
+    setGhost(undefined);
     owner.current = e.pointerId;
     e.stopPropagation();
     const q = pt(e);
@@ -552,6 +586,14 @@ export function PageView(p: PageProps) {
       // Absatz: Fokus bleibt in der Textarea (Eingaben bleiben erhalten)
       const para = pedit && plist[pedit.i];
       if (!pedit || !para) return;
+      const form = tgt.closest("form");
+      // nichts geändert → Absatz wie ein ausgewähltes Objekt verschieben (Vorschau, Übernahme beim Loslassen)
+      if ("grip" in grip.dataset && form && !pedit.dx && !pedit.dy && pedit.w === undefined && !paraEdit(form, { i: pedit.i, dx: 0, dy: 0 }, para)) {
+        setPedit(undefined);
+        p.onSelect(index, [PARA0 - pedit.i]);
+        g.current = { t: "move", x, y, dx: 0, dy: 0 };
+        return rerender();
+      }
       textDown.current = true;
       const w0 = pedit.w ?? para.bbox[2] - para.bbox[0];
       g.current = "grip" in grip.dataset ? { t: "para", i: pedit.i, x, y, dx: 0, dy: 0 } : { t: "pwidth", id: pedit.i, x, w0, w: w0 };
@@ -559,12 +601,15 @@ export function PageView(p: PageProps) {
     }
     // Auswahl hat Vorrang vor dem Werkzeug: Griff → Größe/Drehen, Rahmen → verschieben, außerhalb → aufheben
     // ponytail: nur die Auswahl dieser Seite; Druck auf einer anderen Seite lässt sie stehen (Esc hebt auf)
-    if (sel.length) {
+    // Maus mit Strg/Umschalt: Auswahl erweitern/verkleinern (bleibt in der Ebene)
+    const mouse = e.pointerType !== "pen";
+    const add = mouse && (e.ctrlKey || e.shiftKey) && t === "lasso" && !tgt.closest("[data-handle]");
+    if (sel.length && !add) {
       const b = unionBox(sel);
       const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
       // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
       const only = sel.length === 1 && sel[0]?.kind === "text" ? sel[0] : undefined;
-      if (t === "lasso" && only && !h && inBox(b, x, y)) {
+      if (t === "lasso" && mouse && only && !h && inBox(b, x, y)) {
         p.onSelect(index, []);
         return openText(e, only, x, y);
       }
@@ -580,8 +625,18 @@ export function PageView(p: PageProps) {
     }
     // Klick während des Bearbeitens schließt erst das offene Feld/den Absatz (Blur speichert)
     const fresh = !edit && !pedit;
+    // Maus-Klick wählt die Ebene selbst; der Stift fasst Text nie an und behält die Ebene
+    let L = p.layer;
+    if (t === "lasso" && mouse && !add && fresh) {
+      const onPdf = !!posAt(clist, x, y) || paraAt(x, y) >= 0 || !!smallestAt(origs, x, y);
+      const auto = autoLayerFor(items, x, y, 4 / zoom + 1, onPdf, (l) => !p.locked?.(l));
+      if (auto && auto !== L) {
+        L = auto;
+        p.onLayer(auto);
+      }
+    }
     // anderes Textfeld: offenes übernehmen und direkt hineinspringen
-    const hitT = t === "lasso" && !pedit ? textAt(x, y) : undefined;
+    const hitT = t === "lasso" && mouse && !add && !pedit ? textAt(x, y, 0, L) : undefined;
     if (hitT) {
       if (hitT.id === edit?.item.id) return;
       ta.current?.blur();
@@ -613,9 +668,9 @@ export function PageView(p: PageProps) {
       eraseAt(x, y);
       redraw();
     } else if (t === "lasso") {
-      const at = p.layer === 1 ? posAt(clist, x, y) : null;
+      const at = L === 1 && mouse && !add ? posAt(clist, x, y) : null;
       // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck, Stift ein Lasso
-      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false, fresh } : { t: "lasso", poly: [[x, y]], rect: e.pointerType !== "pen", fresh };
+      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false, fresh } : { t: "lasso", poly: [[x, y]], rect: mouse, fresh, add: add ? selected : null };
       rerender();
     } else if (t === "space") {
       g.current = { t: "space", y, dy: 0 };
@@ -749,17 +804,17 @@ export function PageView(p: PageProps) {
       case "lasso": {
         const [x0, y0] = c.poly[0] ?? [0, 0];
         const far = c.poly.some(([x, y]) => Math.hypot(x - x0, y - y0) > 3);
-        // nur die aktive Ebene ist wählbar
-        const cand = p.layer === 1 ? origs : items.filter((it) => layerOf(it) === p.layer);
+        // nur die aktive Ebene ist wählbar; Ebene 1: alle berührten Absätze + PDF-Bilder
+        const cand = p.layer === 1 ? [...origs, ...pitems] : items.filter((it) => layerOf(it) === p.layer);
         const ids = far
-          ? cand.filter((it) => {
-            const b = box(it);
-            return inPolygon((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, c.poly);
-          }).map((it) => it.id)
-          : p.layer === 1 ? smallestAt(origs, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id;
-        p.onSelect(index, ids === undefined ? [] : Array.isArray(ids) ? ids : [ids]);
-        // Klick ins Leere (Ebene 2/3) setzt den Cursor; das Feld entsteht erst mit dem ersten Zeichen
-        if (!far && c.fresh && ids === undefined && p.layer !== 1 && e.pointerType !== "pen") {
+          ? cand.filter((it) => p.layer === 1 ? touches(box(it), c.poly, c.rect) : inPolygon((box(it).x0 + box(it).x1) / 2, (box(it).y0 + box(it).y1) / 2, c.poly)).map((it) => it.id)
+          : (p.layer === 1 ? smallestAt(cand, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id) ?? [];
+        const hit = Array.isArray(ids) ? ids : [ids];
+        const base = c.add ?? [];
+        p.onSelect(index, !c.add ? hit : far ? [...new Set([...base, ...hit])] : hit.some((i) => base.includes(i)) ? base.filter((i) => !hit.includes(i)) : [...base, ...hit]);
+        // Klick ins Leere setzt den Cursor (Notizen, Ebene 3); das Feld entsteht erst mit dem ersten Zeichen
+        if (!far && c.fresh && !c.add && !hit.length && e.pointerType !== "pen") {
+          if (p.layer !== 3) p.onLayer(3);
           caret.current = [0, 0];
           setEdit({ item: make("text", preset, [x0, y0, 0.5], false), isNew: true });
         }
@@ -796,7 +851,11 @@ export function PageView(p: PageProps) {
       case "fsel":
         break;
       case "move":
-        if (c.dx || c.dy) commit((it) => moveItem(it, c.dx, c.dy), [1, 0, 0, 1, c.dx, c.dy]);
+        if (c.dx || c.dy) {
+          const pdf = sel.filter((it) => it.id < 0);
+          if (pdf.length) setGhost({ v: version, dx: c.dx, dy: c.dy, boxes: pdf.map((it) => [box(it).x0, box(it).y0, box(it).x1, box(it).y1]) });
+          commit((it) => moveItem(it, c.dx, c.dy), [1, 0, 0, 1, c.dx, c.dy]);
+        }
         break;
       case "para":
         // Verschiebung gilt beim Übernehmen, Eingaben bleiben offen
@@ -836,8 +895,11 @@ export function PageView(p: PageProps) {
   /** Verschieben/Skalieren: eigene Objekte per `f`, Original-Objekte per Matrix `m` im Backend */
   const commit = (f: (it: Item) => Item, m: number[]) => {
     const own = sel.filter((it) => it.id >= 0).map(f);
-    const orig = sel.filter((it) => it.id < 0).map((it) => ({ index: -1 - it.id, matrix: m }));
-    if (orig.length) p.onOrig(orig, own);
+    const orig = sel.filter((it) => it.id < 0 && !isPara(it.id)).map((it) => ({ index: -1 - it.id, matrix: m }));
+    // Absätze nur verschieben (Matrix = Verschiebung); alles zusammen ein Undo-Schritt
+    const i = sel.filter((it) => isPara(it.id)).map((it) => PARA0 - it.id);
+    if (i.length) p.onOrig(orig, own, { i, dx: m[4] ?? 0, dy: m[5] ?? 0 });
+    else if (orig.length) p.onOrig(orig, own);
     else p.onReplace(own);
   };
 
@@ -862,11 +924,8 @@ export function PageView(p: PageProps) {
     else p.onReplace([next]);
   };
 
-  const submitPara = (f: HTMLFormElement) => {
-    const pe = pedit;
-    const para = pe && plist[pe.i];
-    setPedit(undefined);
-    if (!pe || !para) return;
+  /** Änderung aus dem Absatz-Formular; `null` = nichts geändert (Text, Schrift, Größe, Farbe, Verschiebung, Breite) */
+  const paraEdit = (f: HTMLFormElement, pe: { i: number; dx: number; dy: number; w?: number }, para: Para): TextEdit | null => {
     const d = new FormData(f);
     const text = String(d.get("text") ?? "");
     const font = String(d.get("font") ?? "");
@@ -878,7 +937,16 @@ export function PageView(p: PageProps) {
     if (font === "sans" || font === "serif" || font === "mono") edit.font = font;
     if (Number.isFinite(size) && Math.abs(size - para.size) > 0.05) edit.size = size;
     if (/^#[0-9a-f]{6}$/i.test(color) && color !== hex(para.color)) edit.color = rgb(color);
-    if (text !== para.text || Object.keys(edit).length > 2) p.onText(edit);
+    return text !== para.text || Object.keys(edit).length > 2 ? edit : null;
+  };
+
+  const submitPara = (f: HTMLFormElement) => {
+    const pe = pedit;
+    const para = pe && plist[pe.i];
+    setPedit(undefined);
+    if (!pe || !para) return;
+    const edit = paraEdit(f, pe, para);
+    if (edit) p.onText(edit);
   };
 
   const submitField = (f: HTMLFormElement) => {
@@ -977,7 +1045,7 @@ export function PageView(p: PageProps) {
         const [x, y] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
         if (tsRects.some(([x0, y0, x1, y1]) => inBox({ x0, y0, x1, y1 }, x, y))) return setMenu({ x, y, on: "text" });
         if (sel.length && (!e.isTrusted || inBox(unionBox(sel), x, y))) return setMenu({ x, y, on: "sel" });
-        const hit = p.layer === 1 ? smallestAt(origs, x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, 4 / zoom + 1));
+        const hit = p.layer === 1 ? smallestAt([...origs, ...pitems], x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, 4 / zoom + 1));
         if (hit) p.onSelect(index, [hit.id]);
         setMenu({ x, y, on: hit ? "sel" : "empty" });
       }}
@@ -1012,7 +1080,7 @@ export function PageView(p: PageProps) {
           className="pointer-events-none absolute border border-dashed border-accent"
           style={{ left: sb.x0 * zoom - 3, top: sb.y0 * zoom - 3, width: (sb.x1 - sb.x0) * zoom + 6, height: (sb.y1 - sb.y0) * zoom + 6 }}
         >
-          {HANDLES.map((k) => (
+          {(hasPara ? [] : HANDLES).map((k) => (
             <span key={k} data-handle={k}
               className="pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-xs border border-white bg-accent"
               style={{
@@ -1098,6 +1166,23 @@ export function PageView(p: PageProps) {
           <line x1={0} x2={w} y1={(gs.y + gs.dy) * zoom} y2={(gs.y + gs.dy) * zoom} stroke="var(--accent)" />
         </svg>
       )}
+      {/* PDF-Inhalt beim Verschieben: alte Stelle abdecken, Ausschnitt des Seitenbilds an der neuen Stelle */}
+      {url && (() => {
+        const m = gs?.t === "move" ? { dx: gs.dx, dy: gs.dy, boxes: sel.filter((it) => it.id < 0).map((it) => [box(it).x0, box(it).y0, box(it).x1, box(it).y1]) }
+          : ghost?.v === version ? ghost : null;
+        return m && (m.dx || m.dy) && m.boxes.map(([x0 = 0, y0 = 0, x1 = 0, y1 = 0], i) => {
+          const st = { left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom };
+          return (
+            <div key={`g${i}`} data-ghost className="pointer-events-none absolute">
+              <div className="absolute bg-white" style={st} />
+              <div className="absolute" style={{
+                ...st, backgroundImage: `url(${url})`, backgroundSize: `${w}px ${h}px`, backgroundPosition: `${-x0 * zoom}px ${-y0 * zoom}px`,
+                transform: `translate(${m.dx * zoom}px, ${m.dy * zoom}px)`,
+              }} />
+            </div>
+          );
+        });
+      })()}
       {lasso && (
         <svg className="pointer-events-none absolute inset-0" width={w} height={h}>
           <polyline points={lasso.map(([x, y]) => `${x * zoom},${y * zoom}`).join(" ")} fill="var(--accent-soft)" stroke="var(--accent)" strokeDasharray="4 3" />
