@@ -36,6 +36,10 @@ pub struct Para {
 }
 
 impl Para {
+    /// Ursprung des ersten Zeichens (x, Grundlinie): bleibt bei Ersatzschrift exakt vergleichbar, die bbox nicht
+    pub fn origin(&self) -> (f32, f32) {
+        (self.lines[0].x0, self.lines[0].base)
+    }
     fn left(&self) -> f32 {
         self.lines.get(1).unwrap_or(&self.lines[0]).x0
     }
@@ -672,6 +676,21 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     s.extend(emit(&set, &fonts, size, e.color.unwrap_or(p.color), &inv).into_bytes());
     let stream = doc.add_stream(&mupdf::Buffer::from_bytes(&s).map_err(err)?, None, false).map_err(err)?;
     page.object().dict_put("Contents", stream).map_err(err)?;
+    Ok((!notes.is_empty()).then(|| notes.join("; ")))
+}
+
+/// Absätze `paras` (Indizes wie `paragraphs`) um (`dx`, `dy`) verschieben oder löschen. Nach jeder Änderung
+/// ändert sich die Reihenfolge → jeder Absatz wird über Text + Rahmen neu gesucht.
+pub fn move_paras(doc: &mut PdfDocument, index: i32, paras: &[usize], dx: f32, dy: f32, delete: bool) -> Result<Option<String>, String> {
+    let before = paragraphs(doc, index)?;
+    // einzeilig: Rahmen etwas weiter, sonst bricht die breitere Ersatzschrift die Zeile beim bloßen Verschieben um
+    let targets = paras.iter().map(|&i| before.get(i).map(|p| (p.text.clone(), p.bbox, (p.bbox[3] - p.bbox[1] < 1.6 * p.size).then(|| (p.bbox[2] - p.bbox[0]) * 1.3 + 2.0 * p.size))).ok_or("Absatz nicht gefunden")).collect::<Result<Vec<_>, _>>()?;
+    let mut notes = Vec::new();
+    for (text, bb, width) in targets {
+        let i = paragraphs(doc, index)?.iter().position(|p| p.text == text && p.bbox.iter().zip(bb).all(|(a, b)| (a - b).abs() < 0.5)).ok_or("Absatz nicht gefunden")?;
+        let e = if delete { TextEdit { para: i, ..Default::default() } } else { TextEdit { para: i, text, dx, dy, width, ..Default::default() } };
+        notes.extend(edit(doc, index, &e)?);
+    }
     Ok((!notes.is_empty()).then(|| notes.join("; ")))
 }
 

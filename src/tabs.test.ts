@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, pickDoc, show, toggleSplit, toPane, viewActive, type Tabs } from "./tabs";
+import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, onlyActivates, openTab, setDirty, pickDoc, show, toggleSplit, toPane, viewActive, type Tabs } from "./tabs";
 
 const three = (): Tabs => openTab(openTab(openTab(EMPTY_TABS, 1, "C:\\a.pdf"), 2, "C:\\b.pdf"), 3, "C:\\c.pdf");
 const ids = (s: Tabs) => s.tabs.map((t) => t.id);
@@ -126,5 +126,12 @@ describe("Split", () => {
     expect(pickDoc(sp, 2, 1).panes).toEqual([3, 2]);
     expect(pickDoc(sp, 3, 1).panes).toEqual([3, 3]); // zweite Ansicht derselben PDF
     expect(pickDoc(sp, 1, 0).panes).toEqual([1, 1]); // kein Tausch
+  });
+
+  it("erster Maus-Klick in die inaktive Hälfte aktiviert nur, Stift zeichnet sofort", () => {
+    expect(onlyActivates(false, "mouse")).toBe(true);
+    expect(onlyActivates(true, "mouse")).toBe(false);
+    expect(onlyActivates(false, "pen")).toBe(false);
+    expect(onlyActivates(false, "touch")).toBe(false);
   });
 });

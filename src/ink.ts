@@ -433,6 +433,20 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
   }
 }
 
+/**
+ * Ebene, in die ein Maus-Klick an (x, y) springt: eigenes Objekt (oberstes zuerst) → dessen Ebene; reiner PDF-Inhalt
+ * (`onPdf`) → 1; sonst `null` = Ebene bleibt. EINZIGE Stelle der Automatik: `ok` (z. B. Ebenen-Sperre) überspringt Ebenen.
+ */
+export function autoLayerFor(items: Item[], x: number, y: number, tol: number, onPdf: boolean, ok: (l: Layer) => boolean = () => true): Layer | null {
+  const own = items.findLast((it) => ok(layerOf(it)) && hitTest(it, x, y, tol));
+  if (own) return layerOf(own);
+  return onPdf && ok(1) ? 1 : null;
+}
+
+/** Ids von PDF-Absätzen (Ebene 1) im Auswahlsystem: `PARA0 - Index`; Original-Objekte haben `-1 - Index` */
+export const PARA0 = -1_000_000;
+export const isPara = (id: number) => id <= PARA0;
+
 export function inPolygon(x: number, y: number, poly: [number, number][]) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {

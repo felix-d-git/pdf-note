@@ -3,13 +3,17 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, savedWidth, type Item, type Layer, type Preset } from "./ink";
-import { PageView } from "./PageView";
+import { box, DEFAULT_PRESET, PARA0, savedWidth, type Item, type Layer, type Preset } from "./ink";
+import { PageView, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Tool } from "./settings";
 
 const FELD = { xref: 9, kind: "check", name: "H", rect: [20, 60, 32, 72], value: "Off", on: "Yes", options: [], readonly: false, multiline: false };
 const answers = vi.hoisted(() => ({} as Record<string, unknown>));
-vi.mock("@tauri-apps/api/core", () => ({ invoke: (cmd: string) => (cmd === "form_fields" ? Promise.resolve([FELD]) : cmd in answers ? Promise.resolve(answers[cmd]) : new Promise(() => {})) }));
+// Backend-Antworten je Test: Standard = antwortet nie (answers/form_fields haben Vorrang)
+const backend = vi.hoisted(() => ({ reply: ((): Promise<unknown> => new Promise(() => {})) as (cmd: string) => Promise<unknown> }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string) => (cmd in answers ? Promise.resolve(answers[cmd]) : cmd === "form_fields" ? Promise.resolve([FELD]) : backend.reply(cmd)),
+}));
 const deleted: number[] = [];
 const draws = vi.hoisted(() => [] as Item[][]);
 vi.mock("./ink", async (orig) => {
@@ -34,7 +38,8 @@ const flushFrames = () => act(() => {
 let root: Root;
 let host: HTMLDivElement;
 // Zugriff auf den Zustand des Testelternteils (nach jedem Render gesetzt)
-const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[] } = { added: [], setTool: () => {}, selected: [] };
+const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[]; layer: Layer } = { added: [], setTool: () => {}, selected: [], layer: 3 };
+const origs: [OrigEdit[], ParaMove | undefined][] = [];
 const lastAdd: Item[] = [];
 const opened: string[] = [];
 const shapes: Item[] = [];
@@ -42,11 +47,12 @@ const crops: [number, number[]][] = [];
 let replaces = 0;
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
-function Page({ start, pen, layer = 3, init = [], sel = [], preset = DEFAULT_PRESET, locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; locked?: (l: Layer) => boolean }) {
+function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; locked?: (l: Layer) => boolean }) {
   const [items, setItems] = useState<Item[]>(init);
+  const [layer, setLayer] = useState<Layer>(layer0);
   const [tool, st] = useState(start);
   const [selected, setSel] = useState<number[]>(sel);
-  useEffect(() => void Object.assign(ui, { added: items, setTool: st, selected }), [items, selected]);
+  useEffect(() => void Object.assign(ui, { added: items, setTool: st, selected, layer }), [items, selected, layer]);
   return (
     <PageView
       doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool} penTool={pen ?? tool} typers={new Map()}
@@ -55,10 +61,10 @@ function Page({ start, pen, layer = 3, init = [], sel = [], preset = DEFAULT_PRE
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={() => {}}
       onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
-      onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
+      onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
       onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
-      layer={layer} locked={locked} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
+      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
     />
   );
 }
@@ -76,6 +82,8 @@ beforeEach(() => {
   Element.prototype.setPointerCapture = () => {};
   frames = new Map();
   draws.length = 0;
+  origs.length = 0;
+  backend.reply = () => new Promise(() => {});
   host = document.createElement("div");
   document.body.append(host);
 });
@@ -359,6 +367,11 @@ test("Links: einfacher Klick öffnet nichts, Strg+Klick meldet die Adresse (Anno
   };
   click(250, 210, false);
   expect(opened).toEqual([]);
+  // Strg+Klick ohne vorheriges Strg-Hovern: Links werden geladen, dann geöffnet
+  click(250, 210, true);
+  await act(async () => {});
+  expect(opened).toEqual(["https://example.org/"]);
+  opened.length = 0;
   // Strg-Hover lädt die Links der Seite, Tooltip zeigt das Ziel
   fire(page, "pointermove", 250, 210, 0, "mouse", false, true);
   await act(async () => {});
@@ -406,4 +419,96 @@ test("Form: Füllung und Deckkraft über das Zahnrad", () => {
   act(() => void op.dispatchEvent(new Event("change", { bubbles: true })));
   expect(ui.added[0]?.opacity).toBe(0.5);
   expect(replaces).toBe(3);
+});
+
+const tick = () => act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+const text = (id: number, x: number): Item => ({ ...obj(id, "text", x, 100, x + 60, 112), text: "Notiz", layer: 3 });
+
+test("Stift fasst Text nie an: kein Textfeld, kein Cursor, kein Absatz-Editor", () => {
+  // Stift-Lasso (Seitentaste) auf freier Fläche und auf einem Textfeld; Stift-Spitze mit Auswahl-Werkzeug
+  const page = mount("lasso", 3, [text(1, 100)], { pen: "lasso" });
+  for (const buttons of [3, 1]) {
+    for (const x of [300, 110]) {
+      fire(page, "pointerdown", x, 105, buttons, "pen");
+      fire(page, "pointerup", x, 105, 0, "pen");
+      expect(host.querySelector("textarea")).toBeNull();
+    }
+  }
+  expect(ui.added).toHaveLength(1);
+  // Maus legt dagegen ein Textfeld an
+  fire(page, "pointerdown", 300, 300);
+  fire(page, "pointerup", 300, 300, 0);
+  expect(host.querySelector("textarea")).not.toBeNull();
+});
+
+test("Klick auf eigenes Objekt wählt dessen Ebene, auf leere Stelle Textfeld auf Ebene 3", () => {
+  const page = mount("lasso", 3, [obj(1, "rect", 100, 100, 200, 160), text(2, 300)]);
+  fire(page, "pointerdown", 100, 130);
+  fire(page, "pointerup", 100, 130, 0);
+  expect(ui.layer).toBe(2);
+  expect(ui.selected).toEqual([1]);
+  fire(page, "pointerdown", 305, 105);
+  fire(page, "pointerup", 305, 105, 0);
+  expect(ui.layer).toBe(3);
+  expect(host.querySelector("textarea")).not.toBeNull();
+  act(() => (host.querySelector("textarea") as HTMLTextAreaElement).blur());
+  act(() => ui.setTool("lasso"));
+  fire(page, "pointerdown", 500, 500);
+  fire(page, "pointerup", 500, 500, 0);
+  expect(ui.layer).toBe(3);
+  // Ebene 2 aktiv, leerer Klick → Textfeld auf Ebene 3
+  const p2 = mount("lasso", 2, []);
+  fire(p2, "pointerdown", 500, 500);
+  fire(p2, "pointerup", 500, 500, 0);
+  expect(ui.layer).toBe(3);
+});
+
+test("Klick auf PDF-Bild wechselt auf Ebene 1, der Stift nicht", async () => {
+  backend.reply = (c) => Promise.resolve(c === "orig_objects" ? [[100, 300, 200, 400]] : []);
+  root = createRoot(host);
+  act(() => root.render(<Page start="lasso" layer={3} pen="lasso" />));
+  await tick();
+  const page = host.querySelector("[data-page]") as HTMLDivElement;
+  fire(page, "pointerdown", 150, 350, 1, "pen");
+  fire(page, "pointerup", 150, 350, 0, "pen");
+  expect(ui.layer).toBe(3);
+  fire(page, "pointerdown", 150, 350);
+  expect(ui.layer).toBe(1);
+  fire(page, "pointerup", 150, 350, 0);
+  expect(ui.selected).toEqual([-1]);
+});
+
+test("Auswahl bleibt in einer Ebene: Rechteck auf Ebene 2 trifft keine Ebene-3-Objekte", () => {
+  const page = mount("lasso", 2, [obj(1, "rect", 100, 100, 150, 150), text(2, 200)]);
+  fire(page, "pointerdown", 50, 50);
+  fire(page, "pointermove", 400, 300);
+  fire(page, "pointerup", 400, 300, 0);
+  expect(ui.selected).toEqual([1]);
+});
+
+test("Rechteck über Absätze markiert alle berührten; gemeinsam verschieben = ein Aufruf mit Vorschau", async () => {
+  const para = (y: number) => ({ bbox: [50, y, 250, y + 30], text: "Absatz", font: "Helvetica", size: 12, color: [0, 0, 0] });
+  backend.reply = (c) => Promise.resolve(c === "text_paragraphs" ? [para(100), para(200), para(400)] : []);
+  root = createRoot(host);
+  act(() => root.render(<Page start="lasso" layer={1} />));
+  await tick();
+  const page = host.querySelector("[data-page]") as HTMLDivElement;
+  // streift Absatz 0 und 1, nicht 2
+  fire(page, "pointerdown", 20, 120);
+  fire(page, "pointermove", 100, 210);
+  fire(page, "pointerup", 100, 210, 0);
+  expect(ui.selected).toEqual([PARA0, PARA0 - 1]);
+  // Umschalt-Klick fügt Absatz 2 hinzu, noch einmal entfernt ihn
+  fire(page, "pointerdown", 100, 410, 1, "mouse", true);
+  fire(page, "pointerup", 100, 410, 0, "mouse", true);
+  expect(ui.selected).toEqual([PARA0, PARA0 - 1, PARA0 - 2]);
+  fire(page, "pointerdown", 100, 410, 1, "mouse", true);
+  fire(page, "pointerup", 100, 410, 0, "mouse", true);
+  expect(ui.selected).toEqual([PARA0, PARA0 - 1]);
+  // gemeinsam ziehen: ein Aufruf mit beiden Absätzen
+  fire(page, "pointerdown", 100, 125);
+  fire(page, "pointermove", 120, 140);
+  fire(page, "pointerup", 120, 140, 0);
+  expect(origs).toHaveLength(1);
+  expect(origs[0]?.[1]).toMatchObject({ i: [0, 1], dx: 20, dy: 15 });
 });

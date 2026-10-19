@@ -428,6 +428,56 @@ fn text_direkt() {
     }
 }
 
+/// Mehrere Absätze gemeinsam verschieben (Ebene 1, ein `page_op`) → speichern → neu öffnen:
+/// beide an der neuen Stelle, übrige Absätze und Text anderer Seiten gleich.
+#[test]
+#[ignore]
+fn absaetze_verschieben() {
+    use pdf::PageOp;
+    use pdf_note_lib::text::paragraphs;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-verschieben");
+    for f in ["latex.pdf", "word.pdf"] {
+        let src = dir.join(f);
+        let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(f);
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let before = paragraphs(&doc, 0).unwrap();
+        // zwei kurze Absätze (≤ 2 Zeilen) verschieben, 8 pt nach rechts/unten ist auf jeder Seite frei genug
+        let pick: Vec<usize> = before.iter().enumerate().filter(|(_, p)| p.bbox[3] - p.bbox[1] < 2.5 * p.size && p.text.len() > 3).map(|(i, _)| i).take(2).collect();
+        assert_eq!(pick.len(), 2, "{f}: zu wenige Absätze");
+        let (dx, dy) = (8.0, 6.0);
+        pdf::page_op(&mut doc, &PageOp::Layer1 { page: 0, edits: vec![], paras: pick.clone(), dx, dy, delete: false }).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = paragraphs(&doc, 0).unwrap();
+        for &i in &pick {
+            let (o, w) = (&before[i], before[i].text.split_whitespace().collect::<Vec<_>>().join(" "));
+            let q = after.iter().find(|q| q.text.split_whitespace().collect::<Vec<_>>().join(" ") == w).unwrap_or_else(|| panic!("{f}: Absatz {i} fehlt: {w}"));
+            // Ursprung statt bbox: bei Ersatzschrift ändern sich Breite/Höhe der bbox, die Grundlinie nicht
+            let ((ox, oy), (qx, qy)) = (o.origin(), q.origin());
+            assert!((qx - ox - dx).abs() < 0.5 && (qy - oy - dy).abs() < 0.5, "{f}: Absatz {i}: ({ox},{oy}) -> ({qx},{qy})");
+        }
+        for (i, o) in before.iter().enumerate().filter(|(i, _)| !pick.contains(i)) {
+            assert!(after.iter().any(|a| a.text == o.text && a.bbox.iter().zip(o.bbox).all(|(x, y)| (x - y).abs() < 0.05)), "{f}: Absatz {i} verändert: {} {:?} pick={pick:?}
+vorher {:?}
+nachher {:?}", o.text, o.bbox, before.iter().map(|p| (&p.text, p.bbox)).collect::<Vec<_>>(), after.iter().map(|p| (&p.text, p.bbox)).collect::<Vec<_>>());
+        }
+        let t = page_texts(&doc).unwrap();
+        for i in 1..texts.len() {
+            assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
+        }
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
+    }
+}
+
 /// Formular (Kopie von formular.pdf): vorhandene Felder ausfüllen + neue anlegen → speichern → neu öffnen:
 /// Werte da, neue Felder in AcroForm, Erscheinungsbild vorhanden; Text der Seiten unverändert.
 #[test]
