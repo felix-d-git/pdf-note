@@ -13,7 +13,7 @@ import { comboOf, KEYS, keyMap } from "./keys";
 import { fromSession, loadSession, storeSession, toSession, type DocStart } from "./session";
 import { applyTheme, captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
 import {
-  activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, setDirty, show, toggleSplit, toPane, type Pane, type Tab,
+  activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, pickDoc, setDirty, show, toggleSplit, toPane, viewActive, type Pane, type Tab,
 } from "./tabs";
 import { Tour, tourSeen } from "./tour";
 import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem } from "./ui";
@@ -350,7 +350,7 @@ export default function App() {
         init={init}
         start={starts.get(t.id)}
         visible={dup || paneOf(t.id) !== undefined}
-        active={p === state.active}
+        active={viewActive(state, p, dup || paneOf(t.id) !== undefined)}
         marked={state.split && p === state.active}
         settings={settings}
         style={paneStyle(p)}
@@ -402,6 +402,27 @@ export default function App() {
             );
           })}
         </div>
+        {state.split && ([0, 1] as const).map((p) => (
+          <select
+            key={p}
+            aria-label={p === 0 ? T.paneLeft : T.paneRight}
+            title={p === 0 ? T.paneLeft : T.paneRight}
+            value={panes[p] ?? ""}
+            className={`max-w-32 rounded-xs border bg-surface py-0.5 text-sm text-ink-2 ${state.active === p ? "border-accent" : "border-line"}`}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "open") {
+                setState((s) => focus(s, p));
+                return void pickFile();
+              }
+              setState((s) => pickDoc(s, Number(v), p));
+            }}
+          >
+            {panes[p] === undefined && <option value="" />}
+            {tabs.map((t) => <option key={t.id} value={t.id}>{fileName(t.path)}</option>)}
+            <option value="open">{T.openEllipsis}</option>
+          </select>
+        ))}
         <IconBtn icon={Columns2} label={T.split} className={btn + on(state.split)} aria-pressed={state.split} onClick={() => setState(toggleSplit)} />
         <IconBtn icon={ArrowLeftRight} label={T.auto} className={btn + on(settings.auto)} aria-pressed={settings.auto}
           onClick={() => updateSettings({ ...settings, auto: !settings.auto })} />

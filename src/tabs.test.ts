@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, show, toggleSplit, toPane, type Tabs } from "./tabs";
+import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, pickDoc, show, toggleSplit, toPane, viewActive, type Tabs } from "./tabs";
 
 const three = (): Tabs => openTab(openTab(openTab(EMPTY_TABS, 1, "C:\\a.pdf"), 2, "C:\\b.pdf"), 3, "C:\\c.pdf");
 const ids = (s: Tabs) => s.tabs.map((t) => t.id);
@@ -109,5 +109,22 @@ describe("Split", () => {
   it("focus ohne Split ändert nichts", () => {
     const s = three();
     expect(focus(s, 1)).toBe(s);
+  });
+
+  it("nur Ansichten in einer Hälfte hören auf Tastatur/Einfügen (versteckte Tabs nie)", () => {
+    const s = three(); // Tab 3 aktiv in Hälfte 0, Tabs 1+2 versteckt
+    expect(viewActive(s, 0, true)).toBe(true);
+    expect(viewActive(s, 0, false)).toBe(false); // vorher: versteckte Tabs galten als Hälfte 0 → mehrere Ziele
+    const sp = toggleSplit(s);
+    expect(viewActive(sp, 1, true)).toBe(true);
+    expect(viewActive(sp, 0, true)).toBe(false);
+  });
+
+  it("Dropdown je Hälfte: jedes offene Dokument, auch das der anderen Hälfte", () => {
+    const sp = toggleSplit(three()); // [3, 1]
+    expect(sp.panes).toEqual([3, 1]);
+    expect(pickDoc(sp, 2, 1).panes).toEqual([3, 2]);
+    expect(pickDoc(sp, 3, 1).panes).toEqual([3, 3]); // zweite Ansicht derselben PDF
+    expect(pickDoc(sp, 1, 0).panes).toEqual([1, 1]); // kein Tausch
   });
 });
