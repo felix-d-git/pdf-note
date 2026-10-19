@@ -276,6 +276,12 @@ async fn links(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Vec<n
     w.run(move |d| nav::links(&doc(d, id)?.doc, index)).await
 }
 
+/// Adresse im Standard-Browser öffnen (nur http/https, siehe `nav::web_url`); die App selbst bleibt offline.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    nav::open_url(&url)
+}
+
 /// Markdown-Quelltext einer Seite (`None` = keine Markdown-Seite).
 #[tauri::command]
 async fn page_markdown(w: tauri::State<'_, Worker>, id: u32, index: i32) -> Result<Option<String>, String> {
@@ -339,7 +345,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links, open_url])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

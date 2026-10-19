@@ -11,6 +11,7 @@ import { T } from "./i18n";
 import { IconBtn } from "./ui";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
+import { targetAt, type LinkTarget } from "./weblinks";
 
 /**
  * Rendert die Seite nur, solange sie (± eine Bildschirmhöhe) sichtbar ist; sonst Bild freigeben.
@@ -116,7 +117,7 @@ type Gesture =
   | { t: "space"; y: number; dy: number };
 
 /** Anker-Link der Seite (Backend `links`); `page` −1 = externer Link, nur Platzhalter für die Nummerierung */
-const Anchor = z.object({ rect: z.tuple([z.number(), z.number(), z.number(), z.number()]), page: z.number(), y: z.number() });
+const Anchor = z.object({ rect: z.tuple([z.number(), z.number(), z.number(), z.number()]), page: z.number(), y: z.number(), uri: z.string().nullish() });
 type Anchor = z.infer<typeof Anchor>;
 /** Suchtreffer auf dieser Seite, pt */
 export interface Hit { rect: number[]; active: boolean }
@@ -189,6 +190,8 @@ export interface PageProps {
   onLinkFrom: (rect: [number, number, number, number]) => void;
   onLinkTo: (x: number, y: number) => void;
   onJump: (page: number, y: number) => void;
+  /** Strg+Klick auf eine Adresse (DocView fragt nach, bevor der Browser geöffnet wird) */
+  onOpenUrl: (url: string) => void;
   onUnlink: (n: number) => void;
   /** Mini-Leiste/Rechtsklick-Menü; `at` = Stelle in pt (Einfügen/Bild hier) */
   onCmd: (cmd: Cmd, at?: [number, number]) => void;
@@ -308,6 +311,20 @@ export function PageView(p: PageProps) {
     return () => void (live = false);
   }, [doc, index, version, linkOn]);
   const alist = linkOn && anchors.v === version ? anchors.list : [];
+  // Strg+Klick/-Hover: Link-Annotationen + PDF-Zeichen erst laden, wenn Strg über der Seite gedrückt ist
+  const [lk, setLk] = useState<{ v: number; anchors: Anchor[]; chars: CharLine[] }>();
+  const lkAsked = useRef(-1);
+  const loadLk = () => {
+    if (lkAsked.current === version) return;
+    lkAsked.current = version;
+    Promise.all([invoke("links", { id: doc, index }), invoke("text_chars", { id: doc, index })]).then(
+      ([a, c]) => setLk({ v: version, anchors: z.array(Anchor).parse(a), chars: z.array(CharLine).parse(c) }),
+      () => setLk({ v: version, anchors: [], chars: [] }),
+    );
+  };
+  const [linkTip, setLinkTip] = useState<{ key: string; x: number; y: number; label: string }>();
+  const linkAt = (x: number, y: number): LinkTarget | undefined =>
+    lk?.v === version ? targetAt(lk.anchors, lk.chars, textAt(x, y)?.text, x, y) : undefined;
   const paraAt = (x: number, y: number) => plist.findIndex(({ bbox: [x0, y0, x1, y1] }) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
 
   const sel = [...items, ...origs].filter((it) => selected.includes(it.id));
@@ -452,6 +469,16 @@ export function PageView(p: PageProps) {
   // Stift-Spitze/linke Maustaste nach Werkzeug, gebundene Stifttasten temporär; Finger geht an den Scroll-Container.
   const down = (e: React.PointerEvent) => {
     const tgt = e.target as Element;
+    // Strg+Klick öffnet einen Link unter dem Zeiger; einfacher Klick bleibt Cursor/Auswahl
+    if (e.ctrlKey && e.button === 0 && e.pointerType !== "touch" && !tgt.closest("textarea, [data-pedit], [data-field]")) {
+      const [lx, ly] = pt(e);
+      const hit = linkAt(lx, ly);
+      if (hit) {
+        e.stopPropagation();
+        setLinkTip(undefined);
+        return "url" in hit ? p.onOpenUrl(hit.url) : p.onJump(hit.page, hit.y);
+      }
+    }
     const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
     const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
@@ -551,6 +578,12 @@ export function PageView(p: PageProps) {
     if (c && e.pointerId !== owner.current) return;
     if (!c) {
       const [x, y] = pt(e);
+      if (e.ctrlKey && e.pointerType !== "touch") {
+        loadLk();
+        const hit = linkAt(x, y);
+        const key = hit ? ("url" in hit ? hit.url : `p${hit.page}`) : "";
+        if (key !== (linkTip?.key ?? "")) setLinkTip(hit ? { key, x, y, label: "url" in hit ? hit.url : `${T.page} ${hit.page + 1}` } : undefined);
+      } else if (linkTip) setLinkTip(undefined);
       const over = sel.length > 0 && inBox(unionBox(sel), x, y);
       setOverSel(over);
       if (e.pointerType === "pen") {
@@ -807,7 +840,7 @@ export function PageView(p: PageProps) {
   const tsRects = ts && clist.length ? selRange(clist, ts.a, ts.b).rects : [];
   // ausgewähltes Textfeld mit Auswahl-Werkzeug: Klick setzt den Cursor → I-Cursor statt Vier-Pfeil
   const textOnly = tool === "lasso" && sel.length === 1 && sel[0]?.kind === "text";
-  const cursor = gs?.t === "scale" ? `${HANDLE_CURSOR[gs.h] ?? "move"}-resize` : gs?.t === "rot" ? "grabbing"
+  const cursor = linkTip && !gs ? "pointer" : gs?.t === "scale" ? `${HANDLE_CURSOR[gs.h] ?? "move"}-resize` : gs?.t === "rot" ? "grabbing"
     : (overSel && !textOnly) || gs?.t === "move" || gs?.t === "tmove" || gs?.t === "para" ? "move"
     : gs?.t === "twidth" || gs?.t === "pwidth" ? "ew-resize"
     : gs?.t === "tsel" || gs?.t === "fsel" ? "text"
@@ -867,6 +900,7 @@ export function PageView(p: PageProps) {
       onPointerUp={up}
       onPointerCancel={up}
       onPointerLeave={() => {
+        setLinkTip(undefined);
         setHover(undefined);
         setOverSel(false);
       }}
@@ -1063,6 +1097,10 @@ export function PageView(p: PageProps) {
             }} />
         );
       })}
+      {linkTip && (
+        <div role="tooltip" className="pointer-events-none absolute z-30 max-w-xs break-all rounded-xs border border-line bg-surface px-2 py-1 font-mono text-xs text-ink shadow-raised"
+          style={{ left: linkTip.x * zoom, top: linkTip.y * zoom + 18 }}>{linkTip.label}</div>
+      )}
       {p.hits.map(({ rect: [x0 = 0, y0 = 0, x1 = 0, y1 = 0], active }, i) => (
         <div key={`h${i}`} className={`pointer-events-none absolute rounded-xs bg-accent/25 ${active ? "ring-2 ring-accent" : ""}`}
           style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }} />
