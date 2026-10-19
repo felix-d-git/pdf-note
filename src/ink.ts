@@ -94,6 +94,17 @@ export const MARKERS: Preset[] = [
   { name: "Grün", color: [0.45, 0.9, 0.35], size: 12 },
   { name: "Pink", color: [1, 0.45, 0.75], size: 12 },
 ];
+/** Immer sichtbare Farbfelder der Werkzeugleiste: Stift bzw. Marker Rot/Grün/Blau (Taste Q W E bzw. Umschalt+Q W E) */
+export const QUICK_PEN: Preset[] = [
+  { name: "Rot", color: [0.84, 0.18, 0.18], size: 2.2 },
+  { name: "Grün", color: [0.06, 0.6, 0.45], size: 2.2 },
+  { name: "Blau", color: [0.12, 0.36, 0.85], size: 2.2 },
+];
+export const QUICK_MARKER: Preset[] = [
+  { name: "Rot", color: [1, 0.35, 0.35], size: 12 },
+  { name: "Grün", color: [0.45, 0.9, 0.35], size: 12 },
+  { name: "Blau", color: [0.4, 0.7, 1], size: 12 },
+];
 export const MARKER_OPACITY = 0.35;
 export const TEXT_SIZE = 14;
 export const FONT = "Helvetica, Arial, sans-serif";

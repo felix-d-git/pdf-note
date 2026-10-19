@@ -37,7 +37,7 @@ const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
-function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[] }) {
+function Page({ start, pen, layer = 3, init = [], sel = [], locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; locked?: (l: Layer) => boolean }) {
   const [items, setItems] = useState<Item[]>(init);
   const [tool, st] = useState(start);
   const [selected, setSel] = useState<number[]>(sel);
@@ -53,7 +53,7 @@ function Page({ start, pen, layer = 3, init = [], sel = [] }: { start: Tool; pen
       onOrig={() => {}} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onUnlink={() => {}}
       onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
-      layer={layer} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
+      layer={layer} locked={locked} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
     />
   );
 }
@@ -266,4 +266,35 @@ test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seite
   // weit nach oben: Platz entfernen, nie über den oberen Rand
   drag(300, -1000);
   expect(tops()).toEqual([9, 51, 0]);
+});
+
+test("gesperrte Ebene: Auswahl und Radierer greifen nicht, Marker darüber (Ebene 3) schon", () => {
+  const rect: Item = { id: 1, page: 0, kind: "rect", color: [0, 0, 0], opacity: 1, size: 2, simulated: false, points: [[100, 100, 0.5], [140, 130, 0.5]], text: "" };
+  const lock = (l: Layer) => l === 2;
+  const run = (tool: Tool, layer: Layer, locked?: (l: Layer) => boolean) => {
+    act(() => root?.unmount());
+    root = createRoot(host);
+    act(() => root.render(<Page start={tool} layer={layer} init={[rect]} locked={locked} />));
+    const page = host.querySelector("[data-page]") as HTMLDivElement;
+    fire(page, "pointerdown", 120, 100);
+    fire(page, "pointerup", 120, 100, 0);
+    return ui.selected;
+  };
+  expect(run("lasso", 2)).toEqual([1]); // ungesperrt wählbar
+  expect(run("lasso", 2, lock)).toEqual([]);
+  expect(run("lasso", 3, lock)).toEqual([]); // andere Ebene: nichts zu wählen, aber nicht gesperrt
+  run("marker", 3, lock);
+  lastAdd.length = 0;
+  const page = host.querySelector("[data-page]") as HTMLDivElement;
+  fire(page, "pointerdown", 300, 300);
+  fire(page, "pointermove", 330, 305);
+  fire(page, "pointerup", 330, 305, 0);
+  expect(lastAdd.map((i) => i.kind)).toEqual(["marker"]);
+  run("pen", 2, lock);
+  lastAdd.length = 0;
+  const p2 = host.querySelector("[data-page]") as HTMLDivElement;
+  fire(p2, "pointerdown", 300, 300);
+  fire(p2, "pointermove", 330, 305);
+  fire(p2, "pointerup", 330, 305, 0);
+  expect(lastAdd).toHaveLength(0); // Zeichnen in gesperrte Ebene 2 blockiert
 });
