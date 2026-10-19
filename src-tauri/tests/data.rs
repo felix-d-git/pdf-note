@@ -823,3 +823,56 @@ fn verschluesselung() {
     assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 3, "Zusatzdatei (Temp) liegen geblieben");
     println!("latex.pdf: Verschlüsselung OK");
 }
+
+/// Seiten über die Seiten-Zwischenablage von Dokument A nach B kopieren, zwei davon löschen → Seitenzahl + Inhalt
+/// stimmen auch nach Speichern + Neu-Öffnen; Objekt auf einer kopierten Seite kommt mit.
+#[test]
+#[ignore]
+fn seiten_zwischenablage() {
+    use pdf::{Kind, PageOp};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-pageclip");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let b_path = solo.join("b.pdf");
+    std::fs::copy(dir.join("word.pdf"), &b_path).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let a = pdf::open(&src).unwrap();
+        let ta = page_texts(&a).unwrap();
+        if ta.len() < 3 {
+            continue;
+        }
+        let mut b = pdf::open(&b_path).unwrap();
+        let tb = page_texts(&b).unwrap();
+        let nb = tb.len() as i32;
+        let note = item(1, Kind::Text, vec![[10.0, 10.0, 0.5], [60.0, 22.0, 0.5]], "Kopiert");
+        pdf::copy_pages(&a, &[2, 0, 1], &[note]).unwrap();
+        let r = pdf::page_op(&mut b, &PageOp::Paste { at: nb }).unwrap();
+        assert_eq!((r.inserted, r.items.len()), (3, 1), "{}: Paste", src.display());
+        assert_eq!((r.items[0].page, r.items[0].text.as_str()), (nb + 1, "Kopiert"), "{}: Objekt", src.display());
+        assert_eq!(page_texts(&b).unwrap().len() as i32, nb + 3);
+        // erste und letzte kopierte Seite weg → übrig bleibt Seite 2 von A samt Objekt
+        pdf::page_op(&mut b, &PageOp::DeletePages { indices: vec![nb + 2, nb] }).unwrap();
+        let mut keep = r.items;
+        keep[0].page = nb;
+        let out = solo.join("out.pdf");
+        pdf::save(&b, &keep, &out, false, pdf::Crypt::Keep).unwrap();
+        let mut got = pdf::open(&out).unwrap();
+        let after = page_texts(&got).unwrap();
+        assert_eq!(after.len() as i32, nb + 1, "{}: Seitenzahl", src.display());
+        assert_eq!(after[..tb.len()], tb[..], "{}: Seiten von B", src.display());
+        assert_eq!(after[nb as usize], ta[1], "{}: kopierte Seite", src.display());
+        let own = pdf::take_own(&got, nb..nb + 1).unwrap();
+        assert_eq!(own.len(), 1, "{}: Objekt nach Neu-Öffnen", src.display());
+        assert!(pdf::page_op(&mut got, &PageOp::DeletePages { indices: (0..nb + 1).collect() }).is_err(), "alle Seiten löschen");
+        pdf::page_op(&mut got, &PageOp::RotatePages { indices: vec![0, nb] }).unwrap();
+        println!("{}: OK", src.display());
+        n += 1;
+    }
+    assert!(n > 0);
+}
