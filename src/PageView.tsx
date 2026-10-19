@@ -9,6 +9,7 @@ import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, 
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
 import { IconBtn } from "./ui";
+import { targetLayer } from "./layers";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
 
@@ -166,6 +167,8 @@ export interface PageProps {
   axes: { xyz: boolean; grid: boolean };
   /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
   layer: Layer;
+  /** Ebenen-Sperre: gesperrte Ebene lässt sich nicht wählen, ändern oder radieren (`layers.ts`) */
+  locked?: (l: Layer) => boolean;
   textSel: TextSel | null;
   onTextSel: (sel: TextSel | null) => void;
   onAdd: (it: Item) => void;
@@ -489,6 +492,8 @@ export function PageView(p: PageProps) {
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
     const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
     if (!t || g.current) return;
+    const lt = targetLayer(t, p.layer);
+    if (lt && p.locked?.(lt)) return;
     setMenu(undefined);
     owner.current = e.pointerId;
     e.stopPropagation();
@@ -914,7 +919,7 @@ export function PageView(p: PageProps) {
         e.preventDefault();
         // Stift-Langdruck/Finger öffnen kein Menü; synthetisch (Kontextmenü-Taste) hat keinen pointerType
         const pe = e.nativeEvent as Partial<PointerEvent>;
-        if (g.current || (pe.pointerType && pe.pointerType !== "mouse")) return;
+        if (g.current || (pe.pointerType && pe.pointerType !== "mouse") || p.locked?.(p.layer)) return;
         const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
         const [x, y] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
         if (tsRects.some(([x0, y0, x1, y1]) => inBox({ x0, y0, x1, y1 }, x, y))) return setMenu({ x, y, on: "text" });
