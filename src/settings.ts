@@ -59,7 +59,7 @@ export function storeSettings(s: Settings) {
 }
 
 /** Presets (Stift/Formen, Marker) und Textgröße, gerätelokal */
-const PresetData = z.object({ name: z.string(), color: z.tuple([z.number(), z.number(), z.number()]), size: z.number().positive() });
+const PresetData = z.object({ name: z.string(), color: z.tuple([z.number(), z.number(), z.number()]), size: z.number().positive(), pressure: z.boolean().optional() });
 const Palettes = z.object({ pen: z.array(PresetData), marker: z.array(PresetData), text: z.number().positive() });
 export interface Palettes { pen: Preset[]; marker: Preset[]; text: number }
 export const DEFAULT_PALETTES: Palettes = { pen: PRESETS, marker: MARKERS, text: TEXT_SIZE };

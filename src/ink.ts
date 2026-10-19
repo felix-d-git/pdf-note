@@ -77,6 +77,8 @@ export interface Preset {
   name: string;
   color: Rgb;
   size: number;
+  /** false = Stiftdruck ignorieren (konstante Strichbreite); fehlt = Druck an */
+  pressure?: boolean;
 }
 
 export const DEFAULT_PRESET: Preset = { name: "Schwarz", color: [0.07, 0.07, 0.07], size: 2.2 };
