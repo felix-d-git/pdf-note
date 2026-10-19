@@ -181,6 +181,9 @@ pub struct Item {
     /// Koordinatensystem: Karo-Gitter im Achsenbereich
     #[serde(default, skip_serializing_if = "is_false")]
     pub grid: bool,
+    /// Rechteck/Ellipse: Füllfarbe (PDF `/IC`); fehlt → keine Füllung
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<[f32; 3]>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -295,7 +298,7 @@ impl Item {
             && self.text.len() <= 100_000
             && (self.kind == Kind::Image) == !self.image.is_empty()
             && self.image.len() <= IMAGE_MAX
-            && self.points.iter().flatten().chain(&self.color).chain([&self.opacity, &self.size, &self.width]).all(|v| v.is_finite())
+            && self.points.iter().flatten().chain(&self.color).chain([&self.opacity, &self.size, &self.width]).chain(self.fill.iter().flatten()).all(|v| v.is_finite())
     }
 
     pub fn layer(&self) -> u8 {
@@ -537,6 +540,9 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
         _ => {
             annot.set_color(rgb(it.color))?;
             annot.set_border_width(width)?;
+            if let (Some(f), Kind::Rect | Kind::Ellipse) = (it.fill, it.kind) {
+                annot.set_interior_color(rgb(f))?;
+            }
         }
     }
     // Stamp: Erscheinungsbild wird nicht neu erzeugt → Deckkraft fest 1
@@ -927,7 +933,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, fill: None }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -972,6 +978,35 @@ mod tests {
         // Textfelder nutzen Helvetica (Base-14) → keine eingebettete Schrift, Subsetting unnötig
         let raw = std::fs::read(&path).unwrap();
         assert!(!raw.windows(8).any(|w| w == b"FontFile"), "Schrift eingebettet");
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Form mit Füllung: `/IC` + `/CA` bleiben erhalten, Aussehen enthält einen Füllbefehl (sonst zeigt Edge nur den Rahmen).
+    #[test]
+    fn form_fuellung_und_deckkraft() {
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let two = vec![[100.0, 100.0, 0.5], [200.0, 160.0, 0.5]];
+        let mine = vec![
+            Item { fill: Some([0.0, 1.0, 0.0]), opacity: 0.5, ..item(Kind::Rect, two.clone()) },
+            Item { fill: Some([1.0, 1.0, 0.0]), opacity: 0.5, ..item(Kind::Ellipse, two.clone()) },
+            item(Kind::Rect, two),
+        ];
+        let path = tmp("fill");
+        save(&doc, &mine, &path, false, Crypt::Keep).unwrap();
+        let back = open(&path).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let aps: Vec<String> = page.annotations().map(|a| {
+            let n = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap();
+            String::from_utf8_lossy(&n.read_stream().unwrap()).into_owned()
+        }).collect();
+        let fills = |s: &str| s.lines().any(|l| matches!(l.trim(), "f" | "B" | "f*" | "B*" | "b" | "b*"));
+        assert!(fills(&aps[0]) && fills(&aps[1]), "Füllbefehl fehlt: {aps:?}");
+        assert!(!fills(&aps[2]), "ungefüllte Form darf nicht füllen: {:?}", aps[2]);
+        let ic = |i: usize| page.annotations().nth(i).unwrap().object().get_dict("IC").unwrap().is_some();
+        assert!(ic(0) && !ic(2));
+        drop(page);
+        assert_eq!(take_own(&back, 0..1).unwrap(), mine);
         let _ = std::fs::remove_file(path);
     }
 
