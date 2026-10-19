@@ -769,6 +769,8 @@ pub enum PageOp {
     Field { page: i32, xref: i32, value: String },
     /// Formularfeld anlegen
     NewField { page: i32, field: crate::form::NewField },
+    /// Formularfeld löschen
+    DeleteField { page: i32, xref: i32 },
     /// Markdown-Seite einfügen (`insert`) oder neu setzen
     Markdown { page: i32, source: String, insert: bool },
     /// Lesezeichen komplett ersetzen
@@ -876,7 +878,8 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
-        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::Unlink { .. } => Err("ungültige Seite".into()),
+        PageOp::DeleteField { page, xref } if idx_ok(*page) => crate::form::delete(doc, *page, *xref).map(|_| OpResult::default()),
+        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } => Err("ungültige Seite".into()),
     }
 }
 

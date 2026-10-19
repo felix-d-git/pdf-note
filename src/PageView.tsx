@@ -190,6 +190,8 @@ export interface PageProps {
   onLinkTo: (x: number, y: number) => void;
   onJump: (page: number, y: number) => void;
   onUnlink: (n: number) => void;
+  /** Formularfeld (Widget) löschen */
+  onDeleteField: (xref: number) => void;
   /** Mini-Leiste/Rechtsklick-Menü; `at` = Stelle in pt (Einfügen/Bild hier) */
   onCmd: (cmd: Cmd, at?: [number, number]) => void;
   /** Platz einfügen fertig: verschobene Objekte (leer = nichts verschoben), ein Schritt */
@@ -287,6 +289,8 @@ export function PageView(p: PageProps) {
   // Formularfelder: alte Liste bleibt bis zur neuen stehen, sonst verlieren die Eingaben nach jedem Wert den Fokus (Tab)
   const [fields, setFields] = useState<Field[]>([]);
   const [newf, setNewf] = useState<NewField["rect"]>();
+  /** Feld mit Fokus/Rechtsklick: zeigt die Mini-Leiste zum Löschen */
+  const [selF, setSelF] = useState<number>();
   const formOn = tool === "form" && visible;
   useEffect(() => {
     if (!formOn) return;
@@ -1036,17 +1040,33 @@ export function PageView(p: PageProps) {
         const cls = "absolute rounded-xs outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed";
         const key = `${f.xref}:${f.value}`;
         const commit = (v: string) => v !== f.value && p.onField(f.xref, v);
+        // Fokus/Rechtsklick wählt das Feld (Mini-Leiste); Entf löscht Haken/Punkt/Liste, in Textfeldern bleibt Entf Textbearbeitung
+        const pick = {
+          onFocus: () => setSelF(f.xref),
+          onBlur: () => setSelF((x) => (x === f.xref ? undefined : x)),
+          onContextMenu: (e: React.MouseEvent<HTMLElement>) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.currentTarget.focus();
+          },
+        };
+        const del = (e: React.KeyboardEvent) => {
+          if (e.key !== "Delete" || f.readonly) return;
+          e.preventDefault();
+          e.stopPropagation();
+          p.onDeleteField(f.xref);
+        };
         if (f.kind === "check" || f.kind === "radio") {
           return (
             // gesteuert + Key ohne Wert: Radio-Gruppe teilt den Wert, sonst verlöre jeder Knopf der Gruppe den Fokus
             <input key={f.xref} data-field type={f.kind === "check" ? "checkbox" : "radio"} name={`f${doc}-${index}-${f.name}`} title={f.name}
-              checked={f.value === f.on} disabled={f.readonly} className={`${cls} cursor-pointer appearance-none bg-accent/10`} style={style}
+              checked={f.value === f.on} disabled={f.readonly} className={`${cls} cursor-pointer appearance-none bg-accent/10`} style={style} {...pick} onKeyDown={del}
               onChange={(e) => commit(e.currentTarget.checked ? f.on : "Off")} />
           );
         }
         if (f.kind === "combo" || f.kind === "list") {
           return (
-            <select key={key} data-field title={f.name} defaultValue={f.value} disabled={f.readonly} className={`${cls} bg-white text-black`} style={style}
+            <select key={key} data-field title={f.name} defaultValue={f.value} disabled={f.readonly} className={`${cls} bg-white text-black`} style={style} {...pick} onKeyDown={del}
               onChange={(e) => commit(e.currentTarget.value)}>
               {!f.options.some(([v]) => v === f.value) && <option value={f.value}>{f.value}</option>}
               {f.options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
@@ -1056,13 +1076,22 @@ export function PageView(p: PageProps) {
         const Tag = f.multiline ? "textarea" : "input";
         return (
           <Tag key={key} data-field title={f.name} defaultValue={f.value} disabled={f.readonly} className={`${cls} resize-none bg-white px-0.5 text-black`} style={style}
-            onBlur={(e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => commit(e.currentTarget.value)}
+            onFocus={pick.onFocus} onContextMenu={pick.onContextMenu}
+            onBlur={(e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+              pick.onBlur();
+              commit(e.currentTarget.value);
+            }}
             onKeyDown={(e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
               if (e.key === "Escape") e.currentTarget.value = f.value;
               if (e.key === "Escape" || (e.key === "Enter" && (!f.multiline || e.ctrlKey))) e.currentTarget.blur();
             }} />
         );
       })}
+      {flist.filter((f) => f.xref === selF && !f.readonly).map((f) => (
+        <IconBtn key={`d${f.xref}`} data-pedit icon={Trash} label={T.del} keys="Entf" className={`${ICON} absolute z-10 border border-line bg-surface shadow-raised`}
+          style={{ left: f.rect[2] * zoom + 4, top: f.rect[1] * zoom }}
+          onMouseDown={(e) => e.preventDefault()} onClick={() => p.onDeleteField(f.xref)} />
+      ))}
       {p.hits.map(({ rect: [x0 = 0, y0 = 0, x1 = 0, y1 = 0], active }, i) => (
         <div key={`h${i}`} className={`pointer-events-none absolute rounded-xs bg-accent/25 ${active ? "ring-2 ring-accent" : ""}`}
           style={{ left: x0 * zoom, top: y0 * zoom, width: (x1 - x0) * zoom, height: (y1 - y0) * zoom }} />

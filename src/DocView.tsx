@@ -1154,6 +1154,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 }}
                 onJump={goTo}
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
+                onDeleteField={(xref) => void pageOp({ op: "deleteField", page: i, xref }, (its) => its)}
                 onCmd={(c, at) => pageCmd(i, c, at)}
                 onSpace={(moved) => {
                   if (moved.length) edit((all) => all.map((it) => moved.find((n) => n.id === it.id) ?? it));
