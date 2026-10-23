@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, recognize, rotateItem,
@@ -15,18 +16,15 @@ import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
 import { targetAt, type LinkTarget } from "./weblinks";
 
-/**
- * Rendert die Seite nur, solange sie (± eine Bildschirmhöhe) sichtbar ist; sonst Bild freigeben.
- * Zoomwechsel: altes Bild wird per CSS gestreckt, Neu-Render gedrosselt.
- */
-function usePageImage(ref: RefObject<HTMLElement | null>, doc: number, index: number, scale: number, version: number) {
+/** Bild aus dem Render-Speicher (render.ts plant Vorladen/Verwerfen); `visible` = ± eine Bildschirmhöhe im Bild */
+function usePageImage(ref: RefObject<HTMLElement | null>, key: string) {
   const [visible, setVisible] = useState(false);
-  const [url, setUrl] = useState<string>();
+  const url = useSyncExternalStore(subscribe, () => imageOf(key));
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // root = scrollender Container, sonst wirkt rootMargin nicht (Vorladen ± eine Bildschirmhöhe)
+    // root = scrollender Container, sonst wirkt rootMargin nicht
     const io = new IntersectionObserver((es) => setVisible(es.some((e) => e.isIntersecting)), {
       root: el.closest("[data-scroll]"), rootMargin: "100% 0px",
     });
@@ -34,35 +32,17 @@ function usePageImage(ref: RefObject<HTMLElement | null>, doc: number, index: nu
     return () => io.disconnect();
   }, [ref]);
 
-  useEffect(() => {
-    let alive = true;
-    const t = setTimeout(async () => {
-      if (!visible) return setUrl(undefined);
-      try {
-        const buf = await invoke<ArrayBuffer>("render_page", { id: doc, index, scale });
-        if (alive) setUrl(URL.createObjectURL(new Blob([buf], { type: "image/png" })));
-      } catch (e) {
-        console.error(e);
-      }
-    }, visible ? 120 : 0);
-    return () => {
-      alive = false;
-      clearTimeout(t);
-    };
-  }, [visible, doc, index, scale, version]);
-
-  useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url]);
   return [url, visible] as const;
 }
 
-export function Thumb({ doc, index, size, version, active, selected, dropMark, onPointerDown, onClick, onContextMenu }: {
-  doc: number; index: number; size: [number, number]; version: number; active: boolean; selected?: boolean; dropMark?: "before" | "after";
+export function Thumb({ doc, index, size, active, selected, dropMark, onPointerDown, onClick, onContextMenu }: {
+  doc: number; index: number; size: [number, number]; active: boolean; selected?: boolean; dropMark?: "before" | "after";
   onPointerDown: (e: React.PointerEvent) => void; onClick: (e: React.MouseEvent) => void; onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const mark = dropMark === "before" ? "border-t-accent" : dropMark === "after" ? "border-b-accent" : "";
   const ref = useRef<HTMLButtonElement>(null);
-  const w = 120;
-  const [url] = usePageImage(ref, doc, index, (w / size[0]) * devicePixelRatio, version);
+  const w = THUMB_W;
+  const [url] = usePageImage(ref, thumbKey(doc, index));
   return (
     <button
       ref={ref}
@@ -289,7 +269,7 @@ export function PageView(p: PageProps) {
     el.focus();
     el.setSelectionRange(...caret.current);
   };
-  const [url, visible] = usePageImage(ref, doc, index, zoom * devicePixelRatio, version);
+  const [url, visible] = usePageImage(ref, pageKey(doc, index));
   const [w, h] = [size[0] * zoom, size[1] * zoom];
 
   // Ebene 1: Original-Objekte, Absätze und Zeichen der PDF laden

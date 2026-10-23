@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, test } from "vitest";
-import { fromSession, loadSession, placeWindow, storeSession, toSession, type DocStart } from "./session";
+import { firstFile, fromSession, loadSession, placeWindow, storeSession, toSession, type DocStart } from "./session";
 import type { Tabs } from "./tabs";
 
 const view = (zoom: number): DocStart => ({ zoom, left: 10, top: 2400, layer: 2, mouse: "lasso", pen: "marker" });
@@ -49,4 +49,12 @@ test("fehlender Monitor → Fenster auf sichtbaren Bildschirm", () => {
   expect(placeWindow(there, [main, right])).toEqual(there);
   expect(placeWindow(there, [main])).toEqual({ x: 460, y: 240, w: 1000, h: 600, max: true });
   expect(placeWindow({ ...there, w: 3000, h: 2000 }, [main])).toMatchObject({ x: 0, y: 0, w: 1920, h: 1080 });
+});
+
+test("schneller Start: Datei der aktiven Hälfte zuerst, allein im ersten Bild", () => {
+  const s = toSession(tabs, 0.5, () => view(1));
+  expect(firstFile(s)).toBe(2);
+  expect(firstFile({ ...s, active: 0 })).toBe(1);
+  expect(firstFile({ ...s, panes: [null, null] })).toBe(0);
+  expect(fromSession({ ...s, split: false, active: 0, panes: [2, null] }, [undefined, undefined, 5])).toEqual({ tabs: [{ id: 5, path: "C:/c.pdf", dirty: false }], panes: [5, undefined], split: false, active: 0 });
 });

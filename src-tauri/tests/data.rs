@@ -932,12 +932,16 @@ fn verschluesselung() {
     println!("latex.pdf: Verschlüsselung OK");
 }
 
+/// Seiten-Zwischenablage ist global → Tests, die sie nutzen, nacheinander
+static CLIP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Seiten über die Seiten-Zwischenablage von Dokument A nach B kopieren, zwei davon löschen → Seitenzahl + Inhalt
 /// stimmen auch nach Speichern + Neu-Öffnen; Objekt auf einer kopierten Seite kommt mit.
 #[test]
 #[ignore]
 fn seiten_zwischenablage() {
     use pdf::{Kind, PageOp};
+    let _clip = CLIP.lock().unwrap_or_else(|e| e.into_inner());
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
     let solo = std::env::temp_dir().join("pdf-note-test-pageclip");
     let _ = std::fs::remove_dir_all(&solo);
@@ -1048,4 +1052,43 @@ fn strg_s_bleibt_bearbeitbar() {
         n += 1;
     }
     assert!(n > 0);
+}
+
+/// Tempo-Messung (§6) an einer ≥ 300-Seiten-PDF aus `gross-100.pdf` ×3; Werte gehen in die TODO-Notiz.
+#[test]
+#[ignore]
+fn tempo_messung() {
+    use pdf_note_lib::{pdf::PageOp, Open};
+    use std::time::Instant;
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs/gross-100.pdf");
+    let tmp = std::env::temp_dir().join("pdf-note-tempo-300.pdf");
+    let mut doc = pdf::open(&src).unwrap();
+    let n = doc.page_count().unwrap();
+    let clip = CLIP.lock().unwrap_or_else(|e| e.into_inner());
+    pdf::copy_pages(&doc, &(0..n).collect::<Vec<_>>(), &[]).unwrap();
+    for _ in 0..2 {
+        let at = doc.page_count().unwrap();
+        pdf::page_op(&mut doc, &PageOp::Paste { at }).unwrap();
+    }
+    drop(clip);
+    doc.save(tmp.to_str().unwrap()).unwrap();
+    let t = Instant::now();
+    let (open, st) = Open::open(tmp.clone(), None).unwrap();
+    let pages = st.sizes.len() as i32;
+    println!("Seiten {pages}, Öffnen {:?}", t.elapsed());
+    assert!(pages >= 300);
+    let d = open.doc();
+    // Sprung ±20 Seiten bei Zoom 100 % × DPR 1,5; grob = Vorschau vor dem scharfen Bild; Miniatur 120 px
+    for (name, scale) in [("scharf 1.5", 1.5), ("grob 0.4", 0.4), ("Miniatur", 120.0 / 595.0 * 1.5)] {
+        let t = Instant::now();
+        let mut bytes = 0;
+        for i in 150..170 {
+            bytes += pdf::render_png(d, i, scale).unwrap().len();
+        }
+        println!("{name}: {:?}/Seite, {} KB/Seite", t.elapsed() / 20, bytes / 20 / 1024);
+    }
+    let [w, h] = st.sizes[150];
+    println!("RAM je dekodierter Seite bei 1.5: {:.1} MB", w * 1.5 * h * 1.5 * 4.0 / 1e6);
+    drop(open);
+    let _ = std::fs::remove_file(tmp);
 }

@@ -119,6 +119,10 @@ impl Open {
         Ok(())
     }
 
+    pub fn doc(&self) -> &PdfDocument {
+        &self.doc
+    }
+
     pub fn sizes(&self) -> Result<Vec<[f32; 2]>, String> {
         pdf::page_sizes(&self.doc).map_err(|e| e.to_string())
     }

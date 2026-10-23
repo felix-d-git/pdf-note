@@ -16,7 +16,7 @@ test("Strg/Umschalt-Klick markiert mehrere Miniaturen, Rechtsklick meldet den In
     const [sel, setSel] = useState<number[]>([]);
     const [anchor, setAnchor] = useState(0);
     return [0, 1, 2, 3].map((i) => (
-      <Thumb key={i} doc={1} index={i} size={[100, 100]} version={0} active={false} selected={sel.includes(i)}
+      <Thumb key={i} doc={1} index={i} size={[100, 100]} active={false} selected={sel.includes(i)}
         onPointerDown={() => {}} onContextMenu={() => void menu.push(i)}
         onClick={(e) => (setSel(thumbPick(sel, anchor, i, e.ctrlKey, e.shiftKey)), e.shiftKey || setAnchor(i))} />
     ));
