@@ -440,10 +440,16 @@ export function PageView(p: PageProps) {
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(fn);
   };
-  // Bilder laden asynchron → danach neu zeichnen
+  // Bilder laden asynchron → danach neu zeichnen. Canvas-Inhalt verworfen (GPU-Speicherdruck, contextlost)
+  // → nach contextrestored neu zeichnen, sonst bleibt die Handschrift leer, während das Seitenbild steht
   useEffect(() => {
+    const cs = [canvas.current, live.current];
     addEventListener(IMAGE_LOADED, redraw);
-    return () => removeEventListener(IMAGE_LOADED, redraw);
+    cs.forEach((c) => c?.addEventListener("contextrestored", redraw));
+    return () => {
+      removeEventListener(IMAGE_LOADED, redraw);
+      cs.forEach((c) => c?.removeEventListener("contextrestored", redraw));
+    };
   });
 
   // flat = Preset mit „Druck aus“: immer gleiche Breite
