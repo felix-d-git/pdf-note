@@ -984,3 +984,68 @@ fn seiten_zwischenablage() {
     }
     assert!(n > 0);
 }
+
+/// v1.2.0 B §1: Strg+S darf nichts einbrennen. Jede Objektart über die echte `Open`-API speichern → neu öffnen →
+/// alle wieder eigene Objekte mit gleichen Parametern; mehrfach Strg+S → kein Doppeln; „Speichern unter" + Einbrennen
+/// → Zieldatei ohne `/PDFNote`, offene Datei bleibt bearbeitbar.
+#[test]
+#[ignore]
+fn strg_s_bleibt_bearbeitbar() {
+    use pdf::Kind;
+    use pdf_note_lib::Open;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-ctrl-s");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let no_img = |v: &[pdf::Item]| v.iter().map(|it| pdf::Item { image: String::new(), ..it.clone() }).collect::<Vec<_>>();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let name = src.display();
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let (mut open, s) = Open::open(copy.clone(), None).unwrap();
+        let png = b64(&pdf::render_png(&pdf::open(&copy).unwrap(), 0, 0.1).unwrap());
+        let two = vec![[30.0, 30.0, 0.5], [120.0, 90.0, 0.5]];
+        let l = |layer: u8, it: pdf::Item| pdf::Item { layer, ..it };
+        let mut items = s.items.clone();
+        items.extend([
+            l(3, item(0, Kind::Ink, vec![[20.0, 20.0, 0.2], [60.0, 45.0, 0.5], [120.0, 30.0, 0.9]], "")),
+            l(3, pdf::Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(0, Kind::Marker, vec![[20.0, 100.0, 0.5], [200.0, 100.0, 0.5]], "") }),
+            l(2, item(0, Kind::Line, two.clone(), "")),
+            l(2, item(0, Kind::Arrow, two.clone(), "")),
+            l(2, pdf::Item { fill: Some([0.0, 0.8, 0.0]), opacity: 0.5, ..item(0, Kind::Rect, two.clone(), "") }),
+            l(2, item(0, Kind::Ellipse, two.clone(), "")),
+            l(3, item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz ÄÖÜ")),
+            l(2, pdf::Item { image: png.clone(), ..item(0, Kind::Image, two.clone(), "") }),
+            l(2, pdf::Item { grid: true, ..item(0, Kind::Axes, vec![[60.0, 60.0, 0.5], [220.0, 200.0, 0.5]], "") }),
+            l(3, pdf::Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(0, Kind::Highlight, vec![[20.0, 300.0, 0.5], [200.0, 312.0, 0.5]], "") }),
+        ]);
+        let foreign = pdf::annotations(&pdf::open(&copy).unwrap(), 0).unwrap().len();
+
+        // Strg+S zweimal hintereinander (mit Neu-Öffnen dazwischen) → jedes Mal alle Objekte genau einmal zurück
+        open.save(&items, None, false, false, None).unwrap();
+        for round in 1..=3 {
+            let (mut again, back) = Open::open(copy.clone(), None).unwrap();
+            assert_eq!(no_img(&back.items), no_img(&items), "{name}: Runde {round}: Objekte nach Strg+S + Neu-Öffnen");
+            assert!(back.items.iter().any(|it| it.kind == Kind::Image && !it.image.is_empty()), "{name}: Bild");
+            assert_eq!(pdf::annotations(&pdf::open(&copy).unwrap(), 0).unwrap().len(), foreign + 10, "{name}: Annotationen doppelt");
+            again.save(&back.items, None, false, false, None).unwrap();
+        }
+
+        // Speichern unter + Einbrennen → Ziel fest, offene Datei unverändert bearbeitbar
+        let flat = solo.join(format!("flach-{}", src.file_name().unwrap().to_string_lossy()));
+        let (mut cur, now) = Open::open(copy.clone(), None).unwrap();
+        cur.save(&now.items, Some(&flat), true, false, None).unwrap();
+        assert!(!std::fs::read(&flat).unwrap().windows(8).any(|w| w == b"/PDFNote"), "{name}: /PDFNote nach Einbrennen");
+        assert!(Open::open(flat.clone(), None).unwrap().1.items.is_empty(), "{name}: eingebrannt noch Objekte");
+        cur.save(&now.items, None, false, false, None).unwrap();
+        assert_eq!(no_img(&Open::open(copy.clone(), None).unwrap().1.items), no_img(&items), "{name}: offene Datei nach Einbrennen");
+        println!("{name}: OK");
+        n += 1;
+    }
+    assert!(n > 0);
+}

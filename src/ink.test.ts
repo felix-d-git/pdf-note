@@ -36,6 +36,13 @@ test("Treffer je Objektart", () => {
   const ell = it("ellipse", [[0, 0], [100, 50]]);
   expect(hitTest(ell, 50, 0, 1)).toBe(true);
   expect(hitTest(ell, 50, 25, 1)).toBe(false);
+  // gefüllt (auch nach Strg+S + Neu-Öffnen): Fläche trifft, außerhalb nicht
+  const fill: [number, number, number] = [0, 0.8, 0];
+  const back = (x: Item) => fromData(ItemData.parse(JSON.parse(JSON.stringify(toData(x)))));
+  expect(hitTest(back({ ...rect, fill }), 50, 25, 1)).toBe(true);
+  expect(hitTest(back({ ...rect, fill }), 150, 25, 1)).toBe(false);
+  expect(hitTest(back({ ...ell, fill }), 50, 25, 1)).toBe(true);
+  expect(hitTest(back({ ...ell, fill }), 2, 2, 1)).toBe(false);
   const text = { ...it("text", [[10, 10], [60, 30]]), text: "x" };
   expect(hitTest(text, 30, 20, 0)).toBe(true);
   expect(hitTest(text, 70, 20, 0)).toBe(false);
