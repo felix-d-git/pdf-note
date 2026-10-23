@@ -436,15 +436,14 @@ export function PageView(p: PageProps) {
 
   // Live-Strich auf eigener Canvas (desynchronized): pro Frame wird nur der laufende Strich gezeichnet, nicht die ganze Seite
   const live = useRef<HTMLCanvasElement>(null);
-  // Vorhersage des Browsers: nur temporär gezeichnet, nie gespeichert
-  const predicted = useRef<InkPoint[]>([]);
   const lastTs = useRef(0);
   const drawLive = () => {
     const lc = live.current, ctx = lc?.getContext?.("2d", { desynchronized: true });
     if (!lc || !ctx) return;
     const c = g.current, it = c?.t === "draw" ? c.item : undefined;
     lc.style.mixBlendMode = it?.kind === "marker" ? "multiply" : "normal";
-    drawItems(ctx, it ? [predicted.current.length ? { ...it, points: [...it.points, ...predicted.current] } : it] : [], zoom);
+    // keine Vorhersage-Punkte (getPredictedEvents): sie fielen beim Loslassen weg → Strich sprang
+    drawItems(ctx, it ? [it] : [], zoom);
     if (it) logLatency(lastTs.current);
   };
   const redraw = () => {
@@ -659,7 +658,6 @@ export function PageView(p: PageProps) {
     } else if (t === "pen" || t === "marker") {
       const flat = t === "pen" && preset.pressure === false;
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
-      predicted.current = [];
       lastTs.current = e.timeStamp;
       g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
       armHold(x, y);
@@ -710,7 +708,6 @@ export function PageView(p: PageProps) {
     switch (c.t) {
       case "draw":
         lastTs.current = e.timeStamp;
-        predicted.current = c.hold?.straight || c.item.kind !== "ink" ? [] : (e.nativeEvent.getPredictedEvents?.() ?? []).map((ev) => pt(ev, flat));
         for (const ev of evs) {
           const r = pt(ev, flat), hd = c.hold;
           if (hd?.straight) straighten(c.item, r[0], r[1]);
@@ -790,7 +787,6 @@ export function PageView(p: PageProps) {
     switch (c.t) {
       case "draw":
         if (c.hold) clearTimeout(c.hold.timer);
-        predicted.current = [];
         p.onAdd(c.item);
         break;
       case "shape": {

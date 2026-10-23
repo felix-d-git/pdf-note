@@ -121,15 +121,16 @@ export const PRESSURE_MAX = 0.75;
 
 export const normPressure = (p: number, max = PRESSURE_MAX) => Math.min(1, Math.max(0.05, p / max));
 
-/** Gefüllter Umriss (perfect-freehand) in pt; Zeichenkontext skaliert auf Zoom. */
+/**
+ * Umriss-Punkte (perfect-freehand) in pt. streamline/smoothing 0: Umriss läuft exakt um die echten Punkte
+ * (kein Nachziehen, das Ecken/Schleifen verzieht, keine Punktreduktion) → live, fertig und gespeichert gleich.
+ */
+export const outlinePoints = (s: Item) =>
+  getStroke(s.points, { size: s.size, thinning: THINNING, smoothing: 0, streamline: 0, simulatePressure: s.simulated });
+
+/** Gefüllter Umriss in pt; Zeichenkontext skaliert auf Zoom. */
 export function outline(s: Item): Path2D {
-  const o = getStroke(s.points, {
-    size: s.size,
-    thinning: THINNING,
-    smoothing: 0.5,
-    streamline: 0.5,
-    simulatePressure: s.simulated,
-  });
+  const o = outlinePoints(s);
   const path = new Path2D();
   o.forEach(([x, y], i) => (i ? path.lineTo(x, y) : path.moveTo(x, y)));
   path.closePath();
