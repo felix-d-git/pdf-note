@@ -9,7 +9,7 @@ export type Tool = (typeof TOOLS)[number];
 const Binding = z.object({ pointerType: z.string(), buttons: z.number().int().positive() });
 export type Binding = z.infer<typeof Binding>;
 
-const Settings = z.object({
+export const Settings = z.object({
   lasso: Binding,
   eraser: Binding,
   pressureMax: z.number().min(0.3).max(1),
@@ -23,6 +23,10 @@ const Settings = z.object({
   theme: z.enum(["light", "dark", "system"]).default("dark"),
   /** Seitenleiste offen (ohne Split View; im Split startet sie eingeklappt) */
   side: z.boolean().default(true),
+  /** Vorladen: sichtbarer Tab ± Seiten, versteckter Tab ± Seiten, Speichergrenze der Seitenbilder in MB */
+  preload: z.number().int().min(0).max(200).default(25),
+  preloadHidden: z.number().int().min(0).max(50).default(5),
+  memMb: z.number().int().min(128).max(8192).default(1024),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -35,6 +39,9 @@ export const DEFAULT_SETTINGS: Settings = {
   auto: true,
   theme: "dark",
   side: true,
+  preload: 25,
+  preloadHidden: 5,
+  memMb: 1024,
 };
 
 const prefersLight = () => globalThis.matchMedia?.("(prefers-color-scheme: light)").matches ?? false;

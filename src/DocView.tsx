@@ -26,6 +26,7 @@ import { PenBar } from "./PenBar";
 import { scrollAfterZoom, wheelFactor } from "./zoom";
 import { formulas, type Formula } from "./math";
 import { MdEditor } from "./MdEditor";
+import { setView } from "./render";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
@@ -104,7 +105,7 @@ export interface DocApi {
 
 /**
  * Ein offenes Dokument mit eigenem Undo, Zoom, Scroll und Werkzeug. Bleibt gemountet, solange der Tab offen ist;
- * versteckt (`visible` = false) gibt es seine Seitenbilder frei (IntersectionObserver in PageView).
+ * Seitenbilder plant render.ts (sichtbar ± `preload`, versteckt ± `preloadHidden`, Speichergrenze).
  */
 export function DocView({ id, view, path, init, start, visible, active, marked, settings, style, apis, sideOpen, onSide, onDirty, onFocus }: {
   /** `start` = Ansicht aus der letzten Sitzung, sonst Seitenbreite */
@@ -717,6 +718,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if (visible) scroller.current?.scrollTo(scrollPos.current.left, scrollPos.current.top);
   }, [visible]);
 
+  // Seitenbilder: Ansicht beim Render-Speicher anmelden (Vorladen/Verwerfen in render.ts)
+  useEffect(() => {
+    setView(view, { doc: id, center: current, sizes, scale: zoom * devicePixelRatio, dpr: devicePixelRatio, version, shown: visible });
+  }, [view, id, current, sizes, zoom, version, visible]);
+  useEffect(() => () => setView(view, null), [view]);
+
   // Tastatur nur für die aktive Hälfte: Strg+S/Strg+Umschalt+S, Strg+Z/Y, Strg+A, Entf, Esc, Strg +/− Zoom,
   // Werkzeug-Kürzel ohne Strg. Strg+C/X/V laufen über die copy/cut/paste-Ereignisse unten (System-Zwischenablage).
   useEffect(() => {
@@ -1192,7 +1199,6 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
               doc={id}
               index={i}
               size={s}
-              version={version}
               active={i === current}
               selected={tsel.includes(i)}
               dropMark={drop?.to === i && i !== drop.from ? (i < drop.from ? "before" : "after") : undefined}

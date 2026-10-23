@@ -10,8 +10,9 @@ import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
 import { CmdPalette, Help } from "./help";
 import { T } from "./i18n";
 import { comboOf, KEYS, keyMap } from "./keys";
-import { fromSession, loadSession, storeSession, toSession, type DocStart } from "./session";
-import { applyTheme, captureBinding, describe, loadSettings, storeSettings, type Settings } from "./settings";
+import { firstFile, fromSession, loadSession, storeSession, toSession, type DocStart, type Session } from "./session";
+import { applyTheme, captureBinding, describe, loadSettings, Settings as SettingsSchema, storeSettings, type Settings } from "./settings";
+import { setLimits } from "./render";
 import {
   activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, pickDoc, setDirty, show, toggleSplit, toPane, viewActive, type Pane, type Tab,
 } from "./tabs";
@@ -147,21 +148,36 @@ export default function App() {
     }
   }
 
-  /** Letzte Sitzung: fehlende/unlesbare Dateien still auslassen (Hinweis-Symbol), Passwort-Abbruch lässt den Tab weg. */
+  /**
+   * Letzte Sitzung: fehlende/unlesbare Dateien still auslassen (Hinweis-Symbol), Passwort-Abbruch lässt den Tab weg.
+   * Schneller Start: zuerst nur die Datei der aktiven Hälfte anzeigen, die übrigen Tabs danach.
+   */
   async function restore() {
     const s = loadSession();
     if (!s) return;
     const gone: string[] = [];
-    const got = await Promise.all(s.files.map((f) => load(f.path).catch(() => void gone.push(fileName(f.path)))));
-    const next = fromSession(s, got.map((g) => g?.id));
-    setInits((m) => new Map([...m, ...got.flatMap((g) => (g ? [[g.id, g.snap] as const] : []))]));
-    setStarts(new Map(got.flatMap((g, i) => (g && s.files[i] ? [[g.id, s.files[i]] as const] : []))));
-    setState(next);
+    const got: ({ id: number; snap: Snap } | undefined)[] = [];
+    const apply = (ss: Session) => {
+      const next = fromSession(ss, s.files.map((_, i) => got[i]?.id));
+      setInits((m) => new Map([...m, ...got.flatMap((g) => (g ? [[g.id, g.snap] as const] : []))]));
+      setStarts(new Map(got.flatMap((g, i) => (g && s.files[i] ? [[g.id, s.files[i]] as const] : []))));
+      // schon sichtbarer Tab kann inzwischen bearbeitet sein → dirty behalten
+      setState((st) => ({ ...next, tabs: next.tabs.map((t) => st.tabs.find((o) => o.id === t.id) ?? t) }));
+      // Öffnen danach (Explorer-Start) sieht die Tabs schon vor dem nächsten Rendern
+      live.current.tabs = next.tabs;
+    };
+    const loadAt = async (i: number) => {
+      const f = s.files[i];
+      if (f && !(i in got)) got[i] = await load(f.path).catch(() => void gone.push(fileName(f.path)));
+    };
+    const first = firstFile(s);
+    await loadAt(first);
+    if (got[first]) apply({ ...s, split: false, active: 0, panes: [first, null] });
+    for (let i = 0; i < s.files.length; i++) await loadAt(i);
+    apply(s);
     setRatio(s.ratio);
-    setSplitSide({ split: next.split, open: s.side });
+    setSplitSide({ split: s.split, open: s.side });
     setMissing(gone);
-    // Öffnen danach (Explorer-Start) sieht die Tabs schon vor dem nächsten Rendern
-    live.current.tabs = next.tabs;
   }
 
   /** Sitzung beim Beenden: Tabs + Ansicht je Dokument, Fenster (maximiert/minimiert → Größe davor) */
@@ -204,6 +220,7 @@ export default function App() {
     setSettings(s);
     storeSettings(s);
   };
+  useEffect(() => setLimits({ near: settings.preload, far: settings.preloadHidden, mb: settings.memMb }), [settings.preload, settings.preloadHidden, settings.memMb]);
 
   useEffect(() => {
     live.current = { tabs, state, ratio, side: splitSide.open, openPath, restore, saveSession, confirmLeave, dropImages };
@@ -462,6 +479,16 @@ export default function App() {
                 className="accent-accent"
               />
             </label>
+            {(["preload", "preloadHidden", "memMb"] as const).map((k) => (
+              <label key={k} className="flex items-center justify-between gap-2">
+                {T[k]}
+                <input type="number" min={k === "memMb" ? 128 : 0} step={k === "memMb" ? 128 : 1} value={settings[k]} className={FIELD + " w-20 font-mono text-xs"}
+                  onChange={(e) => {
+                    const r = SettingsSchema.shape[k].safeParse(Number(e.target.value));
+                    if (r.success) updateSettings({ ...settings, [k]: r.data });
+                  }} />
+              </label>
+            ))}
           </div>
         )}
       </header>

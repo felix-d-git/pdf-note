@@ -57,6 +57,9 @@ export const toSession = (t: Tabs, ratio: number, doc: (id: number) => DocStart,
   };
 };
 
+/** Datei der aktiven Hälfte (beim Start zuerst laden) */
+export const firstFile = (s: Session) => s.panes[s.active] ?? s.panes[0] ?? 0;
+
 /**
  * Sitzung → Tab-Zustand. `ids[i]` = neue Dokument-Nummer von `files[i]`, `undefined` = übersprungen (fehlt, Passwort abgebrochen).
  * Fehlt das Dokument einer Hälfte, rückt der erste andere Tab nach; leere aktive Hälfte → die andere wird aktiv.
