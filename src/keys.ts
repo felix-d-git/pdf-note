@@ -13,7 +13,7 @@ export const KEYS = {
   open: "Strg+O", close: "Strg+W", nextTab: "Strg+Tab", prevTab: "Strg+Umschalt+Tab", help: "F1",
   save: "Strg+S", saveAs: "Strg+Umschalt+S", undo: "Strg+Z", redo: "Strg+Y / Strg+Umschalt+Z",
   pen: "P", marker: "M", eraser: "D", lasso: "A / T", line: "L", arrow: "F", rect: "R", ellipse: "K", axes: "X", form: "O", link: "G",
-  penRed: "Q", penGreen: "W", penBlue: "E", markRed: "Umschalt+Q", markGreen: "Umschalt+W", markBlue: "Umschalt+E",
+  pen1: "Q", pen2: "W", pen3: "E", mark1: "Umschalt+Q", mark2: "Umschalt+W", mark3: "Umschalt+E",
   image: "I", layer1: "1", layer2: "2", layer3: "3",
   selectAll: "Strg+A", copy: "Strg+C", cut: "Strg+X", paste: "Strg+V", del: "Entf / Rücktaste", nudge: "← / → / ↑ / ↓",
   escape: "Esc", menu: "Menütaste / Umschalt+F10", search: "Strg+F", zoomIn: "Strg++ / Strg+=", zoomOut: "Strg+-",
@@ -46,10 +46,10 @@ export const TOOL_LABELS: [Tool, LucideIcon, string, string][] = ([
   ["rect", Square], ["ellipse", Circle], ["axes", Axis3d], ["form", ClipboardPen], ["link", Link],
 ] as const).map(([t, icon]) => [t, icon, T[t], KEYS[t]]);
 
-/** Farbfelder: Art, Index in `Palettes.quick`, Name, Kürzel */
+/** Stift-Kürzel: Art, n-ter Stift dieser Art in `Palettes.pens`, Name, Kürzel */
 export const QUICK: ["pen" | "marker", number, string, string][] = [
-  ["pen", 0, T.penRed, KEYS.penRed], ["pen", 1, T.penGreen, KEYS.penGreen], ["pen", 2, T.penBlue, KEYS.penBlue],
-  ["marker", 0, T.markRed, KEYS.markRed], ["marker", 1, T.markGreen, KEYS.markGreen], ["marker", 2, T.markBlue, KEYS.markBlue],
+  ["pen", 0, T.pen1, KEYS.pen1], ["pen", 1, T.pen2, KEYS.pen2], ["pen", 2, T.pen3, KEYS.pen3],
+  ["marker", 0, T.mark1, KEYS.mark1], ["marker", 1, T.mark2, KEYS.mark2], ["marker", 2, T.mark3, KEYS.mark3],
 ];
 
 /** Ebene, Symbol, Name; Kürzel = Nummer */

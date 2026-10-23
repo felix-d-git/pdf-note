@@ -459,6 +459,19 @@ export default function App() {
                 className="accent-accent"
               />
             </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={settings.pressure} className="accent-accent"
+                onChange={(e) => updateSettings({ ...settings, pressure: e.target.checked })} />
+              {T.penPressure}
+            </label>
+            <label className="flex flex-col gap-1">
+              {T.smooth}: <span className="font-mono text-xs text-ink">{settings.smooth ? settings.smooth.toFixed(1) : T.off}</span>
+              <input
+                type="range" min={0} max={0.9} step={0.1} value={settings.smooth}
+                onChange={(e) => updateSettings({ ...settings, smooth: Number(e.target.value) })}
+                className="accent-accent"
+              />
+            </label>
           </div>
         )}
       </header>

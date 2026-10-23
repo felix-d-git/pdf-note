@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { box, DEFAULT_PRESET, PARA0, savedWidth, type Item, type Layer, type Preset } from "./ink";
 import { PageView, type OrigEdit, type ParaMove } from "./PageView";
-import { DEFAULT_SETTINGS, type Tool } from "./settings";
+import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
 const FELD = { xref: 9, kind: "check", name: "H", rect: [20, 60, 32, 72], value: "Off", on: "Yes", options: [], readonly: false, multiline: false };
 const answers = vi.hoisted(() => ({} as Record<string, unknown>));
@@ -45,9 +45,10 @@ const opened: string[] = [];
 const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 let replaces = 0;
+const removed: number[][] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
-function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; locked?: (l: Layer) => boolean }) {
+function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, settings = DEFAULT_SETTINGS, locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; settings?: Settings; locked?: (l: Layer) => boolean }) {
   const [items, setItems] = useState<Item[]>(init);
   const [layer, setLayer] = useState<Layer>(layer0);
   const [tool, st] = useState(start);
@@ -56,9 +57,9 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
   return (
     <PageView
       doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool} penTool={pen ?? tool} typers={new Map()}
-      preset={preset} marker={DEFAULT_PRESET} textSize={14} settings={DEFAULT_SETTINGS}
+      preset={preset} marker={DEFAULT_PRESET} textSize={14} settings={settings}
       onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))}
-      onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={() => {}}
+      onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={(ids) => void removed.push(ids)}
       onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
@@ -83,6 +84,7 @@ beforeEach(() => {
   frames = new Map();
   draws.length = 0;
   origs.length = 0;
+  removed.length = 0;
   backend.reply = () => new Promise(() => {});
   host = document.createElement("div");
   document.body.append(host);
@@ -94,7 +96,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset } = {}) => {
+const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset; settings?: Settings } = {}) => {
   root = createRoot(host);
   act(() => root.render(<Page start={tool} layer={layer} init={init} {...more} />));
   return host.querySelector("[data-page]") as HTMLDivElement;
@@ -281,10 +283,10 @@ test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seite
   expect(tops()).toEqual([9, 51, 0]);
 });
 
-test("Druck aus: Stift mit wechselndem Druck → alle Punkte gleiche Breite; Druck an: Werte bleiben", () => {
-  for (const [pressure, flat] of [[false, true], [undefined, false]] as const) {
+test("Druck aus (global): Stift mit wechselndem Druck → alle Punkte gleiche Breite; Druck an: Werte bleiben", () => {
+  for (const [pressure, flat] of [[false, true], [true, false]] as const) {
     lastAdd.length = 0;
-    const page = mount("pen", 3, [], { preset: { ...DEFAULT_PRESET, pressure } });
+    const page = mount("pen", 3, [], { settings: { ...DEFAULT_SETTINGS, pressure } });
     [0.1, 0.9, 0.3, 0.7].forEach((pr, i) => {
       const e = new MouseEvent(i ? "pointermove" : "pointerdown", { bubbles: true, cancelable: true, clientX: 100 + 10 * i, clientY: 100, buttons: 1 });
       Object.assign(e, { pointerId: 1, pointerType: "pen", pressure: pr });
@@ -511,4 +513,61 @@ test("Rechteck über Absätze markiert alle berührten; gemeinsam verschieben = 
   fire(page, "pointerup", 120, 140, 0);
   expect(origs).toHaveLength(1);
   expect(origs[0]?.[1]).toMatchObject({ i: [0, 1], dx: 20, dy: 15 });
+});
+
+test("Radiertaste losgelassen, Spitze bleibt unten: sofort wieder Stift statt weiter radieren", () => {
+  const page = mount("pen", 3, [obj(1, "ink", 100, 100, 100, 160), obj(2, "ink", 300, 100, 300, 160)]);
+  fire(page, "pointerdown", 100, 130, 32, "pen");
+  fire(page, "pointermove", 100, 140, 32, "pen");
+  // Taste los, Stift gleitet über Objekt 2 → zeichnet, löscht nicht
+  fire(page, "pointermove", 300, 130, 1, "pen");
+  fire(page, "pointermove", 300, 140, 1, "pen");
+  fire(page, "pointerup", 300, 140, 0, "pen");
+  expect(removed).toEqual([[1]]);
+  expect(ui.added.map((it) => it.kind)).toEqual(["ink", "ink", "ink"]);
+});
+
+test("Verlorenes pointerup: nächste Bewegung ohne Taste beendet die Radier-Geste", () => {
+  const page = mount("pen", 3, [obj(1, "ink", 100, 100, 100, 160), obj(2, "ink", 300, 100, 300, 160)]);
+  fire(page, "pointerdown", 100, 130, 32, "pen");
+  fire(page, "pointermove", 150, 300, 0, "pen");
+  fire(page, "pointerdown", 300, 130, 1, "pen");
+  fire(page, "pointerup", 300, 140, 0, "pen");
+  expect(removed).toEqual([[1]]);
+  expect(ui.added.at(-1)?.kind).toBe("ink");
+});
+
+test("Ebene 1: Umschalt-Rahmen ab Text wählt Absätze + PDF-Bild, gemeinsam verschieben = ein Aufruf", async () => {
+  const para = (y: number) => ({ bbox: [50, y, 250, y + 30], text: "Absatz", font: "Helvetica", size: 12, color: [0, 0, 0] });
+  backend.reply = (c) => Promise.resolve(c === "text_paragraphs" ? [para(100), para(200)] : c === "orig_objects" ? [[300, 100, 400, 200]] : []);
+  root = createRoot(host);
+  act(() => root.render(<Page start="lasso" layer={1} />));
+  await tick();
+  const page = host.querySelector("[data-page]") as HTMLDivElement;
+  // Start mitten im Text: mit Umschalt Rahmen statt Textmarkierung
+  fire(page, "pointerdown", 100, 110, 1, "mouse", true);
+  fire(page, "pointermove", 350, 210, 1, "mouse", true);
+  fire(page, "pointerup", 350, 210, 0, "mouse", true);
+  expect([...ui.selected].sort((a, b) => b - a)).toEqual([-1, PARA0, PARA0 - 1]);
+  fire(page, "pointerdown", 120, 115);
+  fire(page, "pointermove", 130, 125);
+  fire(page, "pointerup", 130, 125, 0);
+  expect(origs).toHaveLength(1);
+  expect(origs[0]?.[0]).toEqual([{ index: 0, matrix: [1, 0, 0, 1, 10, 10] }]);
+  expect(origs[0]?.[1]).toMatchObject({ i: [0, 1], dx: 10, dy: 10 });
+});
+
+test("Glättung aus: Punkte exakt wie gezeichnet; an: Punkte laufen nach, live = gespeichert", () => {
+  for (const smooth of [0, 0.5]) {
+    lastAdd.length = 0;
+    const page = mount("pen", 3, [], { settings: { ...DEFAULT_SETTINGS, smooth } });
+    fire(page, "pointerdown", 100, 100, 1, "pen");
+    fire(page, "pointermove", 120, 100, 1, "pen");
+    fire(page, "pointermove", 140, 100, 1, "pen");
+    fire(page, "pointerup", 140, 100, 0, "pen");
+    const xs = lastAdd[0]?.points.map((q) => q[0]);
+    expect(xs).toEqual(smooth ? [100, 110, 125] : [100, 120, 140]);
+    act(() => root.unmount());
+    root = createRoot(host);
+  }
 });
