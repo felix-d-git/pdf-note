@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
-  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, rotateItem,
-  rotMatrix, scaleItem, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb,
+  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, recognize, rotateItem,
+  rotMatrix, scaleItem, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
@@ -98,7 +98,8 @@ const ICON = "grid h-7 min-w-7 place-items-center rounded-xs px-1 text-sm text-i
 const family = (font: string) => /mono|courier/i.test(font) ? "monospace" : /sans|helvet|arial|calibri/i.test(font) ? FONT : "serif";
 
 type Gesture =
-  | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; straight: boolean } | null }
+  /** `shape`: beim Halten erkannte Form, `raw` = Freihand-Strich davor (Strg+Z kehrt dorthin zurück) */
+  | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; shape: ShapeKind | null; raw: Item | null } | null }
   | { t: "shape"; item: Item }
   | { t: "erase"; ids: Set<number>; l: Layer }
   /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
@@ -187,7 +188,8 @@ export interface PageProps {
   onLayer: (l: Layer) => void;
   textSel: TextSel | null;
   onTextSel: (sel: TextSel | null) => void;
-  onAdd: (it: Item) => void;
+  /** `raw`: Freihand-Strich vor der Form-Erkennung → eigener Undo-Schritt davor */
+  onAdd: (it: Item, raw?: Item) => void;
   /** fertig gezogene Form (Stift oder Maus) */
   onShape: (it: Item, pen: boolean) => void;
   /** Tippen bei ausgewähltem Textfeld: DocView ruft je Seite `(id, Zeichen)` */
@@ -369,6 +371,8 @@ export function PageView(p: PageProps) {
     void lkLoad.current.then(setLk);
     return lkLoad.current;
   };
+  /** Einrast-Hinweis der Form-Erkennung an der Haltestelle */
+  const [snap, setSnap] = useState<{ x: number; y: number; kind: ShapeKind }>();
   const [linkTip, setLinkTip] = useState<{ key: string; x: number; y: number; label: string }>();
   const linkIn = (l: NonNullable<typeof lk>, x: number, y: number) => targetAt(l.anchors, l.chars, textAt(x, y)?.text, x, y);
   const linkAt = (x: number, y: number): LinkTarget | undefined => (lk?.v === version ? linkIn(lk, x, y) : undefined);
@@ -469,7 +473,7 @@ export function PageView(p: PageProps) {
     return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, pr];
   };
 
-  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur geraden Linie vom Anfang bis zur Ruhestelle
+  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Rechteck, Dreieck, Kreis/Ellipse)
   const armHold = (x: number, y: number) => {
     const c = g.current;
     const hd = c?.t === "draw" ? c.hold : null;
@@ -477,8 +481,10 @@ export function PageView(p: PageProps) {
     clearTimeout(hd.timer);
     Object.assign(hd, { x, y, timer: setTimeout(() => {
       if (c.item.points.length < 3) return;
-      hd.straight = true;
-      straighten(c.item, hd.x, hd.y);
+      const f = recognize(c.item.points);
+      Object.assign(hd, { shape: f.kind, raw: { ...c.item, points: c.item.points.slice() } });
+      Object.assign(c.item, { points: f.points, simulated: false });
+      setSnap({ x: hd.x, y: hd.y, kind: f.kind });
       redraw();
     }, HOLD_MS) });
   };
@@ -664,7 +670,7 @@ export function PageView(p: PageProps) {
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
       if (pen3) item.layer = 3;
       lastTs.current = e.timeStamp;
-      g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
+      g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null } };
       armHold(x, y);
     } else if (t === "eraser") {
       g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L };
@@ -721,8 +727,9 @@ export function PageView(p: PageProps) {
         lastTs.current = e.timeStamp;
         for (const ev of evs) {
           const r = pt(ev, flat), hd = c.hold;
-          if (hd?.straight) straighten(c.item, r[0], r[1]);
-          else {
+          // Linie folgt weiter dem Stift, andere Formen bleiben stehen
+          if (hd?.shape === "line") straighten(c.item, r[0], r[1]);
+          else if (!hd?.shape) {
             // Glättung schon beim Aufnehmen: live = gespeichert, beim Loslassen springt nichts
             c.item.points.push(smoothPt(c.item.points.at(-1), r, settings.smooth));
             if (hd && Math.hypot(r[0] - hd.x, r[1] - hd.y) > HOLD_TOL) armHold(r[0], r[1]);
@@ -799,7 +806,8 @@ export function PageView(p: PageProps) {
     switch (c.t) {
       case "draw":
         if (c.hold) clearTimeout(c.hold.timer);
-        p.onAdd(c.item);
+        setSnap(undefined);
+        p.onAdd(c.item, c.hold?.raw ?? undefined);
         break;
       case "shape": {
         const [a, b] = c.item.points;
@@ -1291,6 +1299,10 @@ export function PageView(p: PageProps) {
           style={{ left: f.rect[2] * zoom + 4, top: f.rect[1] * zoom }}
           onMouseDown={(e) => e.preventDefault()} onClick={() => p.onDeleteField(f.xref)} />
       ))}
+      {snap && (
+        <div role="status" className="pointer-events-none absolute z-30 rounded-xs bg-accent px-1.5 py-0.5 text-xs text-white shadow-raised"
+          style={{ left: snap.x * zoom + 12, top: snap.y * zoom - 28 }}>{T[snap.kind]}</div>
+      )}
       {linkTip && (
         <div role="tooltip" className="pointer-events-none absolute z-30 max-w-xs break-all rounded-xs border border-line bg-surface px-2 py-1 font-mono text-xs text-ink shadow-raised"
           style={{ left: linkTip.x * zoom, top: linkTip.y * zoom + 18 }}>{linkTip.label}</div>

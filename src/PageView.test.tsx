@@ -41,6 +41,7 @@ let host: HTMLDivElement;
 const ui: { added: Item[]; setTool: (t: Tool) => void; setLayer: (l: Layer) => void; selected: number[]; layer: Layer } = { added: [], setTool: () => {}, setLayer: () => {}, selected: [], layer: 3 };
 const origs: [OrigEdit[], ParaMove | undefined][] = [];
 const lastAdd: Item[] = [];
+const raws: (Item | undefined)[] = [];
 const opened: string[] = [];
 const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
@@ -58,7 +59,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
     <PageView
       doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool} penTool={pen ?? tool} typers={new Map()}
       preset={preset} marker={DEFAULT_PRESET} textSize={14} settings={settings}
-      onAdd={(it) => (lastAdd.push(it), setItems((xs) => [...xs, it]))}
+      onAdd={(it, raw) => (lastAdd.push(it), raws.push(raw), setItems((xs) => [...xs, it]))}
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={(ids) => void removed.push(ids)}
       onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
@@ -602,4 +603,33 @@ test("§3 Maus-Klick ins Leere auf Ebene 1 → Ebene 2 (nicht 3), Textfeld entst
   fire(page, "pointerup", 100, 100, 0);
   expect(ui.layer).toBe(2);
   expect(host.querySelector("textarea")).not.toBeNull();
+});
+
+test("Shape-Hold: Rechteck zeichnen + halten → rastet sichtbar ein, Freihand-Strich geht als Undo-Stufe mit", () => {
+  vi.useFakeTimers();
+  try {
+    const el = mount("pen");
+    const pts: [number, number][] = [];
+    for (const [a, b] of [[[50, 50], [150, 50]], [[150, 50], [150, 120]], [[150, 120], [50, 120]], [[50, 120], [52, 53]]] as const)
+      for (let i = 0; i < 10; i++) pts.push([a[0] + ((b[0] - a[0]) * i) / 10 + (i % 2), a[1] + ((b[1] - a[1]) * i) / 10]);
+    fire(el, "pointerdown", 50, 50, 1, "pen");
+    for (const [x, y] of pts.slice(1)) fire(el, "pointermove", x, y, 1, "pen");
+    act(() => void vi.advanceTimersByTime(600));
+    expect(el.querySelector("[role=status]")?.textContent).toMatch(/^(Rechteck|Rectangle)$/);
+    fire(el, "pointermove", 300, 300, 1, "pen"); // nach dem Einrasten bleibt das Rechteck stehen
+    fire(el, "pointerup", 300, 300, 0, "pen");
+    const it = lastAdd.at(-1) as Item, raw = raws.at(-1) as Item;
+    expect(it.kind).toBe("ink");
+    expect(it.points.map(([x, y]) => [Math.round(x), Math.round(y)])).toEqual([[50, 50], [151, 50], [151, 120], [50, 120], [50, 50]]);
+    expect(raw.id).toBe(it.id);
+    expect(raw.points.length).toBe(pts.length);
+    expect(el.querySelector("[role=status]")).toBeNull();
+    // ohne Halten: kein Ersatz, keine Undo-Stufe
+    fire(el, "pointerdown", 300, 300, 1, "pen");
+    fire(el, "pointermove", 320, 340, 1, "pen");
+    fire(el, "pointerup", 320, 340, 0, "pen");
+    expect(raws.at(-1)).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
 });

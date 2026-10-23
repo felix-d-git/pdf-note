@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, test } from "vitest";
-import { Help } from "./help";
+import { CmdPalette, commands, Help } from "./help";
 import { keyText, T } from "./i18n";
 import { combos, KEYS } from "./keys";
 import { TOOLS } from "./settings";
@@ -54,5 +54,31 @@ test("Tour: 6–8 Schritte, jedes Ziel vorhanden, Überspringen merkt gesehen", 
   act(() => (div.querySelector(`[aria-label="${T.tourSkip}"]`) as HTMLButtonElement).click());
   expect(ended).toBe(1);
   expect(tourSeen()).toBe(true);
+  unmount();
+});
+
+test("Befehlspalette: Suche DE/EN aus KEYS, Pfeil + Enter löst das Kürzel aus, Esc schließt", () => {
+  expect(commands("dreh")).toContain("rotate");
+  expect(commands("rotate")).toContain("rotate");
+  expect(commands("")).not.toContain("palette");
+  expect(commands("").length).toBeGreaterThan(30);
+  let closed = 0;
+  const got: string[] = [];
+  const spy = (e: KeyboardEvent) => got.push(`${e.ctrlKey ? "Strg+" : ""}${e.shiftKey ? "Umschalt+" : ""}${e.key}`);
+  window.addEventListener("keydown", spy);
+  const { div, unmount } = mount(<CmdPalette onClose={() => closed++} />);
+  const input = div.querySelector("input") as HTMLInputElement;
+  act(() => (Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "speicher"), input.dispatchEvent(new Event("input", { bubbles: true }))));
+  const opts = [...div.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+  // „Speichern" (Strg+S) vor „Speichern unter" (Strg+Umschalt+S), Kürzel sichtbar
+  expect(opts[0]).toContain(keyText(KEYS.save));
+  act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  // die Tasten im Suchfeld selbst erreichen das Fenster nicht, nur der ausgelöste Befehl
+  expect(got).toEqual(["Strg+Umschalt+S"]);
+  expect(closed).toBe(1);
+  act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(closed).toBe(2);
+  window.removeEventListener("keydown", spy);
   unmount();
 });

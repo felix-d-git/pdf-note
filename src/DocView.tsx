@@ -768,6 +768,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           setTextSel(null);
         }],
         [KEYS.image, () => void insertImageFile()],
+        [KEYS.rotate, rotate],
         [KEYS.menu, openMenu],
         ...TOOL_LABELS.map(([t, , , key]): [string, () => void] => [key, () => chooseTool(t)]),
         ...LAYERS.map(([l]): [string, () => void] => [String(l), () => switchLayer(l)]),
@@ -1055,7 +1056,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         {md !== null && <IconBtn icon={FilePenLine} label={T.markdownEdit} onClick={() => setMdEdit({ page: current, source: md, insert: false, orig: md })} />}
         <IconBtn icon={Paperclip} label={T.appendPdf} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} />
         <IconBtn icon={FileImage} label={T.imagePage} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} />
-        <IconBtn icon={RotateCw} label={T.rotate} onClick={rotate} />
+        <IconBtn icon={RotateCw} label={T.rotate} keys={KEYS.rotate} onClick={rotate} />
         <IconBtn icon={ScanText} label={T.ocr} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} />
         {sep}
         <IconBtn icon={ZoomOut} label={T.zoomOut} keys={KEYS.zoomOut} onClick={() => applyZoom(zoom / 1.2)} />
@@ -1295,7 +1296,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   clearSel();
                   setTextSel(t && { ...t, page: i, v: version });
                 }}
-                onAdd={(it) => edit((all) => [...all, { ...it, layer: it.layer ?? (layer === 1 ? kindLayer(it.kind) : layer) }])}
+                onAdd={(it, raw) => {
+                  const add = (x: Item) => ({ ...x, layer: x.layer ?? (layer === 1 ? kindLayer(x.kind) : layer) });
+                  if (!raw) return edit((all) => [...all, add(it)]);
+                  // erkannte Form ersetzt den Freihand-Strich in einem zweiten Schritt → Strg+Z holt ihn zurück
+                  edit((all) => [...all, add(raw)]);
+                  edit((all) => all.map((x) => (x.id === raw.id ? add(it) : x)));
+                }}
                 onShape={(it) => {
                   edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }]);
                   setTextSel(null);

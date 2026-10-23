@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { STRINGS, T, keyText } from "./i18n";
-import { KEYS, LAYERS, TOOL_LABELS } from "./keys";
+import { combos, KEYS, LAYERS, pressOf, TOOL_LABELS } from "./keys";
 import { BTN, FIELD, IconBtn, on } from "./ui";
 
 /** Zeile: Text oder Symbol + Text (Symbol wie in der App) */
@@ -289,6 +289,61 @@ export function Help({ onClose, onTour }: { onClose: () => void; onTour: () => v
             </section>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+type Cmd = keyof typeof KEYS;
+/** nur als echte Taste sinnvoll (Zwischenablage, Pfeile, Esc, Menü am Zeiger) oder die Palette selbst */
+const NO_CMD = new Set<Cmd>(["palette", "copy", "cut", "paste", "nudge", "escape", "menu"]);
+/** Befehle der Palette aus `KEYS` (dieselbe Tabelle wie Hilfe und Tastatur); Suche über deutschen und englischen Namen */
+export const commands = (q: string) => {
+  const n = q.trim().toLowerCase();
+  return (Object.keys(KEYS) as Cmd[]).filter((k) => !NO_CMD.has(k) && (!n || [STRINGS.de[k], STRINGS.en[k]].some((t) => t.toLowerCase().includes(n))));
+};
+/**
+ * Befehl ausführen = sein Kürzel als Tastendruck ans Fenster → dieselben Handler wie die echte Taste (App, aktive DocView-Hälfte).
+ * ponytail: ein Werkzeug-Buchstabe tippt in ein einzeln gewähltes Textfeld wie die echte Taste; eigene Befehls-IDs, falls das stört.
+ */
+export const runCmd = (k: Cmd) => window.dispatchEvent(new KeyboardEvent("keydown", { ...pressOf(combos(KEYS[k])[0] ?? ""), bubbles: true, cancelable: true }));
+
+/** Befehlspalette (Strg+K): Suchfeld, Pfeiltasten + Enter, Klick; zeigt je Befehl das Kürzel. */
+export function CmdPalette({ onClose }: { onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [at, setAt] = useState(0);
+  const list = commands(q);
+  const sel = Math.min(at, list.length - 1);
+  const run = (k: Cmd | undefined) => {
+    onClose();
+    if (k) runCmd(k);
+  };
+  return (
+    <div role="dialog" aria-modal aria-label={T.palette} className="fixed inset-0 z-40 flex justify-center bg-black/30 pt-[15vh]" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="flex h-fit max-h-[60vh] w-full max-w-lg flex-col overflow-hidden rounded-sm border border-line bg-surface text-sm text-ink shadow-raised">
+        <input
+          autoFocus type="search" aria-label={T.paletteSearch} placeholder={T.paletteSearch} className={FIELD + " m-2"} value={q}
+          onChange={(e) => (setQ(e.target.value), setAt(0))}
+          onKeyDown={(e) => {
+            // Tasten erreichen die Fenster- und Dokument-Kürzel nicht
+            e.stopPropagation();
+            const d = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+            if (d) setAt((sel + d + list.length) % Math.max(list.length, 1));
+            else if (e.key === "Enter") run(list[sel]);
+            else if (e.key === "Escape") onClose();
+            else return;
+            e.preventDefault();
+          }}
+        />
+        <ul role="listbox" aria-label={T.palette} className="overflow-y-auto pb-1">
+          {list.map((k, i) => (
+            <li key={k} role="option" aria-selected={i === sel} className={`flex cursor-default justify-between gap-4 px-3 py-1 ${i === sel ? "bg-raised text-ink" : "text-ink-2"}`}
+              onPointerMove={() => setAt(i)} onClick={() => run(k)}>
+              <span>{T[k]}</span><span className="font-mono text-xs">{keyText(KEYS[k])}</span>
+            </li>
+          ))}
+          {!list.length && <li className="px-3 py-1 text-ink-3">{T.noCmd}</li>}
+        </ul>
       </div>
     </div>
   );

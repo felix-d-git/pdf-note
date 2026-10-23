@@ -7,7 +7,7 @@ import { ArrowLeftRight, CircleHelp, Columns2, FileWarning, FolderOpen, Keyboard
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { dropDoc } from "./docstore";
 import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
-import { Help } from "./help";
+import { CmdPalette, Help } from "./help";
 import { T } from "./i18n";
 import { comboOf, KEYS, keyMap } from "./keys";
 import { fromSession, loadSession, storeSession, toSession, type DocStart } from "./session";
@@ -31,6 +31,7 @@ export default function App() {
   /** beim Wiederherstellen nicht mehr gefundene Dateien (Hinweis-Symbol) */
   const [missing, setMissing] = useState<string[]>([]);
   const [help, setHelp] = useState(false);
+  const [palette, setPalette] = useState(false);
   const [tour, setTour] = useState(() => !tourSeen());
   const [ratio, setRatio] = useState(0.5);
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -280,6 +281,7 @@ export default function App() {
         [KEYS.nextTab, () => setState((s) => cycle(s, 1))],
         [KEYS.prevTab, () => setState((s) => cycle(s, -1))],
         [KEYS.help, () => setHelp(true)],
+        [KEYS.palette, () => setPalette(true)],
       ]);
       const k = comboOf(e);
       const f = act[k];
@@ -525,6 +527,7 @@ export default function App() {
           />
         )}
       </div>
+      {palette && <CmdPalette onClose={() => setPalette(false)} />}
       {help && <Help onClose={() => setHelp(false)} onTour={() => {
         setHelp(false);
         setTour(true);
