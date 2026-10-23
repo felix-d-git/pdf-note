@@ -38,7 +38,7 @@ const flushFrames = () => act(() => {
 let root: Root;
 let host: HTMLDivElement;
 // Zugriff auf den Zustand des Testelternteils (nach jedem Render gesetzt)
-const ui: { added: Item[]; setTool: (t: Tool) => void; selected: number[]; layer: Layer } = { added: [], setTool: () => {}, selected: [], layer: 3 };
+const ui: { added: Item[]; setTool: (t: Tool) => void; setLayer: (l: Layer) => void; selected: number[]; layer: Layer } = { added: [], setTool: () => {}, setLayer: () => {}, selected: [], layer: 3 };
 const origs: [OrigEdit[], ParaMove | undefined][] = [];
 const lastAdd: Item[] = [];
 const opened: string[] = [];
@@ -53,7 +53,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
   const [layer, setLayer] = useState<Layer>(layer0);
   const [tool, st] = useState(start);
   const [selected, setSel] = useState<number[]>(sel);
-  useEffect(() => void Object.assign(ui, { added: items, setTool: st, selected, layer }), [items, selected, layer]);
+  useEffect(() => void Object.assign(ui, { added: items, setTool: st, setLayer, selected, layer }), [items, selected, layer]);
   return (
     <PageView
       doc={1} index={0} size={[600, 800]} zoom={1} version={0} items={items} selected={selected} tool={tool} penTool={pen ?? tool} typers={new Map()}
@@ -443,7 +443,7 @@ test("Stift fasst Text nie an: kein Textfeld, kein Cursor, kein Absatz-Editor", 
   expect(host.querySelector("textarea")).not.toBeNull();
 });
 
-test("Klick auf eigenes Objekt wählt dessen Ebene, auf leere Stelle Textfeld auf Ebene 3", () => {
+test("Klick auf eigenes Objekt wählt dessen Ebene, auf leere Stelle Textfeld auf aktueller Ebene", () => {
   const page = mount("lasso", 3, [obj(1, "rect", 100, 100, 200, 160), text(2, 300)]);
   fire(page, "pointerdown", 100, 130);
   fire(page, "pointerup", 100, 130, 0);
@@ -458,11 +458,11 @@ test("Klick auf eigenes Objekt wählt dessen Ebene, auf leere Stelle Textfeld au
   fire(page, "pointerdown", 500, 500);
   fire(page, "pointerup", 500, 500, 0);
   expect(ui.layer).toBe(3);
-  // Ebene 2 aktiv, leerer Klick → Textfeld auf Ebene 3
+  // §3: Ebene 2 aktiv, leerer Maus-Klick → Textfeld bleibt auf Ebene 2 (Maus = Ebene 2)
   const p2 = mount("lasso", 2, []);
   fire(p2, "pointerdown", 500, 500);
   fire(p2, "pointerup", 500, 500, 0);
-  expect(ui.layer).toBe(3);
+  expect(ui.layer).toBe(2);
 });
 
 test("Klick auf PDF-Bild wechselt auf Ebene 1, der Stift nicht", async () => {
@@ -570,4 +570,36 @@ test("Glättung aus: Punkte exakt wie gezeichnet; an: Punkte laufen nach, live =
     act(() => root.unmount());
     root = createRoot(host);
   }
+});
+
+test("§3 Stift auf Ebene 2: Radieren trifft nur Ebene 3, Strich landet auf Ebene 3, Ebene springt auf 3", () => {
+  const page = mount("pen", 2, [obj(1, "rect", 80, 100, 120, 160), obj(2, "ink", 100, 100, 100, 160)]);
+  fire(page, "pointerdown", 60, 130, 32, "pen");
+  fire(page, "pointermove", 100, 130, 32, "pen");
+  fire(page, "pointermove", 140, 130, 32, "pen");
+  fire(page, "pointerup", 140, 130, 0, "pen");
+  expect(removed).toEqual([[2]]);
+  expect(ui.layer).toBe(3);
+  act(() => ui.setLayer(2));
+  lastAdd.length = 0;
+  fire(page, "pointerdown", 300, 300, 1, "pen");
+  fire(page, "pointermove", 340, 340, 1, "pen");
+  fire(page, "pointerup", 340, 340, 0, "pen");
+  expect(lastAdd.map((it) => [it.kind, it.layer])).toEqual([["ink", 3]]);
+});
+
+test("§3 Stift-Lasso auf Ebene 2 wählt nur Ebene-3-Objekte", () => {
+  const page = mount("pen", 2, [obj(1, "rect", 100, 100, 120, 120), obj(2, "ink", 100, 100, 120, 120)]);
+  for (const [x, y] of [[80, 80], [150, 80], [150, 150], [80, 150]] as const) fire(page, x === 80 && y === 80 ? "pointerdown" : "pointermove", x, y, 3, "pen");
+  fire(page, "pointerup", 80, 150, 0, "pen");
+  expect(ui.selected).toEqual([2]);
+  expect(ui.layer).toBe(3);
+});
+
+test("§3 Maus-Klick ins Leere auf Ebene 1 → Ebene 2 (nicht 3), Textfeld entsteht", () => {
+  const page = mount("lasso", 1);
+  fire(page, "pointerdown", 100, 100);
+  fire(page, "pointerup", 100, 100, 0);
+  expect(ui.layer).toBe(2);
+  expect(host.querySelector("textarea")).not.toBeNull();
 });

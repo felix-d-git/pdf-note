@@ -82,7 +82,8 @@ const Legacy = z.object({
 });
 const own = (p: z.infer<typeof Old>) => /^(Eigenes|Custom) /.test(p.name);
 const Palettes = z.union([
-  z.object({ pens: z.array(PenData), text: z.number().positive() }),
+  /** `last` = zuletzt genutzter Stift/Marker (Start und Rücksprung auf den Stift) */
+  z.object({ pens: z.array(PenData), text: z.number().positive(), last: PenData.optional() }),
   Legacy.transform((o) => {
     const pens = [
       ...[...(o.quick?.pen ?? []), ...o.pen.filter(own)].map(({ color, size }) => ({ kind: "pen" as const, color, size })),
@@ -92,7 +93,7 @@ const Palettes = z.union([
     return { pens: pens.length ? pens : DEFAULT_PENS, text: o.text };
   }),
 ]);
-export interface Palettes { pens: Pen[]; text: number }
+export interface Palettes { pens: Pen[]; text: number; last?: Pen }
 export const DEFAULT_PALETTES: Palettes = { pens: DEFAULT_PENS, text: TEXT_SIZE };
 
 function legacyPressureOff() {
@@ -172,6 +173,10 @@ export const movePen = (list: Pen[], from: number, to: number) => {
 };
 /** n-ter Stift bzw. Marker (Q W E / Umschalt+Q W E) */
 export const nthPen = (list: Pen[], kind: Pen["kind"], n: number) => list.filter((p) => p.kind === kind)[n];
+
+/** Gerätewechsel (bei `auto`): Stift → zuletzt genutzter Stift/Marker (nie Radierer/Auswahl/Form), Maus → Auswahl. */
+export const deviceTools = (s: Tools, dev: "pen" | "mouse", last: Pen["kind"]): Tools =>
+  dev === "pen" ? { ...s, pen: s.pen === "pen" || s.pen === "marker" ? s.pen : last, locked: false } : { ...s, mouse: "lasso", locked: false };
 
 /** Nach dem Zeichnen einer Form: zurück zum vorherigen Werkzeug, außer mit Schloss. */
 export const afterShape = (s: Tools): Tools => s.locked ? s : {

@@ -2,7 +2,7 @@
 import { expect, test, vi } from "vitest";
 import { DEFAULT_PENS, type Pen } from "./ink";
 import {
-  afterShape, applyTheme, captureBinding, DEFAULT_PALETTES, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, movePen, nthPen, pickTool,
+  afterShape, applyTheme, captureBinding, DEFAULT_PALETTES, deviceTools, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, movePen, nthPen, pickTool,
   storePalettes, storeSettings, toolFor, pickColor,
 } from "./settings";
 
@@ -117,5 +117,23 @@ test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Prese
   mem.set("pdfnote.presets", "{kaputt");
   mem.set("pdfnote.settings", JSON.stringify({ lasso: S.lasso, eraser: S.eraser, pressureMax: 0.5 }));
   expect(loadSettings().pressureMax).toBe(0.5);
+  vi.unstubAllGlobals();
+});
+
+test("§3 Gerätewechsel: Stift → letzter Stift/Marker statt Radierer/Auswahl/Form, Maus → Auswahl", () => {
+  const t = initTools(true);
+  expect(deviceTools({ ...t, pen: "eraser" }, "pen", "marker").pen).toBe("marker");
+  expect(deviceTools({ ...t, pen: "lasso" }, "pen", "pen").pen).toBe("pen");
+  expect(deviceTools({ ...t, pen: "rect", locked: true }, "pen", "pen")).toMatchObject({ pen: "pen", locked: false });
+  expect(deviceTools({ ...t, pen: "marker" }, "pen", "pen").pen).toBe("marker");
+  expect(deviceTools({ ...t, mouse: "eraser" }, "mouse", "pen")).toMatchObject({ mouse: "lasso", pen: "pen" });
+});
+
+test("§3 zuletzt genutzter Stift überlebt den Neustart", () => {
+  const mem = new Map<string, string>();
+  vi.stubGlobal("localStorage", { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) });
+  const last = { kind: "marker" as const, color: [1, 1, 0] as [number, number, number], size: 9 };
+  storePalettes({ ...DEFAULT_PALETTES, last });
+  expect(loadPalettes().last).toEqual(last);
   vi.unstubAllGlobals();
 });

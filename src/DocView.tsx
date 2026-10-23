@@ -21,7 +21,7 @@ import { lockedLayers, setLayerLocked } from "./layers";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
-import { afterShape, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { afterShape, deviceTools, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 import { PenBar } from "./PenBar";
 import { scrollAfterZoom, wheelFactor } from "./zoom";
 import { formulas, type Formula } from "./math";
@@ -120,12 +120,14 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const setVersion = (f: (v: number) => number) => setDoc((d) => ({ ...d, version: f(d.version) }));
   const [zoom, setZoom] = useState(start?.zoom ?? 1);
   /** Werkzeug der Maus (bei `settings.auto`) bzw. aller Geräte; `penTool` = Werkzeug des Stifts bei `auto` */
-  const [tools, setTools] = useState(() => ({ ...initTools(settings.auto), ...(start && { mouse: start.mouse, pen: start.pen }) }));
+  const [tools, setTools] = useState(() => ({
+    ...initTools(settings.auto), ...(start ? { mouse: start.mouse, pen: start.pen } : { pen: loadPalettes().last?.kind ?? "pen" }),
+  }));
   const { mouse: tool, pen: penTool, locked } = tools;
   const setTool = (t: Tool) => setTools((s) => ({ ...s, mouse: t }));
   /** Tippen bei ausgewähltem Textfeld: PageView je Seite öffnet das Feld mit dem Zeichen am Ende */
   const typers = useRef(new Map<number, (id: number, ch: string) => void>()).current;
-  const [layer, setLayer] = useState<Layer>(start?.layer ?? 3);
+  const [layer, setLayer] = useState<Layer>(start?.layer ?? 2);
   /** gesperrte Ebenen dieses Dokuments (gerätelokal, `layers.ts`) */
   const [locks, setLocks] = useState(() => lockedLayers(path));
   const toggleLock = (l: Layer) => {
@@ -138,11 +140,11 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [pal, setPal] = useState(loadPalettes);
   useEffect(() => storePalettes(pal), [pal]);
   const [preset, setPreset] = useState<Preset>(() => {
-    const p = pal.pens.find((x) => x.kind === "pen" && same(x, DEFAULT_PRESET)) ?? nthPen(pal.pens, "pen", 0) ?? DEFAULT_PRESET;
+    const p = (pal.last?.kind === "pen" ? pal.last : undefined) ?? pal.pens.find((x) => x.kind === "pen" && same(x, DEFAULT_PRESET)) ?? nthPen(pal.pens, "pen", 0) ?? DEFAULT_PRESET;
     return { color: p.color, size: p.size };
   });
   const [marker, setMarker] = useState<Preset>(() => {
-    const m = nthPen(pal.pens, "marker", 0) ?? DEFAULT_PRESET;
+    const m = (pal.last?.kind === "marker" ? pal.last : undefined) ?? nthPen(pal.pens, "marker", 0) ?? DEFAULT_PRESET;
     return { color: m.color, size: m.size };
   });
   /** Koordinatensystem: gilt fürs nächste Aufziehen */
@@ -210,6 +212,21 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     setPreset(r.preset);
     setMarker(r.marker);
     switchLayer(TOOL_LAYER[c.kind] ?? 3);
+  };
+  // zuletzt genutzten Stift/Marker merken (gerätelokal): Rücksprung beim Gerätewechsel und nach Neustart
+  const pt = settings.auto ? tools.pen : tools.mouse;
+  const penNow = pt === "pen" || pt === "marker" ? pt : undefined;
+  const lastPen = penNow && { kind: penNow, ...(penNow === "pen" ? preset : marker) };
+  if (lastPen && !(pal.last && pal.last.kind === lastPen.kind && same(pal.last, lastPen))) setPal({ ...pal, last: lastPen });
+  /** Gerätewechsel: Stift → Ebene 3 + letzter Stift/Marker, Maus → Ebene 2 + Auswahl (Hovern genügt) */
+  const device = useRef<"pen" | "mouse">("mouse");
+  const deviceEvent = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    const d = e.pointerType === "pen" ? "pen" : "mouse";
+    if (d === device.current) return;
+    device.current = d;
+    if (settings.auto) setTools((s) => deviceTools(s, d, pal.last?.kind ?? "pen"));
+    switchLayer(d === "pen" ? 3 : 2);
   };
   const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
     setTools((s) => pickTool(s, t, dev, settings.auto));
@@ -927,7 +944,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     <div
       className={`min-w-0 flex-col border-t-2 ${marked ? "border-accent" : "border-transparent"} ${visible ? "flex" : "hidden"}`}
       style={style}
+      onPointerMoveCapture={deviceEvent}
       onPointerDownCapture={(e) => {
+        deviceEvent(e);
         // erster Maus-Klick in die inaktive Hälfte aktiviert nur diese (Klick folgt nicht); Stift/Finger wirken sofort
         first.current = onlyActivates(active, e.pointerType);
         if (first.current) e.stopPropagation();
@@ -1276,7 +1295,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   clearSel();
                   setTextSel(t && { ...t, page: i, v: version });
                 }}
-                onAdd={(it) => edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }])}
+                onAdd={(it) => edit((all) => [...all, { ...it, layer: it.layer ?? (layer === 1 ? kindLayer(it.kind) : layer) }])}
                 onShape={(it) => {
                   edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }]);
                   setTextSel(null);
