@@ -525,7 +525,7 @@ pub(crate) fn reflow(text: &str, width: f32, indent: f32, space: f32, justify: b
     out
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02X}")).collect()
 }
 

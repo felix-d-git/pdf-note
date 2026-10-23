@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn suche_findet_markdown_text() {
         let mut d = doc(2);
-        crate::notebook::render(&mut d, 1, "# Titel\n\nDer Zaunkönig singt.", true).unwrap();
+        crate::notebook::render(&mut d, 1, "# Titel\n\nDer Zaunkönig singt.", true, &[]).unwrap();
         let hits = search(&d, "zaunkönig").unwrap();
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].page, 1);

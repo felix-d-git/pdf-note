@@ -603,7 +603,7 @@ fn notizbuch() {
             pdf::page_op(&mut doc, &PageOp::Blank { at: count + i as i32, width: 595.0, height: 842.0, template: Some(t) }).unwrap();
         }
         let md = "# Notiz\n\nText mit **fett** und Ümlaut.\n\n- eins\n- zwei\n";
-        pdf::page_op(&mut doc, &PageOp::Markdown { page: count + 3, source: md.into(), insert: true }).unwrap();
+        pdf::page_op(&mut doc, &PageOp::Markdown { page: count + 3, source: md.into(), insert: true, formulas: Vec::new() }).unwrap();
         let mut marks = old.clone();
         marks.push(Mark { title: "Notizen".into(), page: count, level: 0 });
         marks.push(Mark { title: "Markdown".into(), page: count + 3, level: 1 });

@@ -154,7 +154,7 @@ mod tests {
     fn scan_wird_durchsuchbar() {
         // Text erst als Markdown-Seite setzen, dann als Bild auf eine neue Seite = künstlicher Scan
         let mut src = PdfDocument::new();
-        crate::notebook::render(&mut src, 0, "# Rechnung Nummer 4711\n\n# Hello World Scanner", true).unwrap();
+        crate::notebook::render(&mut src, 0, "# Rechnung Nummer 4711\n\n# Hello World Scanner", true, &[]).unwrap();
         let pix = src.load_page(0).unwrap().to_pixmap(&Matrix::new_scale(3.0, 3.0), &Colorspace::device_gray(), false, false).unwrap();
         let img = Image::from_pixmap(&pix).unwrap();
 

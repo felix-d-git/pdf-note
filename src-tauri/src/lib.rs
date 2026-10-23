@@ -211,6 +211,18 @@ async fn render_page(w: tauri::State<'_, Worker>, id: u32, index: i32, scale: f3
         .map(Response::new)
 }
 
+/// Vorschau für den Markdown-Editor: Satz in eine Wegwerf-PDF, nichts am offenen Dokument.
+#[tauri::command]
+async fn markdown_preview(w: tauri::State<'_, Worker>, source: String, formulas: Vec<notebook::Formula>, scale: f32) -> Result<Response, String> {
+    w.run(move |_| {
+        let mut d = mupdf::pdf::PdfDocument::new();
+        notebook::render(&mut d, 0, &source, true, &formulas)?;
+        pdf::render_png(&d, 0, scale).map_err(|e| e.to_string())
+    })
+    .await
+    .map(Response::new)
+}
+
 /// „Speichern unter" schreibt nach `target`, gearbeitet wird weiter an der offenen PDF.
 #[tauri::command]
 async fn save_pdf(
@@ -351,7 +363,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, copy_pages, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, goto_rev, read_image, crop_image, startup_path, search, links, open_url])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, copy_pages, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, markdown_preview, goto_rev, read_image, crop_image, startup_path, search, links, open_url])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

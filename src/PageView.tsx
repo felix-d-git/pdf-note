@@ -1048,7 +1048,10 @@ export function PageView(p: PageProps) {
       onDoubleClick={(e) => {
         const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
         const [it] = sel;
-        if (sel.length === 1 && it && it.id >= 0 && it.kind === "image" && hitTest(it, (e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0)) setCrop(it.id);
+        if (sel.length === 1 && it && it.id >= 0 && it.kind === "image" && hitTest(it, (e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0)) {
+          e.stopPropagation();
+          setCrop(it.id);
+        }
       }}
     >
       {url && <img src={url} alt="" draggable={false} className="absolute inset-0 h-full w-full select-none" />}

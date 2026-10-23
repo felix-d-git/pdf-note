@@ -16,6 +16,7 @@
 | React, React DOM | 19.3 | MIT | UI |
 | lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.59 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
 | Zod | 4.6 | MIT | Validierung an Grenzen |
+| MathJax (`mathjax-full`, MathJax Consortium), inkl. MathJax-TeX-Schriftdaten | 3.2.2 | Apache-2.0 | Formeln auf Markdown-Seiten: TeX → SVG → PDF-Pfade, lokal gebündelt (nur TeX-Eingabe, SVG-Ausgabe, base+ams; Abhängigkeiten speech-rule-engine/mhchemparser/mj-context-menu nicht gebündelt) |
 | Tailwind CSS | 4.3 | MIT | Styles (Build) |
 | Manrope (Mikhail Sharanda), Paket `@fontsource-variable/manrope` | 5.3.0 | SIL OFL 1.1 (Schrift), MIT (Paket) | UI-Schrift, lokal gebündelt |
 | IBM Plex Mono (IBM), Paket `@fontsource/ibm-plex-mono` | 5.3.0 | SIL OFL 1.1 (Schrift), MIT (Paket) | Mono-Schrift, lokal gebündelt |
