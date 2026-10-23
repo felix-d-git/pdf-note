@@ -21,7 +21,7 @@ import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast } from "./ui";
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Sitzung einmal je Programmstart wiederherstellen (StrictMode führt Effekte doppelt aus); Öffnen wartet darauf */
 let restored: Promise<void> | undefined;
-const NO_VIEW: DocStart = { zoom: 1, left: 0, top: 0, layer: 3, mouse: "lasso", pen: "pen" };
+const NO_VIEW: DocStart = { zoom: 1, left: 0, top: 0, layer: 2, mouse: "lasso", pen: "pen" };
 
 export default function App() {
   const [state, setState] = useState(EMPTY_TABS);

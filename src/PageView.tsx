@@ -100,9 +100,9 @@ const family = (font: string) => /mono|courier/i.test(font) ? "monospace" : /san
 type Gesture =
   | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; straight: boolean } | null }
   | { t: "shape"; item: Item }
-  | { t: "erase"; ids: Set<number> }
+  | { t: "erase"; ids: Set<number>; l: Layer }
   /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
-  | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean; add: number[] | null }
+  | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean; add: number[] | null; l: Layer }
   | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean; fresh: boolean }
   /** Ziehen im gerade geöffneten Textfeld markiert von Stelle `a` aus */
   | { t: "fsel"; it: Item; a: number }
@@ -486,8 +486,7 @@ export function PageView(p: PageProps) {
   const eraseAt = (x: number, y: number) => {
     const c = g.current;
     if (c?.t !== "erase") return;
-    const l = p.layer === 1 ? 3 : p.layer;
-    for (const it of items) if (layerOf(it) === l && hitTest(it, x, y, ERASER_PX / zoom)) c.ids.add(it.id);
+    for (const it of items) if (layerOf(it) === c.l && hitTest(it, x, y, ERASER_PX / zoom)) c.ids.add(it.id);
   };
 
   const make = (kind: Item["kind"], pr: Preset, q: InkPoint, simulated: boolean): Item => ({
@@ -562,10 +561,15 @@ export function PageView(p: PageProps) {
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
     const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
     if (!t || g.current) return;
-    const lt = targetLayer(t, p.layer);
+    // Stift zeichnet, markiert, radiert und wählt nur auf Ebene 3 – unabhängig von der gewählten Ebene
+    const pen3 = e.pointerType === "pen" && (t === "pen" || t === "marker" || t === "eraser" || t === "lasso");
+    const lt = pen3 ? 3 : targetLayer(t, p.layer);
     if (lt && p.locked?.(lt)) return;
     setMenu(undefined);
     setGhost(undefined);
+    // Auswahl einer anderen Ebene fasst der Stift nicht an (onLayer hebt sie auf)
+    const sl = pen3 && p.layer !== 3 ? [] : sel;
+    if (pen3 && p.layer !== 3) p.onLayer(3);
     owner.current = e.pointerId;
     e.stopPropagation();
     const q = pt(e);
@@ -603,11 +607,11 @@ export function PageView(p: PageProps) {
     // Maus mit Strg/Umschalt: Auswahl erweitern/verkleinern (bleibt in der Ebene)
     const mouse = e.pointerType !== "pen";
     const add = mouse && (e.ctrlKey || e.shiftKey) && t === "lasso" && !tgt.closest("[data-handle]");
-    if (sel.length && !add) {
-      const b = unionBox(sel);
+    if (sl.length && !add) {
+      const b = unionBox(sl);
       const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
       // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
-      const only = sel.length === 1 && sel[0]?.kind === "text" ? sel[0] : undefined;
+      const only = sl.length === 1 && sl[0]?.kind === "text" ? sl[0] : undefined;
       if (t === "lasso" && mouse && only && !h && inBox(b, x, y)) {
         p.onSelect(index, []);
         return openText(e, only, x, y);
@@ -625,7 +629,7 @@ export function PageView(p: PageProps) {
     // Klick während des Bearbeitens schließt erst das offene Feld/den Absatz (Blur speichert)
     const fresh = !edit && !pedit;
     // Maus-Klick wählt die Ebene selbst; der Stift fasst Text nie an und behält die Ebene
-    let L = p.layer;
+    let L: Layer = pen3 ? 3 : p.layer;
     if (t === "lasso" && mouse && !add && fresh) {
       const onPdf = !!posAt(clist, x, y) || paraAt(x, y) >= 0 || !!smallestAt(origs, x, y);
       const auto = autoLayerFor(items, x, y, 4 / zoom + 1, onPdf, (l) => !p.locked?.(l));
@@ -654,21 +658,22 @@ export function PageView(p: PageProps) {
     }
     const at = t === "marker" ? posAt(clist, x, y) : null;
     if (at) {
-      g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [] } };
+      g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [], ...(pen3 && { layer: 3 as const }) } };
     } else if (t === "pen" || t === "marker") {
       const flat = t === "pen" && !settings.pressure;
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
+      if (pen3) item.layer = 3;
       lastTs.current = e.timeStamp;
       g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
       armHold(x, y);
     } else if (t === "eraser") {
-      g.current = { t: "erase", ids: new Set() };
+      g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L };
       eraseAt(x, y);
       redraw();
     } else if (t === "lasso") {
       const at = L === 1 && mouse && !add ? posAt(clist, x, y) : null;
       // Ebene 1: auf Text → markieren (Klick bearbeitet den Absatz), sonst Auswahl; Maus zieht ein Rechteck, Stift ein Lasso
-      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false, fresh } : { t: "lasso", poly: [[x, y]], rect: mouse, fresh, add: add ? selected : null };
+      g.current = at ? { t: "tsel", a: at, b: at, x, y, moved: false, fresh } : { t: "lasso", poly: [[x, y]], rect: mouse, fresh, add: add ? selected : null, l: L };
       rerender();
     } else if (t === "space") {
       g.current = { t: "space", y, dy: 0 };
@@ -808,16 +813,16 @@ export function PageView(p: PageProps) {
         const [x0, y0] = c.poly[0] ?? [0, 0];
         const far = c.poly.some(([x, y]) => Math.hypot(x - x0, y - y0) > 3);
         // nur die aktive Ebene ist wählbar; Ebene 1: alle berührten Absätze + PDF-Bilder
-        const cand = p.layer === 1 ? [...origs, ...pitems] : items.filter((it) => layerOf(it) === p.layer);
+        const cand = c.l === 1 ? [...origs, ...pitems] : items.filter((it) => layerOf(it) === c.l);
         const ids = far
-          ? cand.filter((it) => p.layer === 1 ? touches(box(it), c.poly, c.rect) : inPolygon((box(it).x0 + box(it).x1) / 2, (box(it).y0 + box(it).y1) / 2, c.poly)).map((it) => it.id)
-          : (p.layer === 1 ? smallestAt(cand, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id) ?? [];
+          ? cand.filter((it) => c.l === 1 ? touches(box(it), c.poly, c.rect) : inPolygon((box(it).x0 + box(it).x1) / 2, (box(it).y0 + box(it).y1) / 2, c.poly)).map((it) => it.id)
+          : (c.l === 1 ? smallestAt(cand, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id) ?? [];
         const hit = Array.isArray(ids) ? ids : [ids];
         const base = c.add ?? [];
         p.onSelect(index, !c.add ? hit : far ? [...new Set([...base, ...hit])] : hit.some((i) => base.includes(i)) ? base.filter((i) => !hit.includes(i)) : [...base, ...hit]);
-        // Klick ins Leere setzt den Cursor (Notizen, Ebene 3); das Feld entsteht erst mit dem ersten Zeichen
+        // Klick ins Leere setzt den Cursor (Maus: Ebene 2, auf Ebene 1 nach 2); das Feld entsteht erst mit dem ersten Zeichen
         if (!far && c.fresh && !c.add && !hit.length && e.pointerType !== "pen") {
-          if (p.layer !== 3) p.onLayer(3);
+          if (p.layer === 1) p.onLayer(2);
           caret.current = [0, 0];
           setEdit({ item: make("text", preset, [x0, y0, 0.5], false), isNew: true });
         }
