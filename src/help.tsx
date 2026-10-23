@@ -37,7 +37,7 @@ const DE: Chapter[] = [
     "Ebene 1: Doppelklick in einen Absatz der PDF bearbeitet den Originaltext direkt; Verlassen oder Esc übernimmt.",
   ] },
   { id: "select", icon: MousePointer2, title: "Auswahl, Griffe, Mini-Leiste, Rechtsklick", lines: [
-    "Klicken oder Rahmen ziehen wählt aus; Umschalt fügt hinzu. Griffe ändern Größe, der runde Griff dreht.",
+    "Klicken oder Rahmen ziehen wählt aus; Umschalt fügt hinzu (Ebene 1: Umschalt+Ziehen zieht den Rahmen auch über Text; mehrere Absätze/Bilder verschieben sich zusammen). Griffe ändern Größe, der runde Griff dreht.",
     [Copy, "Über der Auswahl erscheint die Mini-Leiste (Kopieren, Ausschneiden, Löschen, Stil …)."],
     "Rechtsklick, Menütaste oder Umschalt+F10 öffnet das Kontextmenü (Einfügen, Textfeld hier, Bild hier, nach vorn/hinten).",
     "Pfeiltasten schieben die Auswahl um 1 pt, mit Umschalt um 10 pt.",
@@ -53,9 +53,9 @@ const DE: Chapter[] = [
   { id: "axes", icon: Grid3x3, title: "Koordinatensysteme", lines: [
     "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Im Stil-Menü: xy oder xyz (Schrägbild), Karo-Gitter.",
   ] },
-  { id: "marker", icon: Palette, title: "Textmarker, Stärke, Farbe, Presets", lines: [
+  { id: "marker", icon: Palette, title: "Stifte, Textmarker, Farbe, Breite", lines: [
     "Beginnt ein Textmarker-Strich auf PDF-Text, rastet er auf die Textzeilen ein.",
-    [Palette, "Stärke, Farbe, Presets: je Werkzeug eigene Presets; eigenes Preset speichern oder überschreiben."],
+    [Palette, "Leiste: Stifte und Marker. Rechtsklick → Farbe, Breite, Entfernen; „+“ → neuer Stift; Ziehen ordnet um. Q W E = erste drei Stifte, Umschalt+Q W E = erste drei Marker."],
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs und Split View", lines: [
     "Tabs per Ziehen umsortieren; Strg+Tab wechselt.",
@@ -99,7 +99,7 @@ const DE: Chapter[] = [
   { id: "pen", icon: Hand, title: "Stifttasten und Handballen", lines: [
     "Stifttasten: obere = Auswahl, untere/Radierer-Ende = Radierer; in den Einstellungen neu lernen.",
     "Handballen: Finger zählt nicht, solange der Stift aufliegt und 0,5 s danach, oder wenn die Berührung breiter als 40 px ist.",
-    [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Druck-Maximum."],
+    [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Druck an/aus, Druck-Maximum, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
   ] },
 ];
 
@@ -128,7 +128,7 @@ const EN: Chapter[] = [
     "Layer 1: double-click a paragraph of the PDF to edit the original text directly; leaving or Esc applies.",
   ] },
   { id: "select", icon: MousePointer2, title: "Selection, handles, mini bar, right-click", lines: [
-    "Click or drag a frame to select; Shift adds. Handles resize, the round handle rotates.",
+    "Click or drag a frame to select; Shift adds (layer 1: Shift+drag draws the frame over text too; several paragraphs/images move together). Handles resize, the round handle rotates.",
     [Copy, "The mini bar appears above the selection (copy, cut, delete, style …)."],
     "Right-click, the menu key or Shift+F10 opens the context menu (paste, text box here, image here, forward/backward).",
     "Arrow keys move the selection by 1 pt, with Shift by 10 pt.",
@@ -144,9 +144,9 @@ const EN: Chapter[] = [
   { id: "axes", icon: Grid3x3, title: "Coordinate systems", lines: [
     "Coordinate system tool (X): drag a rectangle → axes. In the style menu: xy or xyz (oblique), square grid.",
   ] },
-  { id: "marker", icon: Palette, title: "Highlighter, width, colour, presets", lines: [
+  { id: "marker", icon: Palette, title: "Pens, highlighter, colour, width", lines: [
     "A highlighter stroke that starts on PDF text snaps to the text lines.",
-    [Palette, "Width, colour, presets: each tool has its own presets; save a custom preset or overwrite one."],
+    [Palette, "Bar: pens and highlighters. Right-click → colour, width, remove; “+” → new pen; drag to reorder. Q W E = first three pens, Shift+Q W E = first three highlighters."],
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs and Split View", lines: [
     "Drag tabs to reorder; Ctrl+Tab switches.",
@@ -190,7 +190,7 @@ const EN: Chapter[] = [
   { id: "pen", icon: Hand, title: "Pen buttons and palm rejection", lines: [
     "Pen buttons: upper = select, lower/eraser end = eraser; re-learn them in the settings.",
     "Palm: a finger is ignored while the pen is down and 0.5 s after, or if the touch is wider than 40 px.",
-    [Wrench, "Settings: view light/dark/system, pen buttons, pressure maximum."],
+    [Wrench, "Settings: view light/dark/system, pen buttons, pressure on/off, pressure maximum, smoothing (off = exactly as drawn) – applies to all pens."],
   ] },
 ];
 

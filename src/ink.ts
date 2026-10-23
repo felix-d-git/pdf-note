@@ -77,39 +77,27 @@ export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   ...(d.fill ? { fill: d.fill } : {}),
 });
 
+/** Strichart: Farbe + Grundbreite (Formen nutzen den aktiven Stift) */
 export interface Preset {
-  name: string;
   color: Rgb;
   size: number;
-  /** false = Stiftdruck ignorieren (konstante Strichbreite); fehlt = Druck an */
-  pressure?: boolean;
+}
+/** Stift der Werkzeugleiste; Druck und Glättung gelten global (Einstellungen) */
+export interface Pen extends Preset {
+  kind: "pen" | "marker";
 }
 
-export const DEFAULT_PRESET: Preset = { name: "Schwarz", color: [0.07, 0.07, 0.07], size: 2.2 };
+export const DEFAULT_PRESET: Preset = { color: [0.07, 0.07, 0.07], size: 2.2 };
 
-export const PRESETS: Preset[] = [
-  { name: "Schwarz fein", color: [0.07, 0.07, 0.07], size: 1.2 },
-  DEFAULT_PRESET,
-  { name: "Blau", color: [0.12, 0.36, 0.85], size: 2.2 },
-  { name: "Rot", color: [0.84, 0.18, 0.18], size: 2.2 },
-  { name: "Grün dick", color: [0.06, 0.6, 0.45], size: 4 },
-];
-
-export const MARKERS: Preset[] = [
-  { name: "Gelb", color: [1, 0.86, 0.1], size: 12 },
-  { name: "Grün", color: [0.45, 0.9, 0.35], size: 12 },
-  { name: "Pink", color: [1, 0.45, 0.75], size: 12 },
-];
-/** Immer sichtbare Farbfelder der Werkzeugleiste: Stift bzw. Marker Rot/Grün/Blau (Taste Q W E bzw. Umschalt+Q W E) */
-export const QUICK_PEN: Preset[] = [
-  { name: "Rot", color: [0.84, 0.18, 0.18], size: 2.2 },
-  { name: "Grün", color: [0.06, 0.6, 0.45], size: 2.2 },
-  { name: "Blau", color: [0.12, 0.36, 0.85], size: 2.2 },
-];
-export const QUICK_MARKER: Preset[] = [
-  { name: "Rot", color: [1, 0.35, 0.35], size: 12 },
-  { name: "Grün", color: [0.45, 0.9, 0.35], size: 12 },
-  { name: "Blau", color: [0.4, 0.7, 1], size: 12 },
+/** Start-Leiste: `Q W E` = erste drei Stifte, `Umschalt+Q W E` = erste drei Marker */
+export const DEFAULT_PENS: Pen[] = [
+  { kind: "pen", color: [0.84, 0.18, 0.18], size: 2.2 },
+  { kind: "pen", color: [0.06, 0.6, 0.45], size: 2.2 },
+  { kind: "pen", color: [0.12, 0.36, 0.85], size: 2.2 },
+  { kind: "pen", ...DEFAULT_PRESET },
+  { kind: "marker", color: [1, 0.35, 0.35], size: 12 },
+  { kind: "marker", color: [0.45, 0.9, 0.35], size: 12 },
+  { kind: "marker", color: [0.4, 0.7, 1], size: 12 },
 ];
 export const MARKER_OPACITY = 0.35;
 export const TEXT_SIZE = 14;
@@ -120,6 +108,10 @@ const THINNING = 0.5;
 export const PRESSURE_MAX = 0.75;
 
 export const normPressure = (p: number, max = PRESSURE_MAX) => Math.min(1, Math.max(0.05, p / max));
+
+/** Glättung beim Aufnehmen (live = gespeichert): neuer Punkt läuft um `s` (0–0,9) nach; 0 = exakt wie gezeichnet. */
+export const smoothPt = (prev: InkPoint | undefined, q: InkPoint, s: number): InkPoint =>
+  prev && s > 0 ? [prev[0] + (q[0] - prev[0]) * (1 - s), prev[1] + (q[1] - prev[1]) * (1 - s), q[2]] : q;
 
 /**
  * Umriss-Punkte (perfect-freehand) in pt. streamline/smoothing 0: Umriss läuft exakt um die echten Punkte

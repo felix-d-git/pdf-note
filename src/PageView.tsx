@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { z } from "zod";
 import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, rotateItem,
-  rotMatrix, scaleItem, scaleMatrix, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb,
+  rotMatrix, scaleItem, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
@@ -656,7 +656,7 @@ export function PageView(p: PageProps) {
     if (at) {
       g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [] } };
     } else if (t === "pen" || t === "marker") {
-      const flat = t === "pen" && preset.pressure === false;
+      const flat = t === "pen" && !settings.pressure;
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
       lastTs.current = e.timeStamp;
       g.current = { t: "draw", item, hold: { x, y, timer: 0, straight: false } };
@@ -681,6 +681,12 @@ export function PageView(p: PageProps) {
   const move = (e: React.PointerEvent) => {
     const c = g.current;
     if (c && e.pointerId !== owner.current) return;
+    // Radiertaste losgelassen, Spitze noch unten → sofort weiterschreiben; nichts gedrückt → verlorenes pointerup
+    if (c && (e.buttons === 0 || (c.t === "erase" && toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings) !== "eraser"))) {
+      up(e);
+      if (e.buttons) down(e);
+      return;
+    }
     if (!c) {
       const [x, y] = pt(e);
       if (e.ctrlKey && e.pointerType !== "touch") {
@@ -704,7 +710,7 @@ export function PageView(p: PageProps) {
     const evs = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const q = pt(e);
     const [x, y] = q;
-    const flat = c.t === "draw" && c.item.kind === "ink" && preset.pressure === false;
+    const flat = c.t === "draw" && c.item.kind === "ink" && !settings.pressure;
     switch (c.t) {
       case "draw":
         lastTs.current = e.timeStamp;
@@ -712,7 +718,8 @@ export function PageView(p: PageProps) {
           const r = pt(ev, flat), hd = c.hold;
           if (hd?.straight) straighten(c.item, r[0], r[1]);
           else {
-            c.item.points.push(r);
+            // Glättung schon beim Aufnehmen: live = gespeichert, beim Loslassen springt nichts
+            c.item.points.push(smoothPt(c.item.points.at(-1), r, settings.smooth));
             if (hd && Math.hypot(r[0] - hd.x, r[1] - hd.y) > HOLD_TOL) armHold(r[0], r[1]);
           }
         }

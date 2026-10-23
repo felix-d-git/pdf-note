@@ -3,14 +3,14 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, File, FileCode,
-  FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, Highlighter, ImagePlus, ListIndentDecrease,
-  ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Pen, Plus, Redo2, RotateCw,
+  FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
+  ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
   afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  isPara, layerOf, moveItem, newId, PARA0, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Preset,
+  isPara, layerOf, moveItem, newId, PARA0, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset,
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
@@ -21,7 +21,8 @@ import { lockedLayers, setLayerLocked } from "./layers";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
-import { afterShape, initTools, loadPalettes, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { afterShape, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { PenBar } from "./PenBar";
 import { scrollAfterZoom, wheelFactor } from "./zoom";
 import { formulas, type Formula } from "./math";
 import { MdEditor } from "./MdEditor";
@@ -48,6 +49,8 @@ export interface Snap { items: Item[]; rev: number; sizes: [number, number][] }
 interface History { list: Snap[]; at: number }
 const HISTORY_MAX = 200;
 const EMPTY: Snap = { items: [], rev: 0, sizes: [] };
+/** Stift aktiv = gleiche Farbe + Breite (Leiste speichert Werte, keine Ids) */
+const same = (a: Preset, b: Preset) => a.size === b.size && a.color.every((c, k) => c === b.color[k]);
 const push = (h: History, s: Snap): History => {
   const list = [...h.list.slice(0, h.at + 1), s].slice(-HISTORY_MAX);
   return { list, at: list.length - 1 };
@@ -134,8 +137,14 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
   const [pal, setPal] = useState(loadPalettes);
   useEffect(() => storePalettes(pal), [pal]);
-  const [preset, setPreset] = useState<Preset>(pal.pen.find((p) => p.name === DEFAULT_PRESET.name) ?? pal.pen[0] ?? DEFAULT_PRESET);
-  const [marker, setMarker] = useState<Preset>(pal.marker[0] ?? DEFAULT_PRESET);
+  const [preset, setPreset] = useState<Preset>(() => {
+    const p = pal.pens.find((x) => x.kind === "pen" && same(x, DEFAULT_PRESET)) ?? nthPen(pal.pens, "pen", 0) ?? DEFAULT_PRESET;
+    return { color: p.color, size: p.size };
+  });
+  const [marker, setMarker] = useState<Preset>(() => {
+    const m = nthPen(pal.pens, "marker", 0) ?? DEFAULT_PRESET;
+    return { color: m.color, size: m.size };
+  });
   /** Koordinatensystem: gilt fürs nächste Aufziehen */
   const [axes, setAxes] = useState({ xyz: false, grid: false });
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
@@ -192,13 +201,15 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   };
   /** Farbfeld: Werkzeug + Farbe + Ebene 3 in einem Klick */
   const quick = (kind: "pen" | "marker", i: number, dev: "pen" | "mouse" = "mouse") => {
-    const c = pal.quick[kind][i];
-    if (!c) return;
-    const r = pickColor({ tools, preset, marker }, kind, c, dev, settings.auto);
+    const c = nthPen(pal.pens, kind, i);
+    if (c) choosePen(c, dev);
+  };
+  const choosePen = (c: Pen, dev: "pen" | "mouse") => {
+    const r = pickColor({ tools, preset, marker }, c, dev, settings.auto);
     setTools(r.tools);
     setPreset(r.preset);
     setMarker(r.marker);
-    switchLayer(TOOL_LAYER[kind] ?? 3);
+    switchLayer(TOOL_LAYER[c.kind] ?? 3);
   };
   const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
     setTools((s) => pickTool(s, t, dev, settings.auto));
@@ -908,11 +919,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
 
   const sep = <span className="mx-1 h-5 w-px bg-line" />;
   const mk = tool === "marker";
-  const palette = mk ? pal.marker : pal.pen;
   const pick = mk ? marker : preset;
   const setPick = mk ? setMarker : setPreset;
-  const same = (a: Preset, b: Preset) => a.name === b.name && a.size === b.size && (a.pressure !== false) === (b.pressure !== false) && a.color.every((c, k) => c === b.color[k]);
-  const setPalette = (list: Preset[]) => setPal((p) => (mk ? { ...p, marker: list } : { ...p, pen: list }));
   const hex = (c: Preset["color"]) => "#" + c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
 
   return (
@@ -972,37 +980,19 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
         </Menu>
         {sep}
-        {/* Farbfelder immer sichtbar: Stift-Spitze bzw. Marker-Balken in der Farbe; Rahmen = Maus, Punkt = Stift */}
-        {QUICK.map(([kind, i, label, key]) => {
-          const c = pal.quick[kind][i];
-          if (!c) return null;
-          const act = (d: Tool) => d === kind && same(c, kind === "pen" ? preset : marker);
-          return (
-            <IconBtn
-              key={label}
-              icon={kind === "pen" ? Pen : Highlighter}
-              label={label}
-              keys={key}
-              className={`${btn} relative${settings.auto ? (act(tool) ? " ring-1 ring-inset ring-accent text-ink" : "") : on(act(tool))}`}
-              style={{ color: `rgb(${c.color.map((v) => v * 255).join(",")})` }}
-              onClick={(e) => quick(kind, i, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
-            >
-              {settings.auto && act(penTool) && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label={T.penMark} />}
-            </IconBtn>
-          );
-        })}
-        {sep}
-        {palette.map((p) => (
-          <button
-            key={p.name}
-            title={p.name} aria-label={p.name}
-            onClick={() => setPick(p)}
-            className={`grid h-7 w-7 place-items-center rounded-pill ring-2 ${same(p, pick) ? "ring-accent" : "ring-transparent"}`}
-          >
-            <span className="block rounded-pill" style={{ width: Math.min(p.size * 3, 18), height: Math.min(p.size * 3, 18), background: `rgb(${p.color.map((c) => c * 255).join(",")})`, outline: "1px solid var(--line-2)" }} />
-          </button>
-        ))}
-        {/* Zahnrad: Stärke/Farbe stufenlos, wirkt sofort aufs aktive Werkzeug; Presets speichern/überschreiben */}
+        {/* nur Stifte + Marker: Rahmen = Maus, Punkt = Stift */}
+        <PenBar
+          pens={pal.pens} auto={settings.auto}
+          act={(c, d) => (d === "pen" ? penTool : tool) === c.kind && same(c, c.kind === "pen" ? preset : marker)}
+          onPick={choosePen}
+          onEdit={(old, next) => {
+            // bearbeiteter aktiver Stift zeichnet sofort mit den neuen Werten
+            const cur = old.kind === "pen" ? preset : marker;
+            if (next && same(old, cur)) (old.kind === "pen" ? setPreset : setMarker)({ color: next.color, size: next.size });
+          }}
+          onPens={(pens) => setPal((p) => ({ ...p, pens }))}
+        />
+        {/* Zahnrad: Stärke/Farbe stufenlos, wirkt sofort aufs aktive Werkzeug (gespeicherte Stifte: Rechtsklick in der Leiste) */}
         <Menu icon={Palette} label={T.style} panel="w-56 gap-2 p-3">
             <label className="flex flex-col gap-1">
               {tool === "lasso" ? `${T.textSize} ${pal.text} pt` : `${T.size} ${pick.size.toFixed(1)}`}
@@ -1023,24 +1013,6 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
                 }} />
             </label>
-            {!mk && (
-              <label className="flex items-center justify-between">
-                {T.penPressure}
-                <input type="checkbox" aria-label={T.penPressure} checked={pick.pressure !== false}
-                  onChange={(e) => setPick({ ...pick, pressure: e.target.checked })} />
-              </label>
-            )}
-            <IconBtn icon={Plus} label={T.presetAdd} text onClick={() => {
-              const p = { ...pick, name: `${T.custom} ${palette.length + 1}` };
-              setPalette([...palette, p]);
-              setPick(p);
-            }} />
-            <IconBtn icon={Save} label={T.presetSet} text disabled={!palette.some((p) => p.name === pick.name) && !pal.quick[mk ? "marker" : "pen"].some((p) => p.name === pick.name)}
-              onClick={() => {
-                setPalette(palette.map((p) => (p.name === pick.name ? pick : p)));
-                const q = pal.quick[mk ? "marker" : "pen"];
-                if (q.some((p) => p.name === pick.name)) setPal((x) => ({ ...x, quick: { ...x.quick, [mk ? "marker" : "pen"]: q.map((p) => (p.name === pick.name ? pick : p)) } }));
-              }} />
             {(tool === "axes" || penTool === "axes") && (
               <div className="flex flex-col gap-1 border-t border-line pt-2">
                 <div className="flex gap-1">
