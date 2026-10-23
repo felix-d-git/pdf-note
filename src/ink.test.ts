@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure,
+  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure, outlinePoints,
   rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -158,4 +158,40 @@ test("Mehrfachauswahl der Miniaturen und Löschen mehrerer Seiten", () => {
   const items = [0, 1, 2, 3].map((p) => it("line", [[0, 0], [1, 1]], p));
   expect(afterDeleteMany(items, [1, 2]).map((i) => i.page)).toEqual([0, 1]);
   expect(afterDeleteMany(items, [0, 3]).map((i) => i.page)).toEqual([0, 1]);
+});
+
+// Aufgezeichnete Handschrift (pt, ~1 pt Abstand wie Pointer-Events): Schleife, spitze Ecke „N", i-Punkt
+const track = (pts: [number, number][], p: (t: number) => number = () => 0.5): InkPoint[] => {
+  const out: InkPoint[] = [];
+  pts.slice(1).forEach(([x, y], i) => {
+    const [x0, y0] = pts[i] ?? [x, y], n = Math.max(1, Math.ceil(Math.hypot(x - x0, y - y0)));
+    for (let k = i ? 1 : 0; k <= n; k++) out.push([x0 + ((x - x0) * k) / n, y0 + ((y - y0) * k) / n, 0]);
+  });
+  return out.map(([x, y], i) => [x, y, p(i / out.length)]);
+};
+const loop = track(Array.from({ length: 41 }, (_, i): [number, number] => [20 + i * 0.6 + 8 * Math.sin((i / 40) * 2 * Math.PI * 1.2), 20 - 8 * Math.cos((i / 40) * 2 * Math.PI * 1.2)]));
+const N = track([[0, 30], [0, 0], [12, 30], [12, 0]], (t) => 0.3 + 0.6 * t);
+const dot: InkPoint[] = [[5, 5, 0.6], [5.2, 5.1, 0.6]];
+const segDist = ([x = 0, y = 0]: number[], [ax = 0, ay = 0]: number[], [bx = 0, by = 0]: number[]) => {
+  const [dx, dy] = [bx - ax, by - ay], l = dx * dx + dy * dy;
+  const t = l ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l)) : 0;
+  return Math.hypot(x - ax - t * dx, y - ay - t * dy);
+};
+const toEdge = (q: number[], poly: number[][]) => Math.min(...poly.map((a, i) => segDist(q, a, poly[(i + 1) % poly.length] ?? a)));
+const hausdorff = (a: number[][], b: number[][]) => Math.max(...a.map((q) => toEdge(q, b)), ...b.map((q) => toEdge(q, a)));
+
+test("Handschrift: Umriss läuft um die echten Punkte (Ecken/Schleifen nicht verzogen), gleich nach Speichern + Neu-Öffnen", () => {
+  for (const points of [loop, N, dot]) {
+    const st: Item = { ...s(0.5), size: 2.2, points };
+    const o = outlinePoints(st);
+    // Rand des Umrisses liegt je Punkt im Abstand Radius = size·(0,5 − 0,5·(0,5 − p)) (Abweichung < 0,5 pt);
+    // ausgenommen: Kreuzungen (dort liegt der Rand des anderen Strichteils näher) und die letzten 3 pt
+    // (perfect-freehand verbindet sie gerade mit der Endkappe – live genauso, springt also nicht)
+    const alone = (q: InkPoint, i: number) => i < points.length - 3 && points.every((r, j) => Math.abs(i - j) < 8 || Math.hypot(r[0] - q[0], r[1] - q[1]) > 2 * st.size);
+    const off = points.flatMap((q, i) => (alone(q, i) ? [Math.abs(toEdge(q, o) - st.size * (0.5 - 0.5 * (0.5 - q[2])))] : []));
+    if (points.length > 2) expect(Math.max(...off)).toBeLessThan(0.5);
+    // Speichern (Rust rundet auf 0,01) → Neu-Öffnen → derselbe Umriss
+    const saved = JSON.parse(JSON.stringify(toData(st)), (_, v: unknown) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
+    expect(hausdorff(outlinePoints(fromData(ItemData.parse(saved))), o)).toBeLessThan(0.5);
+  }
 });
