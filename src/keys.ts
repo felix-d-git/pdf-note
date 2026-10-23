@@ -10,11 +10,11 @@ import type { Tool } from "./settings";
  * Schlüssel = Name in `T`; mehrere Kombinationen mit „ / " getrennt.
  */
 export const KEYS = {
-  open: "Strg+O", close: "Strg+W", nextTab: "Strg+Tab", prevTab: "Strg+Umschalt+Tab", help: "F1",
+  open: "Strg+O", close: "Strg+W", nextTab: "Strg+Tab", prevTab: "Strg+Umschalt+Tab", help: "F1", palette: "Strg+K",
   save: "Strg+S", saveAs: "Strg+Umschalt+S", undo: "Strg+Z", redo: "Strg+Y / Strg+Umschalt+Z",
   pen: "P", marker: "M", eraser: "D", lasso: "A / T", line: "L", arrow: "F", rect: "R", ellipse: "K", axes: "X", form: "O", link: "G",
   pen1: "Q", pen2: "W", pen3: "E", mark1: "Umschalt+Q", mark2: "Umschalt+W", mark3: "Umschalt+E",
-  image: "I", layer1: "1", layer2: "2", layer3: "3",
+  image: "I", rotate: "Strg+Umschalt+D", layer1: "1", layer2: "2", layer3: "3",
   selectAll: "Strg+A", copy: "Strg+C", cut: "Strg+X", paste: "Strg+V", del: "Entf / Rücktaste", nudge: "← / → / ↑ / ↓",
   escape: "Esc", menu: "Menütaste / Umschalt+F10", search: "Strg+F", zoomIn: "Strg++ / Strg+=", zoomOut: "Strg+-",
 } as const satisfies Partial<Record<keyof Strings, string>>;
@@ -34,6 +34,17 @@ export function comboOf(e: { key: string; ctrlKey: boolean; shiftKey: boolean })
   const one = e.key.length === 1;
   const shift = e.shiftKey && (!one || (e.ctrlKey && /\p{L}/u.test(e.key)) || /^[qwe]$/i.test(e.key));
   return `${e.ctrlKey ? "Strg+" : ""}${shift ? "Umschalt+" : ""}${NAMES[e.key] ?? (one ? e.key.toUpperCase() : e.key)}`;
+}
+
+const REV: Record<string, string> = Object.fromEntries(Object.entries(NAMES).map(([k, v]) => [v, k]));
+/** Kombination wie in `KEYS` → Tastendruck wie im Browser (Umkehrung von `comboOf`; Befehlspalette, Tests) */
+export function pressOf(c: string) {
+  let rest = c;
+  const ctrlKey = rest.startsWith("Strg+") && rest.length > 5;
+  if (ctrlKey) rest = rest.slice(5);
+  const shiftKey = rest.startsWith("Umschalt+");
+  if (shiftKey) rest = rest.slice(9);
+  return { key: REV[rest] ?? rest, ctrlKey, shiftKey };
 }
 
 /** Aktionen je Kürzel aus `KEYS` → Nachschlagetabelle je Kombination */

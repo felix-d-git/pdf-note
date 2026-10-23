@@ -545,3 +545,79 @@ export function makeSpace(items: Item[], page: number, y: number, dy: number, h:
   const d = dy > 0 ? Math.min(dy, Math.max(0, h - bottom)) : Math.max(dy, Math.min(0, -top));
   return d ? below.map((it) => moveItem(it, 0, d)) : [];
 }
+
+export type ShapeKind = "line" | "arrow" | "rect" | "triangle" | "ellipse";
+const dist = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+/** Douglas-Peucker: Eckpunkte eines Zugs mit Toleranz `eps` */
+function corners(p: Pt[], eps: number): Pt[] {
+  const a = p[0], b = p.at(-1);
+  if (!a || !b || p.length < 3) return p;
+  const len = dist(a, b) || 1;
+  let far = 0, at = 0;
+  p.forEach((q, i) => {
+    const d = Math.abs((b[0] - a[0]) * (a[1] - q[1]) - (a[0] - q[0]) * (b[1] - a[1])) / len;
+    if (d > far) [far, at] = [d, i];
+  });
+  return far <= eps ? [a, b] : [...corners(p.slice(0, at + 1), eps).slice(0, -1), ...corners(p.slice(at), eps)];
+}
+/** Knick an b in Grad (0 = geradeaus, 180 = Kehrtwende) */
+const turn = (a: Pt, b: Pt, c: Pt) => {
+  const [ux, uy, vx, vy] = [b[0] - a[0], b[1] - a[1], c[0] - b[0], c[1] - b[1]];
+  return (Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1)))) * 180) / Math.PI;
+};
+
+/**
+ * Form-Erkennung beim Shape-Hold: Freihand-Zug → saubere Form als Punktfolge (bleibt ein Stift-Strich auf Ebene 3).
+ * Offen: Linie, oder Pfeil (langer Schaft + kurze Spitze mit Kehrtwende); geschlossen (Ende nah am Anfang):
+ * 3 Ecken → Dreieck, 4 → Rechteck (achsnah → achsparallel), sonst Kreis/Ellipse. Druck = Mittelwert.
+ */
+export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } {
+  // ponytail: Ecken-Zählung per Douglas-Peucker statt trainiertem Erkenner; reicht für die fünf Grundformen
+  const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1);
+  const p = raw.map(([x, y]): Pt => [x, y]);
+  const out = (kind: ShapeKind, q: Pt[]) => ({ kind, points: q.map(([x, y]): InkPoint => [x, y, pr]) });
+  const a = p[0] ?? [0, 0], z = p.at(-1) ?? a;
+  const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const D = Math.max(x1 - x0, y1 - y0);
+  const line = out("line", [a, z]);
+  if (D < 4) return line;
+  if (dist(a, z) > 0.25 * D) {
+    const s = corners(p, 0.08 * D);
+    const [s0, s1, s2] = s;
+    if (s.length < 3 || !s0 || !s1 || !s2) return line;
+    const shaft = dist(s0, s1), rest = s.slice(2).map((q, i) => dist(s[i + 1] ?? q, q));
+    if (turn(s0, s1, s2) < 100 || rest.some((l) => l > 0.6 * shaft) || rest.reduce((t, l) => t + l, 0) > 1.6 * shaft) return out("line", [s0, z]);
+    // Spitze: zwei gleich lange Schenkel ±28° gegen die Schaftrichtung
+    const bl = Math.min(Math.max(...rest), 0.4 * shaft), ang = Math.atan2(s0[1] - s1[1], s0[0] - s1[0]);
+    const barb = (d: number): Pt => [s1[0] + bl * Math.cos(ang + d), s1[1] + bl * Math.sin(ang + d)];
+    return out("arrow", [s0, s1, barb(0.49), s1, barb(-0.49)]);
+  }
+  // geschlossen: am entferntesten Punkt teilen, Ecken zyklisch, fast gerade Knicke und Doppelpunkte raus
+  const k = p.reduce((m, q, i) => (dist(q, a) > dist(p[m] ?? a, a) ? i : m), 0);
+  let v: Pt[] = [...corners(p.slice(0, k + 1), 0.08 * D).slice(0, -1), ...corners(p.slice(k), 0.08 * D).slice(0, -1)];
+  for (let changed = true; changed && v.length > 2;) {
+    changed = false;
+    for (let i = 0; i < v.length; i++) {
+      const pb = v[i] ?? a, pa = v[(i + v.length - 1) % v.length] ?? pb, pc = v[(i + 1) % v.length] ?? pb;
+      if (dist(pa, pb) < 0.15 * D || turn(pa, pb, pc) < 30) {
+        v = v.filter((_, j) => j !== i);
+        changed = true;
+        break;
+      }
+    }
+  }
+  const v0 = v[0] ?? a;
+  if (v.length === 3) return out("triangle", [...v, v0]);
+  if (v.length === 4) {
+    const axis = v.every((q, i) => {
+      const r = v[(i + 1) % 4] ?? q, deg = (Math.abs(Math.atan2(r[1] - q[1], r[0] - q[0])) * 180) / Math.PI % 90;
+      return Math.min(deg, 90 - deg) < 20;
+    });
+    return out("rect", axis ? [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]] : [...v, v0]);
+  }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  let rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
+  if (Math.abs(rx - ry) < 0.15 * Math.max(rx, ry)) rx = ry = (rx + ry) / 2;
+  return out("ellipse", Array.from({ length: 49 }, (_, i): Pt => [cx + rx * Math.cos((i / 48) * 2 * Math.PI), cy + ry * Math.sin((i / 48) * 2 * Math.PI)]));
+}

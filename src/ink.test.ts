@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure, outlinePoints,
-  rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
+  recognize, rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
 const s = (p: number, simulated = false): Item => ({
@@ -194,4 +194,28 @@ test("Handschrift: Umriss läuft um die echten Punkte (Ecken/Schleifen nicht ver
     const saved = JSON.parse(JSON.stringify(toData(st)), (_, v: unknown) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
     expect(hausdorff(outlinePoints(fromData(ItemData.parse(saved))), o)).toBeLessThan(0.5);
   }
+});
+
+test("Form-Erkennung: Linie, Pfeil, Dreieck, Rechteck, Kreis, Ellipse aus wackligen Freihand-Zügen", () => {
+  // Zug durch Eckpunkte, 20 Zwischenpunkte je Kante, leichtes Zittern (±0,8 pt)
+  const wob = (i: number) => Math.sin(i * 1.7) * 0.8;
+  const path = (...c: [number, number][]): InkPoint[] => c.slice(1).flatMap((b, k) => {
+    const a = c[k] ?? b;
+    return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.4 + (i % 3) * 0.1]);
+  }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
+  const ring = (rx: number, ry: number): InkPoint[] => Array.from({ length: 80 }, (_, i): InkPoint => [100 + rx * Math.cos(i / 12.6 + 0.3) + wob(i), 100 + ry * Math.sin(i / 12.6 + 0.3), 0.5]);
+  const kind = (p: InkPoint[]) => recognize(p).kind;
+  expect(kind(path([0, 0], [100, 30]))).toBe("line");
+  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe("line"); // offener Haken → Linie wie bisher
+  expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow");
+  expect(kind(path([0, 0], [100, 0], [50, 80], [2, 3]))).toBe("triangle");
+  expect(kind(path([50, 0], [100, 0], [100, 60], [0, 60], [0, 0], [48, 2]))).toBe("rect"); // Start mitten auf der Kante
+  expect(kind(ring(50, 50))).toBe("ellipse");
+  const r = recognize(path([0, 0], [100, 0], [100, 60], [0, 60], [1, 2])).points;
+  expect([new Set(r.map((q) => q[0])).size, new Set(r.map((q) => q[1])).size, r.length]).toEqual([2, 2, 5]); // achsparallel, geschlossen
+  const c = recognize(ring(50, 50)).points, e = recognize(ring(60, 30)).points;
+  const radii = (q: InkPoint[]) => q.map(([x, y]) => Math.hypot(x - 100, y - 100));
+  expect(Math.max(...radii(c)) - Math.min(...radii(c))).toBeLessThan(1.5); // Kreis bleibt rund
+  expect(Math.max(...e.map((q) => q[0])) - Math.min(...e.map((q) => q[0]))).toBeGreaterThan(110); // Ellipse behält Form
+  expect(new Set(c.map((q) => q[2])).size).toBe(1); // gleichmäßiger Druck
 });
