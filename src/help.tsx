@@ -59,7 +59,7 @@ const DE: Chapter[] = [
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs und Split View", lines: [
     "Tabs per Ziehen umsortieren; Strg+Tab wechselt.",
-    [Columns2, "Split View: zwei PDFs nebeneinander. Tab auf eine Hälfte ziehen; mit Strg dieselbe PDF in beiden Hälften. Trennlinie verschieben."],
+    [Columns2, "Split View: zwei Hälften mit eigener Tab-Leiste über alle offenen PDFs – Tab-Klick wählt nur für diese Hälfte, dieselbe PDF geht in beiden; + öffnet in dieser Hälfte. Trennlinie verschieben."],
   ] },
   { id: "pages", icon: Files, title: "Seiten", lines: [
     [Files, "Seitenleiste: Vorschaubilder ziehen sortiert um, Rechtsklick löscht oder dreht."],
