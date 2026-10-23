@@ -633,3 +633,11 @@ test("Shape-Hold: Rechteck zeichnen + halten → rastet sichtbar ein, Freihand-S
     vi.useRealTimers();
   }
 });
+
+test("Canvas-Inhalt verworfen (contextlost) → nach contextrestored wird die Handschrift neu gezeichnet", () => {
+  const page = mount("pen", 3, [obj(1, "ink", 10, 10, 50, 50)]);
+  draws.length = 0;
+  const cv = page.querySelector("canvas[style*='multiply']") as HTMLCanvasElement;
+  act(() => void cv.dispatchEvent(new Event("contextrestored")));
+  expect(draws.at(-1)).toHaveLength(1);
+});

@@ -22,6 +22,8 @@ import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast } from "./ui";
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Sitzung einmal je Programmstart wiederherstellen (StrictMode führt Effekte doppelt aus); Öffnen wartet darauf */
 let restored: Promise<void> | undefined;
+/** danach die Explorer-PDF – erst dann Pfade aus zweitem Start, sonst wird die zuletzt fertig geladene aktiv */
+let started: Promise<void> | undefined;
 const NO_VIEW: DocStart = { zoom: 1, left: 0, top: 0, layer: 2, mouse: "lasso", pen: "pen" };
 
 export default function App() {
@@ -245,12 +247,15 @@ export default function App() {
   useEffect(() => {
     // erst die letzte Sitzung, dann die per Explorer übergebene PDF als aktiver Tab
     restored ??= live.current.restore().catch(() => {});
-    void restored.then(() => invoke<string | null>("startup_path")).then((p) => {
-      if (p) void live.current.openPath(p);
-    });
+    const ready = restored;
+    started ??= ready
+      .then(() => invoke<string | null>("startup_path"))
+      .then((p) => (p ? live.current.openPath(p) : undefined))
+      .catch(() => {});
+    const later = started;
     const un = [
       // zweiter Start (Explorer-Doppelklick) bei laufender App → Pfad kommt von dort
-      listen<string>("open-path", (e) => void live.current.openPath(e.payload)),
+      listen<string>("open-path", (e) => void later.then(() => live.current.openPath(e.payload))),
       getCurrentWebview().onDragDropEvent((e) => {
         if (e.payload.type !== "drop") return;
         const ext = (x: string) => x.toLowerCase().split(".").pop() ?? "";
