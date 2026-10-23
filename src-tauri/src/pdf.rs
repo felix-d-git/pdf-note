@@ -797,7 +797,13 @@ pub enum PageOp {
     /// Formularfeld löschen
     DeleteField { page: i32, xref: i32 },
     /// Markdown-Seite einfügen (`insert`) oder neu setzen
-    Markdown { page: i32, source: String, insert: bool },
+    Markdown {
+        page: i32,
+        source: String,
+        insert: bool,
+        #[serde(default)]
+        formulas: Vec<crate::notebook::Formula>,
+    },
     /// Lesezeichen komplett ersetzen
     Outline { marks: Vec<crate::notebook::Mark> },
     /// Anker-Link `rect` auf `from` → Stelle (`to`, `x`, `y`) samt Rücksprung-Link
@@ -919,8 +925,8 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             let warning = if paras.is_empty() { None } else { crate::text::move_paras(doc, *page, paras, *dx, *dy, *delete)? };
             Ok(OpResult { warning, ..Default::default() })
         }
-        PageOp::Markdown { page, source, insert } => {
-            let warning = crate::notebook::render(doc, *page, source, *insert)?;
+        PageOp::Markdown { page, source, insert, formulas } => {
+            let warning = crate::notebook::render(doc, *page, source, *insert, formulas)?;
             Ok(OpResult { inserted: *insert as i32, warning, ..Default::default() })
         }
         PageOp::Outline { marks } => crate::notebook::set_outline(doc, marks).map(|_| OpResult::default()),

@@ -1,5 +1,5 @@
 import {
-  ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FileOutput, FilePlus, Files, Flame,
+  ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FilePenLine, FileOutput, FilePlus, Files, Flame,
   FolderOpen, Grid3x3, Hand, History, ImagePlus, Keyboard, Layers, Lock, MousePointer2, NotebookPen, Palette, PenTool, Redo2, RotateCw,
   Save, ScanText, Search, Type, Undo2, Wrench, X, type LucideIcon,
 } from "lucide-react";
@@ -68,7 +68,8 @@ const DE: Chapter[] = [
   ] },
   { id: "notebook", icon: NotebookPen, title: "Notizbuch, Vorlagen, Markdown", lines: [
     [NotebookPen, "Neue Notiz-PDF anlegen und beliebig Seiten mit Vorlage (liniert, kariert, Punkte) anfügen."],
-    [FileCode, "Markdown-Seite: Text in Markdown schreiben, wird als Seite gesetzt; später erneut bearbeitbar."],
+    [FileCode, "Markdown-Seite: Text in Markdown schreiben, wird als Seite gesetzt – **fett**, *kursiv*, `Code`, [Link](https://…), Listen, Tabellen, Formeln $…$ und $$…$$ (offline, als Vektor). Fehlerhafte Formel bleibt als Code stehen."],
+    [FilePenLine, "Bearbeiten: Doppelklick mit dem Lasso, Kontextmenü der Miniatur oder Knopf „Markdown bearbeiten“. Links Quelltext, rechts Vorschau; Esc/Fertig übernimmt (ein Undo-Schritt), Abbrechen verwirft. Striche und Objekte bleiben; liegen sie unter dem neuen Seitenende, kommt ein Hinweis."],
   ] },
   { id: "search", icon: Search, title: "Suche und Anker-Links", lines: [
     "Strg+F sucht im Text der PDF; Enter = nächster, Umschalt+Enter = voriger Treffer.",
@@ -158,7 +159,8 @@ const EN: Chapter[] = [
   ] },
   { id: "notebook", icon: NotebookPen, title: "Notebook, templates, Markdown", lines: [
     [NotebookPen, "Create a new note PDF and add pages with a template (lined, squared, dots)."],
-    [FileCode, "Markdown page: write Markdown, it is typeset as a page; editable again later."],
+    [FileCode, "Markdown page: write Markdown, it is typeset as a page – **bold**, *italic*, `code`, [link](https://…), lists, tables, formulas $…$ and $$…$$ (offline, as vectors). A faulty formula stays as code."],
+    [FilePenLine, "Edit: double-click with the lasso, thumbnail context menu or the „Edit Markdown“ button. Source left, preview right; Esc/Done applies (one undo step), Cancel discards. Strokes and objects stay; a hint appears if they lie below the new page end."],
   ] },
   { id: "search", icon: Search, title: "Search and anchor links", lines: [
     "Ctrl+F searches the PDF text; Enter = next, Shift+Enter = previous hit.",

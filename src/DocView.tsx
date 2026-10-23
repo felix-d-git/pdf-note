@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, File, FileCode,
+  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, Highlighter, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Pen, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
@@ -23,6 +23,8 @@ import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, initTools, loadPalettes, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 import { scrollAfterZoom, wheelFactor } from "./zoom";
+import { formulas, type Formula } from "./math";
+import { MdEditor } from "./MdEditor";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
@@ -156,7 +158,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [renaming, setRenaming] = useState(-1);
   /** Markdown-Quelltext der aktuellen Seite (`null` = keine Markdown-Seite) und offener Editor. */
   const [md, setMd] = useState<string | null>(null);
-  const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
+  const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean; orig?: string }>();
   // Passwort nur in diesem Zustand, verworfen beim Schließen des Dialogs
   /** Adresse, die nach Rückfrage im Standard-Browser geöffnet wird */
   const [openUrl, setOpenUrl] = useState<string>();
@@ -166,7 +168,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
   /** markierte Miniaturen; gelten nur für den Seitenstand `v` (Seitenoperation/Undo hebt die Markierung auf) */
   const [thumbSel, setThumbSel] = useState<{ v: number; sel: number[]; anchor: number }>({ v: -1, sel: [], anchor: 0 });
-  const [tmenu, setTmenu] = useState<{ x: number; y: number }>();
+  const [tmenu, setTmenu] = useState<{ x: number; y: number; md?: string | null }>();
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const snap = hist.list[hist.at] ?? EMPTY;
@@ -295,9 +297,16 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   };
   const saveMarkdown = async () => {
     if (!mdEdit) return;
-    const { page, source, insert } = mdEdit;
+    const { page, source, insert, orig } = mdEdit;
+    if (source === orig) return setMdEdit(undefined);
     // Fehler → Editor bleibt offen, Text geht nicht verloren
-    if (!(await pageOp({ op: "markdown", page, source, insert }, (its) => (insert ? afterInsert(its, page, 1) : its)))) return;
+    let fs: Formula[] = [];
+    try {
+      fs = await formulas(source);
+    } catch {
+      // ohne MathJax: Formeln roh als Code
+    }
+    if (!(await pageOp({ op: "markdown", page, source, insert, formulas: fs }, (its) => (insert ? afterInsert(its, page, 1) : its)))) return;
     setMdEdit(undefined);
     if (insert) requestAnimationFrame(() => goTo(page));
   };
@@ -358,10 +367,20 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     setThumbSel({ v: version, sel: thumbPick(tsel, thumbSel.anchor, i, e.ctrlKey || e.metaKey, e.shiftKey), anchor: e.shiftKey ? thumbSel.anchor : i });
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) goTo(i);
   };
+  const mdOf = (index: number) => invoke("page_markdown", { id, index }).then((r) => z.string().nullable().parse(r), () => null);
   const menuThumb = (i: number) => (e: React.MouseEvent) => {
     e.preventDefault();
     if (!tsel.includes(i)) setThumbSel({ v: version, sel: [i], anchor: i });
-    setTmenu({ x: e.clientX, y: e.clientY });
+    const at = { x: e.clientX, y: e.clientY };
+    setTmenu(at);
+    void mdOf(i).then((md) => setTmenu((m) => (m && m.x === at.x && m.y === at.y ? { ...m, md } : m)));
+  };
+  /** Doppelklick (Lasso) auf eine Markdown-Seite öffnet den Editor. */
+  const dblPage = (e: React.MouseEvent) => {
+    const pg = e.target instanceof Element && !e.target.closest("textarea,input,[contenteditable]") ? e.target.closest("[data-page]") : null;
+    const i = Number(pg?.getAttribute("data-page") ?? NaN);
+    if ((tool !== "lasso" && penTool !== "lasso") || !Number.isInteger(i)) return;
+    void mdOf(i).then((md) => md !== null && setMdEdit((m) => m ?? { page: i, source: md, insert: false, orig: md }));
   };
   useEffect(() => {
     if (!tmenu) return;
@@ -1042,7 +1061,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           <MenuItem icon={FileCode} label={T.markdownPage}
             onClick={() => setMdEdit({ page: Math.min(current + 1, sizes.length), source: `# ${T.title}\n\n`, insert: true })} />
         </Menu>
-        {md !== null && <IconBtn icon={FilePenLine} label={T.markdownEdit} onClick={() => setMdEdit({ page: current, source: md, insert: false })} />}
+        {md !== null && <IconBtn icon={FilePenLine} label={T.markdownEdit} onClick={() => setMdEdit({ page: current, source: md, insert: false, orig: md })} />}
         <IconBtn icon={Paperclip} label={T.appendPdf} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} />
         <IconBtn icon={FileImage} label={T.imagePage} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} />
         <IconBtn icon={RotateCw} label={T.rotate} onClick={rotate} />
@@ -1200,6 +1219,10 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
               <IconBtn icon={ClipboardPaste} label={T.paste} text role="menuitem" className={btn + " px-2"} disabled={!pageClip} onClick={() => void pastePages(tmax)} />
               <IconBtn icon={CopyPlus} label={T.duplicate} text role="menuitem" className={btn + " px-2"} onClick={() => void duplicatePages(tsel)} />
               <IconBtn icon={RotateCw} label={T.rotate90} text role="menuitem" className={btn + " px-2"} onClick={() => rotatePages(tsel)} />
+              {tsel.length === 1 && tmenu.md != null && (
+                <IconBtn icon={FilePenLine} label={T.markdownEdit} text role="menuitem" className={btn + " px-2"}
+                  onClick={() => tmenu.md != null && setMdEdit({ page: tmax, source: tmenu.md, insert: false, orig: tmenu.md })} />
+              )}
             </div>
           )}
         </nav>
@@ -1228,27 +1251,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           </Dialog>
         )}
         {mdEdit && (
-          <div className="absolute inset-4 z-20 flex flex-col gap-2 rounded-xs border border-line bg-surface p-3">
-            <div className="text-sm text-ink-2">
-              {mdEdit.insert ? `Neue Markdown-Seite nach Seite ${mdEdit.page}` : `Markdown-Seite ${mdEdit.page + 1}`} – # Überschrift, - Liste, 1. Liste, &gt; Zitat, ``` Code, ---
-            </div>
-            <textarea
-              autoFocus
-              value={mdEdit.source}
-              aria-label="Markdown"
-              spellCheck={false}
-              className="flex-1 resize-none rounded-xs border border-line bg-sunken p-2 font-mono text-sm text-ink"
-              onChange={(e) => setMdEdit({ ...mdEdit, source: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && e.ctrlKey) void saveMarkdown();
-                if (e.key === "Escape") setMdEdit(undefined);
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <IconBtn icon={X} label={T.cancel} keys="Esc" text onClick={() => setMdEdit(undefined)} />
-              <IconBtn icon={Check} label={T.apply} keys="Strg+Enter" text className={btn + on(true)} onClick={() => void saveMarkdown()} />
-            </div>
-          </div>
+          <MdEditor
+            title={mdEdit.insert ? `Neue Markdown-Seite nach Seite ${mdEdit.page}` : `Markdown-Seite ${mdEdit.page + 1}`}
+            source={mdEdit.source}
+            onChange={(source) => setMdEdit({ ...mdEdit, source })}
+            onApply={() => void saveMarkdown()}
+            onCancel={() => setMdEdit(undefined)}
+          />
         )}
         <main
           ref={scroller}
@@ -1266,6 +1275,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           onPointerUp={touchUp}
           onPointerCancel={touchUp}
           onContextMenu={(e) => e.preventDefault()}
+          onDoubleClick={dblPage}
         >
           <div ref={content} className="flex w-max min-w-full flex-col gap-4 p-6">
             {sizes.map((s, i) => (
