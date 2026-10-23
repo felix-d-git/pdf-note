@@ -22,11 +22,8 @@ const setPane = (s: Tabs, p: Pane, id: number | undefined): Tabs => {
   return { ...s, panes };
 };
 
-/** Tab anzeigen: steht er schon in der anderen Hälfte, wird diese aktiv; sonst in der aktiven Hälfte. */
-export function show(s: Tabs, id: number): Tabs {
-  if (s.split && s.panes[other(s.active)] === id) return { ...s, active: other(s.active) };
-  return setPane(s, s.active, id);
-}
+/** Tab anzeigen in der aktiven Hälfte; steht er schon in der anderen, zeigen beide ihn (zwei Ansichten eines Dokuments). */
+export const show = (s: Tabs, id: number): Tabs => setPane(s, s.active, id);
 
 /** Öffnen: bereits offene Datei springt zu ihrem Tab, sonst neuer Tab am Ende. */
 export function openTab(s: Tabs, id: number, path: string): Tabs {
@@ -98,7 +95,7 @@ export function setDirty(s: Tabs, id: number, dirty: boolean): Tabs {
  */
 export const viewActive = (s: Tabs, p: Pane, shown: boolean) => shown && p === s.active;
 
-/** Dokument-Auswahl je Hälfte (Dropdown): Dokument der Hälfte `p` ersetzen; die andere Hälfte bleibt (gleiche PDF in beiden erlaubt). */
+/** Tab-Klick in der Leiste einer Hälfte: Dokument der Hälfte `p` ersetzen; die andere Hälfte bleibt (gleiche PDF in beiden erlaubt). */
 export const pickDoc = (s: Tabs, id: number, p: Pane): Tabs => toPane(s, id, p, true);
 
 /** Split View: der erste Maus-/Touchpad-Klick in die inaktive Hälfte aktiviert sie nur; Stift und Finger wirken sofort. */

@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowLeftRight, CircleHelp, Columns2, FileWarning, FolderOpen, Keyboard, Monitor, Moon, NotebookPen, Settings as Gear, Sun, X } from "lucide-react";
+import { ArrowLeftRight, CircleHelp, Columns2, FileWarning, FolderOpen, Keyboard, Monitor, Moon, NotebookPen, Plus, Settings as Gear, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { dropDoc } from "./docstore";
 import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
@@ -49,6 +49,8 @@ export default function App() {
   /** je Ansicht: `${id}`, zweite Ansicht derselben PDF `${id}b` */
   const [apis] = useState(() => new Map<string, DocApi>());
   const split = useRef<HTMLDivElement>(null);
+  /** trägt --r/--r2 für Hälften und ihre Tab-Leisten */
+  const root = useRef<HTMLDivElement>(null);
   const tabDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const { tabs, panes } = state;
@@ -328,8 +330,8 @@ export default function App() {
   const dividerMove = (e: React.PointerEvent) => {
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
     const r = ratioAt(e);
-    split.current?.style.setProperty("--r", String(r));
-    split.current?.style.setProperty("--r2", String(1 - r));
+    root.current?.style.setProperty("--r", String(r));
+    root.current?.style.setProperty("--r2", String(1 - r));
   };
   const dividerUp = (e: React.PointerEvent) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) setRatio(ratioAt(e));
@@ -364,67 +366,53 @@ export default function App() {
     );
   };
 
+  /** Tab-Leiste: ohne `pane` die eine Leiste im Kopf, sonst die einer Split-Hälfte (zeigt alle Dokumente, Klick nur für diese Hälfte) */
+  const tabBar = (pane?: Pane) => (
+    <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={() => {
+      tabDrag.current = null;
+      setDrop(undefined);
+    }}>
+      {tabs.map((t, i) => {
+        // ohne Split: Hälfte 0; mit Split: nur das Dokument dieser Leiste
+        const shown = pane === undefined ? paneOf(t.id) !== undefined : panes[pane] === t.id;
+        const lit = shown && (pane ?? 0) === state.active;
+        const mark = drop?.to === i && i !== drop.from ? (i < drop.from ? " border-l-accent" : " border-r-accent") : "";
+        return (
+          <div
+            key={t.id}
+            data-tab={i}
+            title={t.path}
+            onPointerDown={tabDown(i)}
+            onClick={() => setState((s) => (pane === undefined ? show(s, t.id) : pickDoc(s, t.id, pane)))}
+            className={`flex shrink-0 cursor-default items-center gap-1 rounded-xs border-2 border-transparent py-0.5 pr-1 pl-2.5 text-sm select-none ${
+              lit ? "bg-raised text-ink" : shown ? "bg-surface text-ink-2" : "text-ink-2 hover:bg-surface"
+            }${mark}`}
+          >
+            <span className="max-w-48 truncate">{t.dirty && <span className="text-accent">* </span>}{fileName(t.path)}</span>
+            <IconBtn
+              icon={X}
+              label={T.close}
+              keys={KEYS.close}
+              className="rounded-xs p-0.5 text-ink-3 hover:bg-line hover:text-ink"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                void close(t);
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
-    <div className="flex h-full flex-col">
+    <div ref={root} className="flex h-full flex-col" style={{ "--r": ratio, "--r2": 1 - ratio } as React.CSSProperties}>
       <Toast msg={error} onClose={closeError} className="fixed" />
       <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
         <IconBtn icon={NotebookPen} label={T.newFile} onClick={() => void newFile()} />
         <IconBtn icon={FolderOpen} label={T.open} keys={KEYS.open} onClick={() => void pickFile()} />
-        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto" onPointerMove={barMove} onPointerUp={barUp} onPointerCancel={() => {
-          tabDrag.current = null;
-          setDrop(undefined);
-        }}>
-          {tabs.map((t, i) => {
-            const p = paneOf(t.id);
-            const mark = drop?.to === i && i !== drop.from ? (i < drop.from ? " border-l-accent" : " border-r-accent") : "";
-            return (
-              <div
-                key={t.id}
-                data-tab={i}
-                title={t.path}
-                onPointerDown={tabDown(i)}
-                onClick={() => setState((s) => show(s, t.id))}
-                className={`flex shrink-0 cursor-default items-center gap-1 rounded-xs border-2 border-transparent py-0.5 pr-1 pl-2.5 text-sm select-none ${
-                  p === state.active ? "bg-raised text-ink" : p !== undefined ? "bg-surface text-ink-2" : "text-ink-2 hover:bg-surface"
-                }${mark}`}
-              >
-                <span className="max-w-48 truncate">{t.dirty && <span className="text-accent">* </span>}{fileName(t.path)}</span>
-                <IconBtn
-                  icon={X}
-                  label={T.close}
-                  keys={KEYS.close}
-                  className="rounded-xs p-0.5 text-ink-3 hover:bg-line hover:text-ink"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void close(t);
-                  }}
-                />
-              </div>
-            );
-          })}
-        </div>
-        {state.split && ([0, 1] as const).map((p) => (
-          <select
-            key={p}
-            aria-label={p === 0 ? T.paneLeft : T.paneRight}
-            title={p === 0 ? T.paneLeft : T.paneRight}
-            value={panes[p] ?? ""}
-            className={`max-w-32 rounded-xs border bg-surface py-0.5 text-sm text-ink-2 ${state.active === p ? "border-accent" : "border-line"}`}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === "open") {
-                setState((s) => focus(s, p));
-                return void pickFile();
-              }
-              setState((s) => pickDoc(s, Number(v), p));
-            }}
-          >
-            {panes[p] === undefined && <option value="" />}
-            {tabs.map((t) => <option key={t.id} value={t.id}>{fileName(t.path)}</option>)}
-            <option value="open">{T.openEllipsis}</option>
-          </select>
-        ))}
+        {state.split ? <div className="flex-1" /> : tabBar()}
         <IconBtn icon={Columns2} label={T.split} className={btn + on(state.split)} aria-pressed={state.split} onClick={() => setState(toggleSplit)} />
         <IconBtn icon={ArrowLeftRight} label={T.auto} className={btn + on(settings.auto)} aria-pressed={settings.auto}
           onClick={() => updateSettings({ ...settings, auto: !settings.auto })} />
@@ -475,9 +463,28 @@ export default function App() {
           </div>
         )}
       </header>
+      {state.split && (
+        <div className="flex border-b border-line bg-sunken">
+          {([0, 1] as const).map((p) => (
+            <div
+              key={p}
+              aria-label={p === 0 ? T.paneLeft : T.paneRight}
+              style={paneStyle(p)}
+              className={`flex min-w-0 items-center gap-1 border-t-2 px-2 py-1 ${state.active === p ? "border-accent" : "border-transparent"}`}
+            >
+              {tabBar(p)}
+              <IconBtn icon={Plus} label={T.open} className={btn} onClick={() => {
+                setState((s) => focus(s, p));
+                void pickFile();
+              }} />
+            </div>
+          ))}
+          <div className="w-2 shrink-0" style={{ order: 1 }} />
+        </div>
+      )}
       {/* Alle Dokumente bleiben gemountet (eigener Undo/Zoom/Scroll); Position per CSS-order, damit
           Wechsel zwischen den Hälften nichts neu mountet. */}
-      <div ref={split} className="relative flex min-h-0 flex-1" style={{ "--r": ratio, "--r2": 1 - ratio } as React.CSSProperties}>
+      <div ref={split} className="relative flex min-h-0 flex-1">
         {tabs.map((t) => view(t, paneOf(t.id) ?? 0, false))}
         {/* gleiche PDF in beiden Hälften: zweite Ansicht, teilt Undo/Speicherstand über den Dokument-Speicher */}
         {state.split && panes[0] !== undefined && panes[0] === panes[1] && tabs.filter((t) => t.id === panes[1]).map((t) => view(t, 1, true))}
@@ -508,7 +515,7 @@ export default function App() {
             }}
             onPointerMove={dividerMove}
             onPointerUp={dividerUp}
-            onLostPointerCapture={() => setRatio(Number(split.current?.style.getPropertyValue("--r")) || ratio)}
+            onLostPointerCapture={() => setRatio(Number(root.current?.style.getPropertyValue("--r")) || ratio)}
           />
         )}
         {drop?.pane !== undefined && (
