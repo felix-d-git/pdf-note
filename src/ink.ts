@@ -409,7 +409,10 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
     case "line":
     case "arrow":
       return segDist(x, y, a, b) <= r;
+    // gefüllt: auch die Fläche trifft – sonst fällt der Klick durch auf die PDF (Ebene 1) und die Form wirkt eingebrannt
     case "rect": {
+      const bx = box(it);
+      if (it.fill && x >= bx.x0 && x <= bx.x1 && y >= bx.y0 && y <= bx.y1) return true;
       const c: InkPoint[] = [a, [b[0], a[1], 0], b, [a[0], b[1], 0]];
       return c.some((p, i) => segDist(x, y, p, c[(i + 1) % 4] ?? p) <= r);
     }
@@ -419,7 +422,7 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
       if (rx < 0.5 || ry < 0.5) return segDist(x, y, a, b) <= r;
       // ponytail: Näherung über normierten Radius; genügt für Treffer-Toleranz
       const d = Math.hypot((x - cx) / rx, (y - cy) / ry);
-      return Math.abs(d - 1) * Math.min(rx, ry) <= r;
+      return (it.fill !== undefined && d <= 1) || Math.abs(d - 1) * Math.min(rx, ry) <= r;
     }
     case "axes": {
       const { axes, grid } = axesLines(it);
