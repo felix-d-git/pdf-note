@@ -16,7 +16,7 @@ import {
   activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, pickDoc, setDirty, show, toggleSplit, toPane, viewActive, type Pane, type Tab,
 } from "./tabs";
 import { Tour, tourSeen } from "./tour";
-import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast } from "./ui";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Sitzung einmal je Programmstart wiederherstellen (StrictMode führt Effekte doppelt aus); Öffnen wartet darauf */
@@ -37,6 +37,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [capture, setCapture] = useState<"lasso" | "eraser">();
   const [error, setError] = useState<string>();
+  const closeError = useCallback(() => setError(undefined), []);
   const [pwAsk, setPwAsk] = useState<{ file: string; wrong: boolean; done: (pw: string | null) => void }>();
   /** Tab-Ziehen: Ziel in der Tab-Leiste (`to`) oder Hälfte im Split View (`pane`) */
   const [drop, setDrop] = useState<{ from: number; to?: number; pane?: Pane }>();
@@ -365,6 +366,7 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
+      <Toast msg={error} onClose={closeError} className="fixed" />
       <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
         <IconBtn icon={NotebookPen} label={T.newFile} onClick={() => void newFile()} />
         <IconBtn icon={FolderOpen} label={T.open} keys={KEYS.open} onClick={() => void pickFile()} />
@@ -431,7 +433,6 @@ export default function App() {
         {missing.length > 0 && (
           <IconBtn icon={FileWarning} label={T.missing(missing.join(", "))} className={btn + " text-accent"} onClick={() => setMissing([])} />
         )}
-        {error && <span className="text-sm text-red-400">{error}</span>}
         {showSettings && (
           <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
             <div className="flex items-center justify-between gap-2">
