@@ -5,6 +5,22 @@ import { T, tip } from "./i18n";
 export const BTN = "inline-flex items-center gap-1.5 rounded-xs p-1.5 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
 export const on = (b: boolean) => (b ? " bg-accent-soft text-ink" : "");
 
+/** Meldung unten rechts im nächsten positionierten Rahmen: ✕ schließt, nach 6 s von selbst weg. `onClose` stabil halten. */
+export function Toast({ msg, onClose, className = "absolute" }: { msg?: string; onClose: () => void; className?: string }) {
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(onClose, 6000);
+    return () => clearTimeout(t);
+  }, [msg, onClose]);
+  if (!msg) return null;
+  return (
+    <div role="status" className={`${className} right-3 bottom-3 z-20 flex max-w-sm items-start gap-1 rounded-sm border border-line bg-raised py-1 pr-1 pl-3 text-sm text-ink-2 shadow-raised`}>
+      <span className="py-0.5">{msg}</span>
+      <IconBtn icon={X} label={T.close} className="shrink-0 rounded-xs p-0.5 hover:bg-sunken hover:text-ink" onClick={onClose} />
+    </div>
+  );
+}
+
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & { icon: LucideIcon; label: string; keys?: string; text?: boolean };
 
 /** Symbol-Knopf: Tooltip „Name (Taste)", aria-label = Name; `text` zeigt den Namen zusätzlich (Menüs, Dialoge). */

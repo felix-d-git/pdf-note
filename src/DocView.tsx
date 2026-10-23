@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Check, Circle, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, Highlighter, ImagePlus, ListIndentDecrease,
@@ -14,7 +14,7 @@ import {
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
-import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast } from "./ui";
 import { T, tip } from "./i18n";
 import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
 import { lockedLayers, setLayerLocked } from "./layers";
@@ -139,7 +139,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
+  /** Meldung als Toast; weg bei ✕, nach 6 s, bei Undo/Redo und bei der nächsten erfolgreichen Änderung */
   const [error, setError] = useState<string>();
+  const closeError = useCallback(() => setError(undefined), []);
   /** Suche: `null` = zu; Treffer gelten nur für den Stand `v`, `done` = zuletzt gesuchter Begriff */
   const [find, setFind] = useState<{ q: string; done: string | null; hits: SearchHit[]; at: number; v: number } | null>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -172,11 +174,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const dirty = snap !== saved;
   const selItems = items.filter((it) => it.page === selection.page && selection.ids.includes(it.id));
 
-  const edit = (f: (items: Item[]) => Item[]) =>
+  const edit = (f: (items: Item[]) => Item[]) => {
+    setError(undefined);
     setHist((h) => {
       const s = h.list[h.at] ?? EMPTY;
       return push(h, { ...s, items: f(s.items) });
     });
+  };
   const clearSel = () => setSelection({ page: -1, ids: [] });
   const switchLayer = (l: Layer) => {
     if (l === layer) return;
@@ -390,6 +394,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     }
     setHist((h) => ({ ...h, at: to }));
     clearSel();
+    setError(undefined);
   }
 
   function applyZoom(z: number) {
@@ -1097,7 +1102,6 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           </form>
         )}
         {tool === "link" && linkFrom && <span className="text-sm text-accent">{T.linkTarget}</span>}
-        {error && <span className="ml-auto text-sm text-red-400">{error}</span>}
       </div>
       <div className="relative flex min-h-0 flex-1">
         {sideOpen && <div className="flex shrink-0 flex-col border-r border-line bg-sunken">
@@ -1334,6 +1338,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
             ))}
           </div>
         </main>
+        <Toast msg={error} onClose={closeError} />
       </div>
     </div>
   );

@@ -685,6 +685,10 @@ pub fn move_paras(doc: &mut PdfDocument, index: i32, paras: &[usize], dx: f32, d
     let before = paragraphs(doc, index)?;
     // einzeilig: Rahmen etwas weiter, sonst bricht die breitere Ersatzschrift die Zeile beim bloßen Verschieben um
     let targets = paras.iter().map(|&i| before.get(i).map(|p| (p.text.clone(), p.bbox, (p.bbox[3] - p.bbox[1] < 1.6 * p.size).then(|| (p.bbox[2] - p.bbox[0]) * 1.3 + 2.0 * p.size))).ok_or("Absatz nicht gefunden")).collect::<Result<Vec<_>, _>>()?;
+    // vorderster in Schieberichtung zuerst: sonst „überdeckt" ein Absatz die noch nicht verschobenen Mitläufer
+    let ahead = |b: &[f32; 4]| (b[0] + b[2]) * dx + (b[1] + b[3]) * dy;
+    let mut targets = targets;
+    targets.sort_by(|a, b| ahead(&b.1).total_cmp(&ahead(&a.1)));
     let mut notes = Vec::new();
     for (text, bb, width) in targets {
         let i = paragraphs(doc, index)?.iter().position(|p| p.text == text && p.bbox.iter().zip(bb).all(|(a, b)| (a - b).abs() < 0.5)).ok_or("Absatz nicht gefunden")?;
@@ -809,6 +813,19 @@ mod tests {
         assert_eq!(q.font, "NimbusRoman-Regular");
         assert!((q.size - 10.0).abs() < 0.01);
         assert!((q.lines[0].x0 - 50.0).abs() < 0.5 && (q.lines[0].base - 110.0).abs() < 0.5, "{:?}", q.lines[0]);
+    }
+
+    #[test]
+    fn mehrere_absaetze_verschieben_ohne_falschen_ueberlauf() {
+        // Absatz 0 rückt in die alte Stelle von Absatz 1, beide gemeinsam gewählt: kein Überlauf-Hinweis
+        let mut d = doc_with(PAGE);
+        assert_eq!(move_paras(&mut d, 0, &[0, 1], 0.0, 50.0, false).unwrap(), None);
+        let p = paragraphs(&d, 0).unwrap();
+        assert_eq!(p.len(), 2, "{p:?}");
+        assert!(p.iter().any(|p| p.text == "Zweiter Absatz" && (p.lines[0].base - 140.0).abs() < 0.5), "{p:?}");
+        // allein verschoben überdeckt Absatz 0 den stehenden Absatz 1 wirklich
+        let mut d = doc_with(PAGE);
+        assert!(move_paras(&mut d, 0, &[0], 0.0, 50.0, false).unwrap().is_some_and(|w| w.contains("läuft über")));
     }
 
     #[test]
