@@ -1,20 +1,41 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import {
+  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, File, FileCode,
+  FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
+  ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
+  Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+} from "lucide-react";
 import { z } from "zod";
 import {
-  afterDelete, afterInsert, afterMove, afterRotate, box, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, MARKERS,
-  moveItem, newId, PRESETS, TEXT_SIZE, textRect, toData, type Item, type Preset,
+  afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
+  isPara, layerOf, moveItem, newId, PARA0, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset,
 } from "./ink";
+import { useDoc } from "./docstore";
+import { onlyActivates } from "./tabs";
+import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast } from "./ui";
+import { T, tip } from "./i18n";
+import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
+import { lockedLayers, setLayerLocked } from "./layers";
 import * as ol from "./outline";
-import { PageView, Thumb, type Hit, type NewField, type OrigEdit, type TextEdit } from "./PageView";
-import { type Settings, type Tool } from "./settings";
+import type { DocStart } from "./session";
+import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
+import { afterShape, deviceTools, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { PenBar } from "./PenBar";
+import { scrollAfterZoom, wheelFactor } from "./zoom";
+import { formulas, type Formula } from "./math";
+import { MdEditor } from "./MdEditor";
+import { setView } from "./render";
 
 const Sizes = z.array(z.tuple([z.number().positive(), z.number().positive()])).min(1);
 export const PageState = z.object({
   sizes: Sizes, rev: z.number().int().nonnegative(), inserted: z.number().int().nonnegative(), items: z.array(ItemData),
   warning: z.string().nullish(),
 });
+const WHEEL_MS = 150;
+/** Seiten-Zwischenablage liegt im Backend (für alle Tabs); hier nur, ob etwas drin ist */
+let pageClip = false;
 const clampZoom = (z: number) => Math.min(6, Math.max(0.2, z));
 const SearchHit = z.object({ page: z.number().int(), rect: z.array(z.number()).length(4) });
 type SearchHit = z.infer<typeof SearchHit>;
@@ -29,6 +50,8 @@ export interface Snap { items: Item[]; rev: number; sizes: [number, number][] }
 interface History { list: Snap[]; at: number }
 const HISTORY_MAX = 200;
 const EMPTY: Snap = { items: [], rev: 0, sizes: [] };
+/** Stift aktiv = gleiche Farbe + Breite (Leiste speichert Werte, keine Ids) */
+const same = (a: Preset, b: Preset) => a.size === b.size && a.color.every((c, k) => c === b.color[k]);
 const push = (h: History, s: Snap): History => {
   const list = [...h.list.slice(0, h.at + 1), s].slice(-HISTORY_MAX);
   return { list, at: list.length - 1 };
@@ -41,16 +64,13 @@ export const toSnap = (r: z.infer<typeof PageState>): Snap => ({ items: r.items.
  */
 const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
-/** Werkzeug, Beschriftung, Tooltip, Kürzel */
-const TOOL_LABELS: [Tool, string, string, string][] = [
-  ["pen", "Stift", "Stift", "p"], ["marker", "Marker", "Textmarker", "m"], ["eraser", "Radierer", "Radierer (nur eigene Objekte)", "e"],
-  ["lasso", "Lasso", "Auswählen, Verschieben, Skalieren", "a"], ["text", "Text", "Textfeld", "t"], ["line", "╱", "Linie", "l"],
-  ["arrow", "→", "Pfeil", "f"], ["rect", "▭", "Rechteck", "r"], ["ellipse", "◯", "Kreis/Ellipse", "k"],
-  ["pdftext", "PDF-Text", "Text der PDF: Klick bearbeitet den Absatz, Ziehen verschiebt ihn", "b"],
-  ["form", "Formular", "Formularfelder ausfüllen (Tab = nächstes Feld), Ziehen auf freier Fläche legt ein neues Feld an", "o"],
-  ["link", "Link", "Anker-Links: Rechteck ziehen, dann Zielstelle anklicken; Klick auf Link springt", "g"],
+/** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
+const LAYER_EDGE: Record<Layer, string> = { 1: "var(--ink-3)", 2: "var(--accent-deep)", 3: "var(--accent)" };
+const SHAPES: [Item["kind"], LucideIcon, string][] = [
+  ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes],
 ];
-const SHAPES: [Item["kind"], string][] = [["rect", "Rechteck"], ["ellipse", "Kreis/Ellipse"], ["line", "Linie"], ["arrow", "Pfeil"]];
+const PAGE_KINDS: [string, LucideIcon, string][] = [["blank", File, T.blank], ["lined", Rows3, T.lined], ["grid", Grid3x3, T.squared], ["dots", Grip, T.dots]];
 
 const inField = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
 const readUrl = (b: Blob) => new Promise<string>((res, rej) => {
@@ -75,27 +95,67 @@ async function blobToB64(b: Blob): Promise<string> {
 }
 
 /** Was App von einem Dokument braucht (Speichern-Nachfrage beim Schließen/Beenden). */
-export interface DocApi { save: () => Promise<void> }
+export interface DocApi {
+  save: () => Promise<void>;
+  /** Bild an Bildschirmstelle (client px) einfügen; ohne Stelle mittig. false = keine eigene Seite dort */
+  dropImage: (b64: string, x?: number, y?: number) => Promise<boolean>;
+  /** Ansicht für die Sitzung (Seite/Scroll, Zoom, Ebene, Werkzeug je Gerät) */
+  state: () => DocStart;
+}
 
 /**
  * Ein offenes Dokument mit eigenem Undo, Zoom, Scroll und Werkzeug. Bleibt gemountet, solange der Tab offen ist;
- * versteckt (`visible` = false) gibt es seine Seitenbilder frei (IntersectionObserver in PageView).
+ * Seitenbilder plant render.ts (sichtbar ± `preload`, versteckt ± `preloadHidden`, Speichergrenze).
  */
-export function DocView({ id, path, init, visible, active, marked, settings, style, apis, onDirty, onFocus }: {
-  id: number; path: string; init: Snap; visible: boolean; active: boolean; marked: boolean; settings: Settings;
-  style: CSSProperties; apis: Map<number, DocApi>; onDirty: (id: number, dirty: boolean) => void; onFocus: () => void;
+export function DocView({ id, view, path, init, start, visible, active, marked, settings, style, apis, sideOpen, onSide, onDirty, onFocus }: {
+  /** `start` = Ansicht aus der letzten Sitzung, sonst Seitenbreite */
+  id: number; view: string; path: string; init: Snap; start?: DocStart; visible: boolean; active: boolean; marked: boolean; settings: Settings;
+  style: CSSProperties; apis: Map<string, DocApi>; sideOpen: boolean; onSide: () => void;
+  onDirty: (id: number, dirty: boolean) => void; onFocus: () => void;
 }) {
-  const [hist, setHist] = useState<History>({ list: [init], at: 0 });
-  const [saved, setSaved] = useState<Snap>(init);
-  const [version, setVersion] = useState(0);
-  const [zoom, setZoom] = useState(1);
-  const [tool, setTool] = useState<Tool>("pen");
-  const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
-  const [marker, setMarker] = useState<Preset>(MARKERS[0] ?? DEFAULT_PRESET);
+  // Undo, Speicherstand, Seitenstand und Sperre teilt sich jede Ansicht dieses Dokuments (gleiche PDF in beiden Hälften)
+  const [doc, setDoc] = useDoc(id, () => ({ hist: { list: [init], at: 0 } as History, saved: init, version: 0, busy: { current: false } }));
+  const { hist, saved, version, busy } = doc;
+  const setHist = (f: (h: History) => History) => setDoc((d) => ({ ...d, hist: f(d.hist) }));
+  const setSaved = (s: Snap) => setDoc((d) => ({ ...d, saved: s }));
+  const setVersion = (f: (v: number) => number) => setDoc((d) => ({ ...d, version: f(d.version) }));
+  const [zoom, setZoom] = useState(start?.zoom ?? 1);
+  /** Werkzeug der Maus (bei `settings.auto`) bzw. aller Geräte; `penTool` = Werkzeug des Stifts bei `auto` */
+  const [tools, setTools] = useState(() => ({
+    ...initTools(settings.auto), ...(start ? { mouse: start.mouse, pen: start.pen } : { pen: loadPalettes().last?.kind ?? "pen" }),
+  }));
+  const { mouse: tool, pen: penTool, locked } = tools;
+  const setTool = (t: Tool) => setTools((s) => ({ ...s, mouse: t }));
+  /** Tippen bei ausgewähltem Textfeld: PageView je Seite öffnet das Feld mit dem Zeichen am Ende */
+  const typers = useRef(new Map<number, (id: number, ch: string) => void>()).current;
+  const [layer, setLayer] = useState<Layer>(start?.layer ?? 2);
+  /** gesperrte Ebenen dieses Dokuments (gerätelokal, `layers.ts`) */
+  const [locks, setLocks] = useState(() => lockedLayers(path));
+  const toggleLock = (l: Layer) => {
+    setLayerLocked(path, l, !locks.includes(l));
+    setLocks(lockedLayers(path));
+    if (l === layer) clearSel();
+  };
+  /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
+  const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
+  const [pal, setPal] = useState(loadPalettes);
+  useEffect(() => storePalettes(pal), [pal]);
+  const [preset, setPreset] = useState<Preset>(() => {
+    const p = (pal.last?.kind === "pen" ? pal.last : undefined) ?? pal.pens.find((x) => x.kind === "pen" && same(x, DEFAULT_PRESET)) ?? nthPen(pal.pens, "pen", 0) ?? DEFAULT_PRESET;
+    return { color: p.color, size: p.size };
+  });
+  const [marker, setMarker] = useState<Preset>(() => {
+    const m = (pal.last?.kind === "marker" ? pal.last : undefined) ?? nthPen(pal.pens, "marker", 0) ?? DEFAULT_PRESET;
+    return { color: m.color, size: m.size };
+  });
+  /** Koordinatensystem: gilt fürs nächste Aufziehen */
+  const [axes, setAxes] = useState({ xyz: false, grid: false });
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
+  /** Meldung als Toast; weg bei ✕, nach 6 s, bei Undo/Redo und bei der nächsten erfolgreichen Änderung */
   const [error, setError] = useState<string>();
+  const closeError = useCallback(() => setError(undefined), []);
   /** Suche: `null` = zu; Treffer gelten nur für den Stand `v`, `done` = zuletzt gesuchter Begriff */
   const [find, setFind] = useState<{ q: string; done: string | null; hits: SearchHit[]; at: number; v: number } | null>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -110,10 +170,17 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const [renaming, setRenaming] = useState(-1);
   /** Markdown-Quelltext der aktuellen Seite (`null` = keine Markdown-Seite) und offener Editor. */
   const [md, setMd] = useState<string | null>(null);
-  const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean }>();
+  const [mdEdit, setMdEdit] = useState<{ page: number; source: string; insert: boolean; orig?: string }>();
+  // Passwort nur in diesem Zustand, verworfen beim Schließen des Dialogs
+  /** Adresse, die nach Rückfrage im Standard-Browser geöffnet wird */
+  const [openUrl, setOpenUrl] = useState<string>();
+  const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
+  const first = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
-  const scrollPos = useRef({ left: 0, top: 0 });
-  const busy = useRef(false);
+  const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
+  /** markierte Miniaturen; gelten nur für den Seitenstand `v` (Seitenoperation/Undo hebt die Markierung auf) */
+  const [thumbSel, setThumbSel] = useState<{ v: number; sel: number[]; anchor: number }>({ v: -1, sel: [], anchor: 0 });
+  const [tmenu, setTmenu] = useState<{ x: number; y: number; md?: string | null }>();
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
   const snap = hist.list[hist.at] ?? EMPTY;
@@ -121,12 +188,52 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   const dirty = snap !== saved;
   const selItems = items.filter((it) => it.page === selection.page && selection.ids.includes(it.id));
 
-  const edit = (f: (items: Item[]) => Item[]) =>
+  const edit = (f: (items: Item[]) => Item[]) => {
+    setError(undefined);
     setHist((h) => {
       const s = h.list[h.at] ?? EMPTY;
       return push(h, { ...s, items: f(s.items) });
     });
+  };
   const clearSel = () => setSelection({ page: -1, ids: [] });
+  const switchLayer = (l: Layer) => {
+    if (l === layer) return;
+    setLayer(l);
+    clearSel();
+    setTextSel(null);
+  };
+  /** Farbfeld: Werkzeug + Farbe + Ebene 3 in einem Klick */
+  const quick = (kind: "pen" | "marker", i: number, dev: "pen" | "mouse" = "mouse") => {
+    const c = nthPen(pal.pens, kind, i);
+    if (c) choosePen(c, dev);
+  };
+  const choosePen = (c: Pen, dev: "pen" | "mouse") => {
+    const r = pickColor({ tools, preset, marker }, c, dev, settings.auto);
+    setTools(r.tools);
+    setPreset(r.preset);
+    setMarker(r.marker);
+    switchLayer(TOOL_LAYER[c.kind] ?? 3);
+  };
+  // zuletzt genutzten Stift/Marker merken (gerätelokal): Rücksprung beim Gerätewechsel und nach Neustart
+  const pt = settings.auto ? tools.pen : tools.mouse;
+  const penNow = pt === "pen" || pt === "marker" ? pt : undefined;
+  const lastPen = penNow && { kind: penNow, ...(penNow === "pen" ? preset : marker) };
+  if (lastPen && !(pal.last && pal.last.kind === lastPen.kind && same(pal.last, lastPen))) setPal({ ...pal, last: lastPen });
+  /** Gerätewechsel: Stift → Ebene 3 + letzter Stift/Marker, Maus → Ebene 2 + Auswahl (Hovern genügt) */
+  const device = useRef<"pen" | "mouse">("mouse");
+  const deviceEvent = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    const d = e.pointerType === "pen" ? "pen" : "mouse";
+    if (d === device.current) return;
+    device.current = d;
+    if (settings.auto) setTools((s) => deviceTools(s, d, pal.last?.kind ?? "pen"));
+    switchLayer(d === "pen" ? 3 : 2);
+  };
+  const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
+    setTools((s) => pickTool(s, t, dev, settings.auto));
+    const l = TOOL_LAYER[t] ?? (t === "eraser" && layer === 1 ? 3 : undefined);
+    if (l) switchLayer(l);
+  };
 
   async function save(force = false): Promise<void> {
     // während Seitenoperation/Undo passen die Objekte nicht zum Seitenstand im Backend
@@ -138,33 +245,36 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
       setError(undefined);
     } catch (e) {
       if (!force && String(e) === "EXTERN_GEAENDERT") {
-        const r = await message("Die PDF wurde seit dem Öffnen außerhalb von PDF Note geändert. Beim Speichern gehen diese Änderungen verloren.", {
-          title: "PDF Note", kind: "warning", buttons: { ok: "Trotzdem speichern", cancel: "Abbrechen" },
-        });
-        if (r === "Trotzdem speichern") return save(true);
+        const r = await message(T.extern, { title: "PDF Note", kind: "warning", buttons: { ok: T.saveAnyway, cancel: T.cancel } });
+        if (r === T.saveAnyway) return save(true);
         setError("Nicht gespeichert: Datei extern geändert");
       } else setError(`Speichern fehlgeschlagen: ${String(e)}`);
       throw e;
     }
   }
 
-  /** Speichern unter, flach: Objekte eingebrannt, nicht mehr bearbeitbar. Weitergearbeitet wird an der offenen PDF. */
+  /** Speichern unter: neue Datei, optional eingebrannt und/oder mit Passwort. Weitergearbeitet wird an der offenen PDF. */
   async function saveAs() {
-    if (busy.current) return;
-    const target = await saveDialog({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: path.replace(/\.pdf$/i, "") + "-flach.pdf" });
+    if (busy.current || !saveDlg) return;
+    const { flat, encrypt, pw, pw2 } = saveDlg;
+    const bad = encrypt ? pwProblem(pw, pw2) : undefined;
+    if (bad) return setSaveDlg({ ...saveDlg, error: bad });
+    const suffix = flat ? "-flach" : encrypt ? "-geschuetzt" : "-kopie";
+    const target = await saveDialog({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: path.replace(/\.pdf$/i, "") + suffix + ".pdf" });
     if (!target) return;
-    // flach über die offene Datei: eigene Objekte wären danach doppelt (eingebrannt + noch im Speicher)
-    if (target.toLowerCase() === path.toLowerCase()) return setError("Flach nicht über die offene Datei speichern – anderen Namen wählen");
+    // die offene Datei bleibt unberührt: eingebrannt wären Objekte doppelt, Passwort gilt nur für die neue Datei
+    if (target.toLowerCase() === path.toLowerCase()) return setSaveDlg({ ...saveDlg, error: T.ownTarget });
     try {
-      await invoke("save_pdf", { id, items: items.map(toData), target, flat: true, force: false });
+      await invoke("save_pdf", { id, items: items.map(toData), target, flat, force: false, password: encrypt ? pw : null });
+      setSaveDlg(undefined);
       setError(undefined);
     } catch (e) {
-      setError(`Speichern unter fehlgeschlagen: ${String(e)}`);
+      setSaveDlg({ ...saveDlg, error: `Speichern unter fehlgeschlagen: ${String(e)}` });
     }
   }
 
   /** Seitenoperation im Backend; Objekte werden mit umnummeriert, Objekte einer eingefügten PDF kommen dazu. */
-  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[]): Promise<boolean> {
+  async function pageOp(op: object, remap: (items: Item[], inserted: number) => Item[], keepSel = false): Promise<boolean> {
     if (busy.current) return false;
     busy.current = true;
     try {
@@ -173,7 +283,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         items: [...remap((h.list[h.at] ?? EMPTY).items, r.inserted), ...r.items.map(fromData)], rev: r.rev, sizes: r.sizes,
       }));
       setVersion((v) => v + 1);
-      clearSel();
+      // Original-Objekte nur verschoben/skaliert/gedreht: Indizes bleiben → Auswahl bleibt
+      if (!keepSel) clearSel();
       setError(r.warning ? `Hinweis: ${r.warning}` : undefined);
       return true;
     } catch (e) {
@@ -215,9 +326,16 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   };
   const saveMarkdown = async () => {
     if (!mdEdit) return;
-    const { page, source, insert } = mdEdit;
+    const { page, source, insert, orig } = mdEdit;
+    if (source === orig) return setMdEdit(undefined);
     // Fehler → Editor bleibt offen, Text geht nicht verloren
-    if (!(await pageOp({ op: "markdown", page, source, insert }, (its) => (insert ? afterInsert(its, page, 1) : its)))) return;
+    let fs: Formula[] = [];
+    try {
+      fs = await formulas(source);
+    } catch {
+      // ohne MathJax: Formeln roh als Code
+    }
+    if (!(await pageOp({ op: "markdown", page, source, insert, formulas: fs }, (its) => (insert ? afterInsert(its, page, 1) : its)))) return;
     setMdEdit(undefined);
     if (insert) requestAnimationFrame(() => goTo(page));
   };
@@ -249,10 +367,61 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     const k = current, h = sizes[k]?.[1] ?? A4[1];
     void pageOp({ op: "rotate", index: k }, (its) => afterRotate(its, k, h));
   };
-  const deletePage = () => {
-    const k = current;
-    void pageOp({ op: "delete", index: k }, (its) => afterDelete(its, k));
+  const tsel = thumbSel.v === version ? thumbSel.sel : [];
+  const tmax = Math.max(...tsel);
+  const deletePages = (ks: number[]) => {
+    if (ks.length && ks.length < sizes.length) void pageOp({ op: "deletePages", indices: ks }, (its) => afterDeleteMany(its, ks));
   };
+  const rotatePages = (ks: number[]) =>
+    void pageOp({ op: "rotatePages", indices: ks }, (its) => ks.reduce((all, k) => afterRotate(all, k, sizes[k]?.[1] ?? A4[1]), its));
+  const copyPages = async (ks: number[]) => {
+    try {
+      await invoke("copy_pages", { id, pages: ks, items: items.filter((it) => ks.includes(it.page)).map(toData) });
+      pageClip = true;
+      return true;
+    } catch (e) {
+      setError(`Kopieren fehlgeschlagen: ${String(e)}`);
+      return false;
+    }
+  };
+  /** Einfügen nach Seite `after` (Zwischenablage aus beliebigem Dokument) */
+  const pastePages = (after: number) => pageOp({ op: "paste", at: after + 1 }, (its, n) => afterInsert(its, after + 1, n));
+  const cutPages = async (ks: number[]) => {
+    if (ks.length < sizes.length && (await copyPages(ks))) deletePages(ks);
+  };
+  const duplicatePages = async (ks: number[]) => {
+    if (await copyPages(ks)) await pastePages(Math.max(...ks));
+  };
+  const clickThumb = (i: number) => (e: React.MouseEvent) => {
+    setThumbSel({ v: version, sel: thumbPick(tsel, thumbSel.anchor, i, e.ctrlKey || e.metaKey, e.shiftKey), anchor: e.shiftKey ? thumbSel.anchor : i });
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) goTo(i);
+  };
+  const mdOf = (index: number) => invoke("page_markdown", { id, index }).then((r) => z.string().nullable().parse(r), () => null);
+  const menuThumb = (i: number) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!tsel.includes(i)) setThumbSel({ v: version, sel: [i], anchor: i });
+    const at = { x: e.clientX, y: e.clientY };
+    setTmenu(at);
+    void mdOf(i).then((md) => setTmenu((m) => (m && m.x === at.x && m.y === at.y ? { ...m, md } : m)));
+  };
+  /** Doppelklick (Lasso) auf eine Markdown-Seite öffnet den Editor. */
+  const dblPage = (e: React.MouseEvent) => {
+    const pg = e.target instanceof Element && !e.target.closest("textarea,input,[contenteditable]") ? e.target.closest("[data-page]") : null;
+    const i = Number(pg?.getAttribute("data-page") ?? NaN);
+    if ((tool !== "lasso" && penTool !== "lasso") || !Number.isInteger(i)) return;
+    void mdOf(i).then((md) => md !== null && setMdEdit((m) => m ?? { page: i, source: md, insert: false, orig: md }));
+  };
+  useEffect(() => {
+    if (!tmenu) return;
+    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-tmenu]")) && setTmenu(undefined));
+    const key = (e: KeyboardEvent) => void (e.key === "Escape" && setTmenu(undefined));
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [tmenu]);
   const movePage = (from: number, to: number) => void pageOp({ op: "move", from, to }, (its) => afterMove(its, from, to));
 
   /** Undo/Redo: Seitenstand im Backend mitziehen, wenn er sich unterscheidet. */
@@ -273,6 +442,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     }
     setHist((h) => ({ ...h, at: to }));
     clearSel();
+    setError(undefined);
   }
 
   function applyZoom(z: number) {
@@ -322,12 +492,17 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
   // Treffer passen nach Seitenoperation/Undo nicht mehr → ausblenden; nach Objekt-Änderungen bleiben sie stehen (ponytail)
   const hits = find && find.v === version ? find.hits : [];
 
-  /** Neue Objekte hinzufügen, auswählen, Lasso aktiv → gleich verschiebbar. */
-  function place(added: Item[]) {
-    const page = added[0]?.page;
-    if (page === undefined) return;
+  /** Neue Objekte hinzufügen, auswählen, Lasso auf ihrer Ebene aktiv → gleich verschiebbar. */
+  function place(all: Item[]) {
+    // Ebenen-Sperre: nichts in gesperrte Ebenen einfügen
+    const added = all.filter((it) => !locks.includes(layerOf(it)));
+    const [first] = added;
+    if (!first) return;
+    const page = first.page;
     edit((its) => [...its, ...added]);
-    setSelection({ page, ids: added.map((it) => it.id) });
+    switchLayer(layerOf(first));
+    // Auswahl nur innerhalb einer Ebene (eingefügte Objekte können gemischt sein)
+    setSelection({ page, ids: added.filter((it) => layerOf(it) === layerOf(first)).map((it) => it.id) });
     setTool("lasso");
   }
 
@@ -343,18 +518,22 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     return [page, clamp(((vr.left + vr.right) / 2 - pr.left) / zoom, w), clamp(((vr.top + vr.bottom) / 2 - pr.top) / zoom, h), w, h];
   }
 
-  function paste() {
+  /** `at`: linke obere Ecke an diese Stelle (Rechtsklick-Menü), sonst 10 pt versetzt */
+  function paste(at?: [page: number, x: number, y: number]) {
     if (!clip.items.length || !sizes.length) return;
-    const page = Math.min(current, sizes.length - 1);
-    const pasted = clip.items.map((it) => ({ ...moveItem(it, 10, 10), id: newId(), page }));
+    const page = at?.[0] ?? Math.min(current, sizes.length - 1);
+    const b = unionBox(clip.items);
+    const [dx, dy] = at ? [at[1] - b.x0, at[2] - b.y0] : [10, 10];
+    const pasted = clip.items.map((it) => ({ ...moveItem(it, dx, dy), id: newId(), page }));
     clip.items = pasted; // nochmal einfügen → weiter versetzt
     place(pasted);
   }
 
-  async function insertImage(b64: string) {
+  async function insertImage(b64: string, at?: [page: number, x: number, y: number]) {
     const c = viewCenter();
     if (!c) return;
-    const [page, x, y, w, h] = c;
+    const [page, x, y] = at ?? c;
+    const [w, h] = sizes[page] ?? A4;
     const img = new Image();
     img.src = `data:${imageMime(b64) ?? "image/png"};base64,${b64}`;
     await img.decode();
@@ -362,17 +541,18 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     place([imageItem(page, b64, img.naturalWidth * 0.75, img.naturalHeight * 0.75, x, y, 0.8 * Math.min(w, h))]);
   }
 
-  function insertText(text: string) {
+  /** ohne `at` mittig in der Ansicht, mit `at` linke obere Ecke dort */
+  function insertText(text: string, at?: [page: number, x: number, y: number]) {
     const c = viewCenter();
     const ctx = document.createElement("canvas").getContext("2d");
     if (!c || !ctx) return;
-    const [page, x, y] = c;
+    const [page, x, y] = at ?? c;
     const t = text.replace(/\r\n?/g, "\n").slice(0, 100_000);
-    const points = textRect(ctx, t, TEXT_SIZE, 0, 0);
+    const points = textRect(ctx, t, pal.text, 0, 0);
     const [, [bw, bh] = [0, 0]] = points;
     place([moveItem({
-      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: TEXT_SIZE, simulated: false, points, text: t,
-    }, x - bw / 2, y - bh / 2)]);
+      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t,
+    }, at ? x : x - bw / 2, at ? y : y - bh / 2)]);
   }
 
   function insertShape(kind: Item["kind"]) {
@@ -382,58 +562,175 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : [60, 40];
     place([{
       id: newId(), page, kind, color: preset.color, opacity: 1, size: preset.size, simulated: false,
-      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "",
+      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "", ...(kind === "axes" ? axes : {}),
     }]);
   }
 
-  async function insertImageFile() {
+  async function insertImageFile(at?: [page: number, x: number, y: number]) {
     const p = await openDialog({ filters: [{ name: "Bild", extensions: ["png", "jpg", "jpeg"] }] });
     if (typeof p !== "string") return;
     try {
-      await insertImage(await invoke<string>("read_image", { path: p }));
+      await insertImage(await invoke<string>("read_image", { path: p }), at);
     } catch (e) {
       setError(`Bild einfügen fehlgeschlagen: ${String(e)}`);
     }
   }
 
+  /** Drop aus dem Explorer: Seite unter (x, y) suchen; versteckte Tabs haben leere Rechtecke → kein Treffer. */
+  async function dropImage(b64: string, x?: number, y?: number) {
+    if (x === undefined || y === undefined) {
+      await insertImage(b64);
+      return true;
+    }
+    for (const el of scroller.current?.querySelectorAll<HTMLElement>("[data-page]") ?? []) {
+      const r = el.getBoundingClientRect();
+      if (r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        await insertImage(b64, [Number(el.dataset.page), (x - r.left) / zoom, (y - r.top) / zoom]);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Original-Objekte der PDF ändern; eigene Objekte ersetzen (`next`) bzw. entfernen (`drop`) im selben Schritt. */
-  const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = []) =>
-    void pageOp({ op: "orig", page, edits }, (its) =>
-      its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it));
+  const origOp = (page: number, edits: OrigEdit[], next: Item[], drop: number[] = [], paras?: ParaMove) =>
+    void pageOp(
+      paras ? { op: "layer1", page, edits, paras: paras.i, dx: paras.dx, dy: paras.dy, delete: !!paras.del } : { op: "orig", page, edits },
+      (its) => its.filter((it) => !drop.includes(it.id)).map((it) => next.find((n) => n.id === it.id) ?? it),
+      // Absätze: Reihenfolge ändert sich → Auswahl fällt weg
+      !paras && !drop.length && edits.every((e) => "matrix" in e));
 
   const removeSel = (ownOnly = false) => {
-    const orig = selection.ids.filter((i) => i < 0).map((i) => ({ index: -1 - i }));
-    // Original-Objekte nur im Lasso: sonst unsichtbar ausgewählt
-    if (orig.length && !ownOnly && tool === "lasso") return origOp(selection.page, orig, [], selItems.map((it) => it.id));
+    const orig = selection.ids.filter((i) => i < 0 && !isPara(i)).map((i) => ({ index: -1 - i }));
+    const paras = selection.ids.filter(isPara).map((i) => PARA0 - i);
+    // Original-Objekte nur auf Ebene 1: sonst unsichtbar ausgewählt
+    if ((orig.length || paras.length) && !ownOnly && layer === 1) {
+      return origOp(selection.page, orig, [], selItems.map((it) => it.id), paras.length ? { i: paras, dx: 0, dy: 0, del: true } : undefined);
+    }
     if (!selItems.length) return;
     const ids = new Set(selItems.map((it) => it.id));
     edit((its) => its.filter((it) => !ids.has(it.id)));
     clearSel();
   };
 
+  /** Kopieren/Ausschneiden (Strg+C/X und Menü): interne Zwischenablage füllen; Ergebnis = Text fürs System, null = nichts */
+  const copySel = (cut: boolean): string | null => {
+    // markierter PDF-Text (auch OCR) → nur Text; Ausschneiden geht nicht
+    if (!selItems.length && textSel?.text && textSel.v === version) {
+      clip.text = null;
+      return textSel.text;
+    }
+    if (!selItems.length) return null;
+    clip.items = selItems;
+    clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
+    if (cut) removeSel(true); // Original-Objekte nicht in der Zwischenablage → nicht ausschneiden
+    return clip.text;
+  };
+
+  /** Einfügen aus dem Menü (kein paste-Event): System-Zwischenablage lesen wie Strg+V; ohne Leserecht die interne */
+  async function pasteAt(at?: [page: number, x: number, y: number]) {
+    let list: ClipboardItems;
+    try {
+      list = await navigator.clipboard.read();
+    } catch {
+      return paste(at);
+    }
+    for (const ci of list) {
+      const type = ci.types.find((t) => t.startsWith("image/"));
+      if (type) {
+        try {
+          return await insertImage(await blobToB64(await ci.getType(type)), at);
+        } catch (err) {
+          return setError(`Bild einfügen fehlgeschlagen: ${String(err)}`);
+        }
+      }
+      if (!ci.types.includes("text/plain")) continue;
+      const text = await (await ci.getType("text/plain")).text();
+      if (clip.items.length && text === clip.text) return paste(at);
+      if (text.trim()) return insertText(text, at);
+    }
+    paste(at);
+  }
+
+  /** Nach vorn/hinten = Zeichenreihenfolge; nur unter Objekten derselben Seite und Ebene */
+  function order(front: boolean) {
+    const [one] = selItems;
+    if (!one) return;
+    const ids = new Set(selItems.map((it) => it.id));
+    const peer = (it: Item) => !ids.has(it.id) && it.page === one.page && layerOf(it) === layerOf(one);
+    const reorder = (all: Item[]) => {
+      const rest = all.filter((it) => !ids.has(it.id));
+      const k = front ? rest.findLastIndex(peer) + 1 : rest.findIndex(peer);
+      return [...rest.slice(0, k), ...all.filter((it) => ids.has(it.id)), ...rest.slice(k)];
+    };
+    // schon ganz vorn/hinten (oder allein) → kein leerer Undo-Schritt
+    if (!items.some(peer) || reorder(items).every((it, i) => it === items[i])) return;
+    edit(reorder);
+  }
+
+  function pageCmd(page: number, c: Cmd, at?: [number, number]) {
+    const where = at && ([page, ...at] as [number, number, number]);
+    switch (c) {
+      case "cut":
+      case "copy": {
+        const t = copySel(c === "cut");
+        if (t !== null) void navigator.clipboard.writeText(t).catch(() => {});
+        break;
+      }
+      case "paste": return void pasteAt(where);
+      case "delete": return removeSel();
+      case "front":
+      case "back": return order(c === "front");
+      case "image": return void insertImageFile(where);
+      case "space": return chooseTool("space");
+      case "notes": return switchLayer(3);
+    }
+  }
+
+  /** Kontextmenü-Taste/Umschalt+F10: Menü an der Auswahl bzw. Ansichtsmitte (synthetisches contextmenu an der Seite) */
+  function openMenu() {
+    const c = viewCenter();
+    const page = selection.page >= 0 ? selection.page : c?.[0] ?? 0;
+    const el = scroller.current?.querySelector(`[data-page="${page}"]`);
+    if (!el) return;
+    const b = selItems.length ? unionBox(selItems) : null;
+    const [w, h] = sizes[page] ?? A4;
+    const [x, y] = b ? [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2] : c?.[0] === page ? [c[1], c[2]] : [w / 2, h / 2];
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + x * zoom, clientY: r.top + y * zoom }));
+  }
+
   useEffect(() => {
-    apis.set(id, { save });
+    apis.set(view, { save, dropImage, state: () => ({ zoom, ...scrollPos.current, layer, mouse: tool, pen: penTool }) });
   });
-  useEffect(() => () => void apis.delete(id), [apis, id]);
+  useEffect(() => () => void apis.delete(view), [apis, view]);
   useEffect(() => onDirty(id, dirty), [onDirty, id, dirty]);
 
-  // Beim Öffnen auf Seitenbreite zoomen
+  // Beim Öffnen auf Seitenbreite zoomen (wiederhergestellte Sitzung behält ihren Zoom)
   useLayoutEffect(() => {
+    if (start) return;
     const width = (scroller.current?.clientWidth || 800) - 48;
     setZoom(clampZoom(width / Math.max(...init.sizes.map(([w]) => w))));
-  }, [init]);
+  }, [init, start]);
 
   // Versteckt verliert das Element seine Scroll-Position → beim Wiederanzeigen zurücksetzen
   useLayoutEffect(() => {
     if (visible) scroller.current?.scrollTo(scrollPos.current.left, scrollPos.current.top);
   }, [visible]);
 
+  // Seitenbilder: Ansicht beim Render-Speicher anmelden (Vorladen/Verwerfen in render.ts)
+  useEffect(() => {
+    setView(view, { doc: id, center: current, sizes, scale: zoom * devicePixelRatio, dpr: devicePixelRatio, version, shown: visible });
+  }, [view, id, current, sizes, zoom, version, visible]);
+  useEffect(() => () => setView(view, null), [view]);
+
   // Tastatur nur für die aktive Hälfte: Strg+S/Strg+Umschalt+S, Strg+Z/Y, Strg+A, Entf, Esc, Strg +/− Zoom,
   // Werkzeug-Kürzel ohne Strg. Strg+C/X/V laufen über die copy/cut/paste-Ereignisse unten (System-Zwischenablage).
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "s" && e.target instanceof HTMLElement && e.target.closest("[data-field]")) {
+      const c = comboOf(e);
+      if (c === KEYS.save && e.target instanceof HTMLElement && e.target.closest("[data-field]")) {
         e.preventDefault();
         e.target.blur(); // übernimmt den Wert (blur → setField, synchron)
         if (fieldN.current || busy.current) saveSoon.current = true;
@@ -441,44 +738,64 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
         return;
       }
       if (inField(e.target) || e.altKey || e.metaKey) return;
-      const k = e.key.toLowerCase();
-      const act: Record<string, () => void> = e.ctrlKey ? {
-        s: () => void (e.shiftKey ? saveAs() : save().catch(() => {})),
-        z: () => void travel(e.shiftKey ? hist.at + 1 : hist.at - 1),
-        y: () => void travel(hist.at + 1),
-        a: () => {
+      // Tippen bei genau einem ausgewählten Textfeld → Cursor ans Ende, Zeichen einfügen (statt Werkzeug-Kürzel)
+      const [one] = selItems;
+      if (!e.ctrlKey && e.key.length === 1 && selItems.length === 1 && one?.kind === "text") {
+        e.preventDefault();
+        typers.get(selection.page)?.(one.id, e.key);
+        return;
+      }
+      const nudge = (dx: number, dy: number, n: number) => () =>
+        edit((all) => all.map((it) => it.page === selection.page && selection.ids.includes(it.id) ? moveItem(it, dx * n, dy * n) : it));
+      const act = keyMap([
+        [KEYS.save, () => void save().catch(() => {})],
+        [KEYS.saveAs, () => setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" })],
+        [KEYS.undo, () => void travel(hist.at - 1)],
+        [KEYS.redo, () => void travel(hist.at + 1)],
+        [KEYS.selectAll, () => {
           const page = Math.min(current, sizes.length - 1);
-          setSelection({ page, ids: items.filter((it) => it.page === page).map((it) => it.id) });
           setTool("lasso");
-        },
-        "+": () => applyZoom(zoom * 1.2),
-        "=": () => applyZoom(zoom * 1.2),
-        "-": () => applyZoom(zoom / 1.2),
-        f: () => {
+          if (locks.includes(layer)) return;
+          if (layer !== 1) return setSelection({ page, ids: items.filter((it) => it.page === page && layerOf(it) === layer).map((it) => it.id) });
+          const v = version;
+          Promise.all([invoke<number[][]>("orig_objects", { id, index: page }), invoke<unknown[]>("text_paragraphs", { id, index: page })]).then(
+            ([b, ps]) => v === version && setSelection({ page, ids: [...b.map((_, i) => -1 - i), ...ps.map((_, i) => PARA0 - i)] }), () => {});
+        }],
+        [KEYS.zoomIn, () => applyZoom(zoom * 1.2)],
+        [KEYS.zoomOut, () => applyZoom(zoom / 1.2)],
+        [KEYS.search, () => {
           setFind((f) => f ?? { q: "", done: null, hits: [], at: -1, v: version });
           requestAnimationFrame(() => findInput.current?.select());
-        },
-      } : {
-        delete: removeSel, backspace: removeSel,
-        escape: () => {
+        }],
+        [KEYS.del, () => (tsel.length && document.activeElement?.closest("[data-thumb]") ? deletePages(tsel) : removeSel())],
+        [KEYS.escape, () => {
           setLinkFrom(undefined);
+          setTools((s) => ({ ...s, locked: false, mouse: settings.auto ? "lasso" : s.mouse }));
           clearSel();
-        },
-        ...Object.fromEntries(TOOL_LABELS.map(([t, , , key]) => [key, () => setTool(t)])),
-      };
-      const f = act[k];
+          setTextSel(null);
+        }],
+        [KEYS.image, () => void insertImageFile()],
+        [KEYS.rotate, rotate],
+        [KEYS.menu, openMenu],
+        ...TOOL_LABELS.map(([t, , , key]): [string, () => void] => [key, () => chooseTool(t)]),
+        ...LAYERS.map(([l]): [string, () => void] => [String(l), () => switchLayer(l)]),
+        ...QUICK.map(([kind, i, , key]): [string, () => void] => [key, () => quick(kind, i)]),
+        // Pfeiltasten schieben eigene ausgewählte Objekte (Umschalt = 10 pt)
+        ...(selItems.length ? ([["←", -1, 0], ["→", 1, 0], ["↑", 0, -1], ["↓", 0, 1]] as const).flatMap(([key, dx, dy]): [string, () => void][] =>
+          [[key, nudge(dx, dy, 1)], [`Umschalt+${key}`, nudge(dx, dy, 10)]]) : []),
+      ]);
+      const f = act[c];
       if (f) {
         e.preventDefault();
         f();
       }
     };
     const onCopy = (e: ClipboardEvent) => {
-      if (inField(e.target) || !selItems.length || !e.clipboardData) return;
+      if (inField(e.target) || !e.clipboardData) return;
+      const t = copySel(e.type === "cut");
+      if (t === null) return;
       e.preventDefault();
-      clip.items = selItems;
-      clip.text = selItems.map((it) => it.text).filter(Boolean).join("\n");
-      e.clipboardData.setData("text/plain", clip.text);
-      if (e.type === "cut") removeSel(true); // Original-Objekte nicht in der Zwischenablage → nicht ausschneiden
+      e.clipboardData.setData("text/plain", t);
     };
     // Reihenfolge: Bild → eigene Objekte (Text unverändert seit dem Kopieren) → Text als Textfeld
     const onPaste = (e: ClipboardEvent) => {
@@ -505,14 +822,35 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     };
   });
 
-  // Strg+Mausrad zoomt (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche)
+  // Strg+Mausrad und Touchpad-Pinch (Wheel + ctrlKey) zoomen um den Zeiger (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche).
+  // Vorschau per CSS-Transform; Neu-Rendern (setZoom) erst nach WHEEL_MS Ruhe. Ohne Strg scrollt der Container selbst (deltaX + deltaY).
+  const content = useRef<HTMLDivElement>(null);
+  const wz = useRef<{ z0: number; z: number; cx: number; cy: number; px: number; py: number; timer: number }>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      applyZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+      const b = el.getBoundingClientRect();
+      const w = wz.current ??= {
+        z0: zoom, z: zoom, px: e.clientX - b.left, py: e.clientY - b.top,
+        cx: el.scrollLeft + e.clientX - b.left, cy: el.scrollTop + e.clientY - b.top, timer: 0,
+      };
+      w.z = clampZoom(w.z * wheelFactor(e.deltaY, e.deltaMode));
+      if (content.current) {
+        content.current.style.transformOrigin = `${w.cx}px ${w.cy}px`;
+        content.current.style.transform = `scale(${w.z / w.z0})`;
+      }
+      clearTimeout(w.timer);
+      w.timer = window.setTimeout(() => {
+        wz.current = null;
+        setZoom(w.z);
+        requestAnimationFrame(() => {
+          el.scrollTo(scrollAfterZoom(el.scrollLeft, w.px, w.z / w.z0), scrollAfterZoom(el.scrollTop, w.py, w.z / w.z0));
+          if (content.current) content.current.style.transform = "";
+        });
+      }, WHEEL_MS);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -604,87 +942,133 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
     setCurrent(i);
   };
 
-  const btn = "rounded-xs px-2.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
-  const on = (b: boolean) => (b ? " bg-accent-soft text-ink" : "");
   const sep = <span className="mx-1 h-5 w-px bg-line" />;
-  const palette = tool === "marker" ? MARKERS : PRESETS;
-  const pick = tool === "marker" ? marker : preset;
+  const mk = tool === "marker";
+  const pick = mk ? marker : preset;
+  const setPick = mk ? setMarker : setPreset;
+  const hex = (c: Preset["color"]) => "#" + c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
 
   return (
     <div
       className={`min-w-0 flex-col border-t-2 ${marked ? "border-accent" : "border-transparent"} ${visible ? "flex" : "hidden"}`}
       style={style}
-      onPointerDownCapture={onFocus}
+      onPointerMoveCapture={deviceEvent}
+      onPointerDownCapture={(e) => {
+        deviceEvent(e);
+        // erster Maus-Klick in die inaktive Hälfte aktiviert nur diese (Klick folgt nicht); Stift/Finger wirken sofort
+        first.current = onlyActivates(active, e.pointerType);
+        if (first.current) e.stopPropagation();
+        onFocus();
+      }}
+      onClickCapture={(e) => {
+        if (first.current) e.stopPropagation();
+        first.current = false;
+      }}
     >
       <div className="flex flex-wrap items-center gap-1 border-b border-line bg-surface px-3 py-1.5">
-        <button className={btn} onClick={() => void save().catch(() => {})} disabled={!dirty} title="Strg+S">Speichern</button>
-        <button className={btn} onClick={() => void saveAs()} title="Strg+Umschalt+S – Anmerkungen eingebrannt">Speichern unter (flach)</button>
+        <IconBtn icon={sideOpen ? PanelLeftClose : PanelLeftOpen} label={T.sidebar} onClick={onSide} aria-pressed={sideOpen} />
+        <IconBtn icon={Save} label={T.save} keys={KEYS.save} onClick={() => void save().catch(() => {})} disabled={!dirty} />
+        <IconBtn icon={FileOutput} label={T.saveAs} keys={KEYS.saveAs} onClick={() => setSaveDlg({ flat: false, encrypt: false, pw: "", pw2: "" })} />
         {sep}
-        <button className={btn} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} title="Strg+Z">↶</button>
-        <button className={btn} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} title="Strg+Y">↷</button>
+        <IconBtn icon={Undo2} label={T.undo} keys={KEYS.undo} onClick={() => void travel(hist.at - 1)} disabled={hist.at === 0} />
+        <IconBtn icon={Redo2} label={T.redo} keys={KEYS.redo} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
         {sep}
-        {TOOL_LABELS.map(([t, label, title, key]) => (
-          <button key={t} className={btn + on(tool === t)} onClick={() => setTool(t)} title={`${title} (${key.toUpperCase()})`}>{label}</button>
-        ))}
-        <select
-          value=""
-          aria-label="Einfügen"
-          title="Einfügen (auch Strg+V aus der Zwischenablage)"
-          className="rounded-xs bg-transparent px-1.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink"
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "image") void insertImageFile();
-            else if (v === "text") insertText("Text");
-            else if (v) insertShape(v as Item["kind"]);
-          }}
-        >
-          <option value="" disabled hidden>Einfügen …</option>
-          <option value="image">Bild-Datei …</option>
-          <option value="text">Textfeld</option>
-          {SHAPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
-        {sep}
-        {palette.map((p) => (
-          <button
-            key={p.name}
-            title={p.name}
-            onClick={() => (tool === "marker" ? setMarker(p) : setPreset(p))}
-            className={`grid h-7 w-7 place-items-center rounded-pill ring-2 ${p === pick ? "ring-accent" : "ring-transparent"}`}
+        {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
+        {TOOL_LABELS.map(([t, icon, label, key]) => (
+          <IconBtn
+            key={t}
+            icon={icon}
+            label={label}
+            keys={key}
+            className={`${btn} relative${settings.auto ? (tool === t ? " ring-1 ring-inset ring-accent text-ink" : "") : on(tool === t)}`}
+            onClick={(e) => chooseTool(t, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
+            onDoubleClick={() => SHAPE_TOOLS.includes(t) && setTools((s) => ({ ...s, locked: true }))}
           >
-            <span className="block rounded-pill" style={{ width: Math.min(p.size * 3, 18), height: Math.min(p.size * 3, 18), background: `rgb(${p.color.map((c) => c * 255).join(",")})`, outline: "1px solid var(--line-2)" }} />
-          </button>
+            {locked && (tool === t || (settings.auto && penTool === t)) && <Lock size={10} aria-label={T.locked} className="absolute bottom-0.5 right-0.5" />}
+            {settings.auto && penTool === t && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label={T.penMark} />}
+          </IconBtn>
         ))}
         {sep}
-        <select
-          value=""
-          aria-label="Seite einfügen"
-          title="Neue Seite nach der aktuellen"
-          className="rounded-xs bg-transparent px-1.5 py-1 text-sm text-ink-2 hover:bg-raised hover:text-ink"
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "markdown") setMdEdit({ page: Math.min(current + 1, sizes.length), source: "# Titel\n\n", insert: true });
-            else if (v) insertBlank(v === "blank" ? undefined : v);
-          }}
-        >
-          <option value="" disabled hidden>Seite + …</option>
-          <option value="blank">Leer</option>
-          <option value="lined">Liniert</option>
-          <option value="grid">Kariert</option>
-          <option value="dots">Punkte</option>
-          <option value="markdown">Markdown-Seite</option>
-        </select>
-        {md !== null && (
-          <button className={btn} onClick={() => setMdEdit({ page: current, source: md, insert: false })} title="Markdown der aktuellen Seite bearbeiten">Markdown ✎</button>
-        )}
-        <button className={btn} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} title="PDF hinten anhängen">PDF anhängen</button>
-        <button className={btn} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} title="Bild als Seite nach der aktuellen">Bild</button>
-        <button className={btn} onClick={rotate} title="Aktuelle Seite 90° drehen">⟳</button>
-        <button className={btn} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} title="Text gescannter Seiten erkennen (lokal, macht sie durchsuchbar)">OCR</button>
-        <button className={btn} onClick={deletePage} disabled={sizes.length < 2} title="Aktuelle Seite löschen">Seite −</button>
+        {/* Ebenen: große Ein-Klick-Felder (Nummer + Inhaltsicon), Schloss direkt daneben */}
+        {LAYERS.map(([l, icon, label]) => (
+          <span key={l} className={`inline-flex items-center rounded-xs ring-1 ring-inset ring-line${on(layer === l)}`}>
+            <IconBtn icon={icon} label={label} keys={String(l)} className={`${btn} h-9 gap-1 px-2`} onClick={() => switchLayer(l)} aria-pressed={layer === l}>
+              <span className="font-mono text-sm">{l}</span>
+            </IconBtn>
+            <IconBtn icon={locks.includes(l) ? Lock : LockOpen} label={locks.includes(l) ? T.layerUnlock : T.layerLock} aria-pressed={locks.includes(l)}
+              className={`${btn} px-1 ${locks.includes(l) ? "text-ink" : "opacity-50"}`} onClick={() => toggleLock(l)} />
+          </span>
+        ))}
+        <IconBtn icon={ImagePlus} label={T.image} keys={KEYS.image} onClick={() => void insertImageFile()} />
+        <Menu icon={Plus} label={T.insert} keys={KEYS.paste}>
+          <MenuItem icon={ImagePlus} label={T.imageFile} onClick={() => void insertImageFile()} />
+          <MenuItem icon={Type} label={T.textBox} onClick={() => insertText("Text")} />
+          {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
+          <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
+        </Menu>
         {sep}
-        <button className={btn} onClick={() => applyZoom(zoom / 1.2)}>−</button>
+        {/* nur Stifte + Marker: Rahmen = Maus, Punkt = Stift */}
+        <PenBar
+          pens={pal.pens} auto={settings.auto}
+          act={(c, d) => (d === "pen" ? penTool : tool) === c.kind && same(c, c.kind === "pen" ? preset : marker)}
+          onPick={choosePen}
+          onEdit={(old, next) => {
+            // bearbeiteter aktiver Stift zeichnet sofort mit den neuen Werten
+            const cur = old.kind === "pen" ? preset : marker;
+            if (next && same(old, cur)) (old.kind === "pen" ? setPreset : setMarker)({ color: next.color, size: next.size });
+          }}
+          onPens={(pens) => setPal((p) => ({ ...p, pens }))}
+        />
+        {/* Zahnrad: Stärke/Farbe stufenlos, wirkt sofort aufs aktive Werkzeug (gespeicherte Stifte: Rechtsklick in der Leiste) */}
+        <Menu icon={Palette} label={T.style} panel="w-56 gap-2 p-3">
+            <label className="flex flex-col gap-1">
+              {tool === "lasso" ? `${T.textSize} ${pal.text} pt` : `${T.size} ${pick.size.toFixed(1)}`}
+              <input type="range" aria-label={T.size}
+                min={tool === "lasso" ? 6 : 0.5} max={tool === "lasso" ? 72 : mk ? 40 : 20} step={tool === "lasso" ? 1 : 0.1}
+                value={tool === "lasso" ? pal.text : pick.size}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (tool === "lasso") setPal((p) => ({ ...p, text: v }));
+                  else setPick({ ...pick, size: v });
+                }} />
+            </label>
+            <label className="flex items-center justify-between">
+              {T.color}
+              <input type="color" aria-label={T.color} value={hex(pick.color)}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value.slice(1), 16);
+                  setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
+                }} />
+            </label>
+            {(tool === "axes" || penTool === "axes") && (
+              <div className="flex flex-col gap-1 border-t border-line pt-2">
+                <div className="flex gap-1">
+                  {([[false, T.axesXy], [true, T.axesXyz]] as const).map(([v, l]) => (
+                    <button key={l} className={btn + on(axes.xyz === v)} onClick={() => setAxes((a) => ({ ...a, xyz: v }))}>{l}</button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={axes.grid} onChange={(e) => setAxes((a) => ({ ...a, grid: e.target.checked }))} />
+                  {T.grid}
+                </label>
+              </div>
+            )}
+        </Menu>
+        {sep}
+        <Menu icon={FilePlus} label={T.pageAdd}>
+          {PAGE_KINDS.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertBlank(k === "blank" ? undefined : k)} />)}
+          <MenuItem icon={FileCode} label={T.markdownPage}
+            onClick={() => setMdEdit({ page: Math.min(current + 1, sizes.length), source: `# ${T.title}\n\n`, insert: true })} />
+        </Menu>
+        {md !== null && <IconBtn icon={FilePenLine} label={T.markdownEdit} onClick={() => setMdEdit({ page: current, source: md, insert: false, orig: md })} />}
+        <IconBtn icon={Paperclip} label={T.appendPdf} onClick={() => void insertFile(sizes.length, "PDF", ["pdf"])} />
+        <IconBtn icon={FileImage} label={T.imagePage} onClick={() => void insertFile(Math.min(current + 1, sizes.length), "Bild", ["png", "jpg", "jpeg"])} />
+        <IconBtn icon={RotateCw} label={T.rotate} keys={KEYS.rotate} onClick={rotate} />
+        <IconBtn icon={ScanText} label={T.ocr} onClick={() => void pageOp({ op: "ocr" }, (its) => its)} />
+        {sep}
+        <IconBtn icon={ZoomOut} label={T.zoomOut} keys={KEYS.zoomOut} onClick={() => applyZoom(zoom / 1.2)} />
         <span className="w-12 text-center font-mono text-xs text-ink-2">{Math.round(zoom * 100)} %</span>
-        <button className={btn} onClick={() => applyZoom(zoom * 1.2)}>+</button>
+        <IconBtn icon={ZoomIn} label={T.zoomIn} keys={KEYS.zoomIn} onClick={() => applyZoom(zoom * 1.2)} />
         <form
           className="flex items-center gap-1 text-sm text-ink-2"
           onSubmit={(e) => {
@@ -699,7 +1083,8 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
             onChange={(e) => setJump(e.target.value)}
             placeholder={String(current + 1)}
             inputMode="numeric"
-            aria-label="Seite"
+            aria-label={T.page}
+            title={T.page}
             className="w-12 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-center font-mono text-xs text-ink"
           />
           / {sizes.length}
@@ -725,56 +1110,51 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                   step(-1);
                 }
               }}
-              placeholder="Suchen …"
-              aria-label="Suchen"
-              title="Enter = nächster, Umschalt+Enter = vorheriger Treffer, Esc = schließen"
+              placeholder={`${T.search} …`}
+              aria-label={T.search}
+              title={tip(T.search, "Strg+F")}
               className="w-40 rounded-xs border border-line bg-sunken px-1.5 py-0.5 text-xs text-ink"
             />
             <span className="w-14 font-mono text-xs">{find.done === null ? "" : `${find.at + 1}/${hits.length}`}</span>
-            <button type="button" className={btn} onClick={() => setFind(null)} title="Suche schließen (Esc)">×</button>
+            <IconBtn icon={X} label={T.searchClose} keys={KEYS.escape} onClick={() => setFind(null)} />
           </form>
         )}
-        {tool === "link" && linkFrom && <span className="text-sm text-accent">Ziel anklicken (Esc bricht ab)</span>}
-        {error && <span className="ml-auto text-sm text-red-400">{error}</span>}
+        {tool === "link" && linkFrom && <span className="text-sm text-accent">{T.linkTarget}</span>}
       </div>
       <div className="relative flex min-h-0 flex-1">
-        <div className="flex shrink-0 flex-col border-r border-line bg-sunken">
+        {sideOpen && <div className="flex shrink-0 flex-col border-r border-line bg-sunken">
         <div className="flex gap-1 border-b border-line p-1">
-          <button className={btn + on(side === "pages") + " flex-1"} onClick={() => setSide("pages")}>Seiten</button>
-          <button className={btn + on(side === "marks") + " flex-1"} onClick={() => setSide("marks")}>Lesezeichen</button>
+          <IconBtn icon={Files} label={T.pages} className={btn + on(side === "pages") + " flex-1 justify-center"} onClick={() => setSide("pages")} />
+          <IconBtn icon={Bookmark} label={T.marks} className={btn + on(side === "marks") + " flex-1 justify-center"} onClick={() => setSide("marks")} />
         </div>
         {side === "marks" ? (
           <div className="flex min-h-0 w-56 flex-1 flex-col">
             <div className="flex flex-wrap gap-0.5 border-b border-line p-1">
-              <button
-                className={btn}
-                title="Lesezeichen auf die aktuelle Seite"
+              <IconBtn
+                icon={BookmarkPlus}
+                label={T.markAdd}
                 onClick={() => {
-                  const [next, i] = ol.add(marks, `Seite ${current + 1}`, current);
+                  const [next, i] = ol.add(marks, `${T.page} ${current + 1}`, current);
                   void setOutline(next, i).then((ok) => ok && setRenaming(i));
                 }}
-              >+</button>
-              <button className={btn} disabled={markSel < 0} title="Nach oben" onClick={() => void setOutline(...ol.moveUp(marks, markSel))}>↑</button>
-              <button className={btn} disabled={markSel < 0} title="Nach unten" onClick={() => void setOutline(...ol.moveDown(marks, markSel))}>↓</button>
-              <button className={btn} disabled={markSel < 0} title="Ausrücken" onClick={() => void setOutline(...ol.outdent(marks, markSel))}>←</button>
-              <button className={btn} disabled={markSel < 0} title="Einrücken" onClick={() => void setOutline(ol.indent(marks, markSel))}>→</button>
-              <button
-                className={btn}
-                disabled={markSel < 0}
-                title="Ziel = aktuelle Seite"
-                onClick={() => void setOutline(marks.map((m, k) => (k === markSel ? { ...m, page: current } : m)))}
-              >⇥</button>
-              <button className={btn} disabled={markSel < 0} title="Löschen (Unterpunkte rücken hoch)" onClick={() => void setOutline(ol.remove(marks, markSel), -1)}>×</button>
+              />
+              <IconBtn icon={ArrowUp} label={T.up} disabled={markSel < 0} onClick={() => void setOutline(...ol.moveUp(marks, markSel))} />
+              <IconBtn icon={ArrowDown} label={T.down} disabled={markSel < 0} onClick={() => void setOutline(...ol.moveDown(marks, markSel))} />
+              <IconBtn icon={ListIndentDecrease} label={T.outdent} disabled={markSel < 0} onClick={() => void setOutline(...ol.outdent(marks, markSel))} />
+              <IconBtn icon={ListIndentIncrease} label={T.indent} disabled={markSel < 0} onClick={() => void setOutline(ol.indent(marks, markSel))} />
+              <IconBtn icon={LocateFixed} label={T.markTarget} disabled={markSel < 0}
+                onClick={() => void setOutline(marks.map((m, k) => (k === markSel ? { ...m, page: current } : m)))} />
+              <IconBtn icon={Trash} label={T.del} disabled={markSel < 0} onClick={() => void setOutline(ol.remove(marks, markSel), -1)} />
             </div>
             <ul data-scroll className="flex-1 overflow-y-auto py-1 text-sm">
-              {marks.length === 0 && <li className="px-3 py-2 text-ink-2">Keine Lesezeichen</li>}
+              {marks.length === 0 && <li className="px-3 py-2 text-ink-2">{T.noMarks}</li>}
               {marks.map((m, i) => (
                 <li key={i} style={{ paddingLeft: 8 + 14 * m.level }} className={`pr-2 ${i === markSel ? "bg-accent-soft" : ""}`}>
                   {renaming === i ? (
                     <input
                       autoFocus
                       defaultValue={m.title}
-                      aria-label="Titel"
+                      aria-label={T.title}
                       className="w-full rounded-xs border border-line bg-surface px-1 text-ink"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") e.currentTarget.blur();
@@ -793,7 +1173,7 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                   ) : (
                     <button
                       className="w-full truncate py-0.5 text-left text-ink-2 hover:text-ink"
-                      title={m.page >= 0 ? `${m.title} – Seite ${m.page + 1} (Doppelklick: umbenennen)` : `${m.title} – ohne Ziel`}
+                      title={m.page >= 0 ? `${m.title} – ${T.page} ${m.page + 1}` : m.title}
                       onClick={() => {
                         setMarkSel(i);
                         if (m.page >= 0) goTo(m.page);
@@ -819,44 +1199,70 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
               doc={id}
               index={i}
               size={s}
-              version={version}
               active={i === current}
+              selected={tsel.includes(i)}
               dropMark={drop?.to === i && i !== drop.from ? (i < drop.from ? "before" : "after") : undefined}
               onPointerDown={thumbDown(i)}
-              onClick={() => goTo(i)}
+              onClick={clickThumb(i)}
+              onContextMenu={menuThumb(i)}
             />
           ))}
+          {tmenu && tsel.length > 0 && (
+            <div data-tmenu role="menu" className="fixed z-30 flex flex-col rounded-sm border border-line bg-surface p-0.5 shadow-raised"
+              style={{ left: Math.min(tmenu.x, innerWidth - 180), top: Math.min(tmenu.y, innerHeight - 200) }}
+              onClick={() => setTmenu(undefined)}>
+              <IconBtn icon={Trash} label={T.del} keys="Entf" text role="menuitem" className={btn + " px-2"} disabled={tsel.length >= sizes.length} onClick={() => deletePages(tsel)} />
+              <IconBtn icon={Scissors} label={T.cut} text role="menuitem" className={btn + " px-2"} disabled={tsel.length >= sizes.length} onClick={() => void cutPages(tsel)} />
+              <IconBtn icon={Copy} label={T.copy} text role="menuitem" className={btn + " px-2"} onClick={() => void copyPages(tsel)} />
+              <IconBtn icon={ClipboardPaste} label={T.paste} text role="menuitem" className={btn + " px-2"} disabled={!pageClip} onClick={() => void pastePages(tmax)} />
+              <IconBtn icon={CopyPlus} label={T.duplicate} text role="menuitem" className={btn + " px-2"} onClick={() => void duplicatePages(tsel)} />
+              <IconBtn icon={RotateCw} label={T.rotate90} text role="menuitem" className={btn + " px-2"} onClick={() => rotatePages(tsel)} />
+              {tsel.length === 1 && tmenu.md != null && (
+                <IconBtn icon={FilePenLine} label={T.markdownEdit} text role="menuitem" className={btn + " px-2"}
+                  onClick={() => tmenu.md != null && setMdEdit({ page: tmax, source: tmenu.md, insert: false, orig: tmenu.md })} />
+              )}
+            </div>
+          )}
         </nav>
         )}
-        </div>
+        </div>}
+        {openUrl && (
+          <Dialog title={T.openBrowser} ok={T.open} onOk={() => { void invoke("open_url", { url: openUrl }).catch(() => {}); setOpenUrl(undefined); }} onCancel={() => setOpenUrl(undefined)}>
+            <div className="break-all font-mono text-xs text-muted">{openUrl}</div>
+          </Dialog>
+        )}
+        {saveDlg && (
+          <Dialog title={T.saveAs} ok={T.chooseTarget} onOk={() => void saveAs()} onCancel={() => setSaveDlg(undefined)}>
+            <div className="flex gap-1">
+              <IconBtn icon={Flame} label={T.burnIn} aria-pressed={saveDlg.flat} className={btn + on(saveDlg.flat)}
+                onClick={() => setSaveDlg({ ...saveDlg, flat: !saveDlg.flat, error: undefined })} />
+              <IconBtn icon={Lock} label={T.encrypt} aria-pressed={saveDlg.encrypt} className={btn + on(saveDlg.encrypt)}
+                onClick={() => setSaveDlg({ ...saveDlg, encrypt: !saveDlg.encrypt, error: undefined })} />
+            </div>
+            {saveDlg.encrypt && <>
+              <input type="password" autoFocus aria-label={T.password} placeholder={T.password} className={FIELD} value={saveDlg.pw}
+                onChange={(e) => setSaveDlg({ ...saveDlg, pw: e.target.value, error: undefined })} />
+              <input type="password" aria-label={T.passwordRepeat} placeholder={T.passwordRepeat} className={FIELD} value={saveDlg.pw2}
+                onChange={(e) => setSaveDlg({ ...saveDlg, pw2: e.target.value, error: undefined })} />
+            </>}
+            {saveDlg.error && <div role="alert" className="text-red-400">{saveDlg.error}</div>}
+          </Dialog>
+        )}
         {mdEdit && (
-          <div className="absolute inset-4 z-20 flex flex-col gap-2 rounded-xs border border-line bg-surface p-3">
-            <div className="text-sm text-ink-2">
-              {mdEdit.insert ? `Neue Markdown-Seite nach Seite ${mdEdit.page}` : `Markdown-Seite ${mdEdit.page + 1}`} – # Überschrift, - Liste, 1. Liste, &gt; Zitat, ``` Code, ---
-            </div>
-            <textarea
-              autoFocus
-              value={mdEdit.source}
-              aria-label="Markdown"
-              spellCheck={false}
-              className="flex-1 resize-none rounded-xs border border-line bg-sunken p-2 font-mono text-sm text-ink"
-              onChange={(e) => setMdEdit({ ...mdEdit, source: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && e.ctrlKey) void saveMarkdown();
-                if (e.key === "Escape") setMdEdit(undefined);
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <button className={btn} onClick={() => setMdEdit(undefined)}>Abbrechen (Esc)</button>
-              <button className={btn + on(true)} onClick={() => void saveMarkdown()}>Übernehmen (Strg+Enter)</button>
-            </div>
-          </div>
+          <MdEditor
+            title={mdEdit.insert ? `Neue Markdown-Seite nach Seite ${mdEdit.page}` : `Markdown-Seite ${mdEdit.page + 1}`}
+            source={mdEdit.source}
+            onChange={(source) => setMdEdit({ ...mdEdit, source })}
+            onApply={() => void saveMarkdown()}
+            onCancel={() => setMdEdit(undefined)}
+          />
         )}
         <main
           ref={scroller}
           data-scroll
           className="flex-1 overflow-auto"
-          style={{ touchAction: "none" }}
+          // aktive Ebene als farbiger Seitenrand (Inset-Schatten scrollt nicht mit)
+          style={{ touchAction: "none", boxShadow: `inset 4px 0 0 ${LAYER_EDGE[layer]}` }}
           onScroll={onScroll}
           onPointerDownCapture={penEvent}
           onPointerMoveCapture={penEvent}
@@ -867,8 +1273,9 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
           onPointerUp={touchUp}
           onPointerCancel={touchUp}
           onContextMenu={(e) => e.preventDefault()}
+          onDoubleClick={dblPage}
         >
-          <div className="flex w-max min-w-full flex-col gap-4 p-6">
+          <div ref={content} className="flex w-max min-w-full flex-col gap-4 p-6">
             {sizes.map((s, i) => (
               <PageView
                 key={i}
@@ -880,14 +1287,47 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                 items={items.filter((x) => x.page === i)}
                 selected={selection.page === i ? selection.ids : []}
                 tool={tool}
+                penTool={settings.auto ? penTool : tool}
+                typers={typers}
                 preset={preset}
                 marker={marker}
+                axes={axes}
+                textSize={pal.text}
                 settings={settings}
-                onAdd={(it) => edit((all) => [...all, it])}
+                layer={layer}
+                locked={(l) => locks.includes(l)}
+                onLayer={switchLayer}
+                textSel={textSel?.page === i && textSel.v === version ? textSel : null}
+                onTextSel={(t) => {
+                  clearSel();
+                  setTextSel(t && { ...t, page: i, v: version });
+                }}
+                onAdd={(it, raw) => {
+                  const add = (x: Item) => ({ ...x, layer: x.layer ?? (layer === 1 ? kindLayer(x.kind) : layer) });
+                  if (!raw) return edit((all) => [...all, add(it)]);
+                  // erkannte Form ersetzt den Freihand-Strich in einem zweiten Schritt → Strg+Z holt ihn zurück
+                  edit((all) => [...all, add(raw)]);
+                  edit((all) => all.map((x) => (x.id === raw.id ? add(it) : x)));
+                }}
+                onShape={(it) => {
+                  edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }]);
+                  setTextSel(null);
+                  setSelection({ page: i, ids: [it.id] });
+                  setTools(afterShape);
+                }}
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
-                onSelect={(page, ids) => setSelection({ page, ids })}
-                onOrig={(edits, next) => origOp(i, edits, next)}
+                onCrop={(cid, f) => {
+                  const img = items.find((it) => it.id === cid);
+                  if (img) invoke<string>("crop_image", { image: img.image, frac: f })
+                    .then((b64) => edit((all) => all.map((it) => it.id === cid ? cropItem(it, f, b64) : it)))
+                    .catch((e: unknown) => setError(`Zuschneiden fehlgeschlagen: ${String(e)}`));
+                }}
+                onSelect={(page, ids) => {
+                  setTextSel(null);
+                  setSelection({ page, ids });
+                }}
+                onOrig={(edits, next, paras) => origOp(i, edits, next, [], paras)}
                 onText={(edit: TextEdit) => void pageOp({ op: "text", page: i, edit }, (its) => its)}
                 onField={(xref, value) => setField(i, xref, value)}
                 onNewField={(field: NewField) => void pageOp({ op: "newField", page: i, field }, (its) => its)}
@@ -900,11 +1340,19 @@ export function DocView({ id, path, init, visible, active, marked, settings, sty
                   void pageOp({ op: "link", from: linkFrom.page, rect: linkFrom.rect, to: i, x, y }, (its) => its);
                 }}
                 onJump={goTo}
+                onOpenUrl={setOpenUrl}
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
+                onDeleteField={(xref) => void pageOp({ op: "deleteField", page: i, xref }, (its) => its)}
+                onCmd={(c, at) => pageCmd(i, c, at)}
+                onSpace={(moved) => {
+                  if (moved.length) edit((all) => all.map((it) => moved.find((n) => n.id === it.id) ?? it));
+                  setTools(afterShape);
+                }}
               />
             ))}
           </div>
         </main>
+        <Toast msg={error} onClose={closeError} />
       </div>
     </div>
   );

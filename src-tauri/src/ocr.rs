@@ -154,7 +154,7 @@ mod tests {
     fn scan_wird_durchsuchbar() {
         // Text erst als Markdown-Seite setzen, dann als Bild auf eine neue Seite = künstlicher Scan
         let mut src = PdfDocument::new();
-        crate::notebook::render(&mut src, 0, "# Rechnung Nummer 4711\n\n# Hello World Scanner", true).unwrap();
+        crate::notebook::render(&mut src, 0, "# Rechnung Nummer 4711\n\n# Hello World Scanner", true, &[]).unwrap();
         let pix = src.load_page(0).unwrap().to_pixmap(&Matrix::new_scale(3.0, 3.0), &Colorspace::device_gray(), false, false).unwrap();
         let img = Image::from_pixmap(&pix).unwrap();
 
@@ -172,6 +172,10 @@ mod tests {
         }
         assert!(!crate::nav::search(&d, "Rechnung").unwrap().is_empty());
         assert_eq!(crate::pdf::render_png(&d, 0, 0.5).unwrap(), before, "Text muss unsichtbar sein");
+        // unsichtbarer OCR-Text: Seite bleibt Scan (Bild nicht wählbar), Text aber markierbar
+        assert!(crate::pdf::is_scan(&d, 0).unwrap());
+        let chars: String = crate::text::chars(&d, 0).unwrap().into_iter().map(|l| l.text).collect();
+        assert!(chars.contains("4711"), "{chars:?}");
         // zweiter Lauf: Seite hat jetzt Text → nichts doppelt
         assert!(ocr(&mut d).unwrap().unwrap().contains("bereits Text"));
     }

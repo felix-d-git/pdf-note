@@ -1,6 +1,6 @@
 [package]
 name = "pdf-note"
-version = "1.0.0"
+version = "1.2.0"
 description = "Lokaler PDF-Editor, offline"
 authors = ["felix-d-git"]
 license = "AGPL-3.0-only"
@@ -20,6 +20,8 @@ tauri = { version = "2", features = [] }
 # tesseract: OCR (Tesseract + Leptonica aus MuPDF-thirdparty; unter MSVC ohnehin in libmupdf gebaut)
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "tesseract"] }
 tauri-plugin-dialog = "2"
+# eine Instanz: zweiter Start reicht den PDF-Pfad lokal (Mutex + WM_COPYDATA, kein Netz) an die laufende App weiter
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

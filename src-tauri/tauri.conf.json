@@ -18,6 +18,7 @@
         "minWidth": 800,
         "minHeight": 500,
         "backgroundColor": "#0A100F",
+        "visible": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,msImplicitSignin,msLoadOneAuthInBackground,msOneAuthWAM,msForceOneAuthWAM,msEdgeOSAccountInfoSubstrate,msPrimaryOSAccountInfoCache --enable-features=msLazyLoadOneAuthInWebView --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings"
       }
     ],

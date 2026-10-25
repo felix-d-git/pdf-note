@@ -1,7 +1,7 @@
 use mupdf::color::AnnotationColor;
 use mupdf::pdf::{InsertPdfOptions, InsertPosition, LineEndingStyle, PdfAnnotation, PdfDocument, PdfObject, PdfPage};
 use mupdf::pdf::page::{InsertImageOptions, PageImageSource};
-use mupdf::{Colorspace, Document, Error, Image, ImageFormat, Matrix, Point, Rect, Size, TextPageFlags};
+use mupdf::{Colorspace, Document, Error, Image, ImageFormat, Matrix, Point, Quad, Rect, Size, TextPageFlags};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -16,18 +16,69 @@ pub fn page_texts(doc: &Document) -> Result<Vec<String>, Error> {
         .collect()
 }
 
+/// Fehlertexte, auf die das Frontend mit dem Passwort-Dialog reagiert.
+pub const NEED_PASSWORD: &str = "PASSWORT_NOETIG";
+pub const WRONG_PASSWORD: &str = "PASSWORT_FALSCH";
+
+/// Verschlüsselung beim Schreiben.
+#[derive(Clone, Copy)]
+pub enum Crypt<'a> {
+    /// wie gelesen (unverschlüsselt oder fremde Verschlüsselung ohne Öffnen-Passwort)
+    Keep,
+    None,
+    /// AES-256 mit diesem Öffnen-Passwort
+    Aes256(&'a str),
+}
+
+/// Grenze der MuPDF-Schreiboptionen (128-Byte-Puffer inkl. Null; länger panickt dort).
+pub fn check_password(pw: &str) -> Result<(), String> {
+    if pw.is_empty() || pw.len() > 127 || pw.contains('\0') {
+        return Err("Passwort: 1–127 Byte, kein Nullzeichen".into());
+    }
+    Ok(())
+}
+
 /// Liest die PDF komplett in den RAM: hält keinen Datei-Handle offen,
 /// sonst kann Windows die Datei beim Speichern nicht ersetzen.
 pub fn open(path: &Path) -> Result<PdfDocument, String> {
+    open_with(path, None).map(|(d, _)| d)
+}
+
+/// Wie `open`; eine PDF mit Öffnen-Passwort wird entsperrt und im RAM unverschlüsselt weitergeführt
+/// (Undo-Stände und Speicher-Kopie lesen sich so ohne Passwort neu ein). Verschlüsselt wird erst beim Schreiben.
+/// `true` = das Passwort wurde gebraucht.
+pub fn open_with(path: &Path, password: Option<&str>) -> Result<(PdfDocument, bool), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    PdfDocument::from_bytes(&bytes).map_err(|e| e.to_string())
+    let mut doc = PdfDocument::from_bytes(&bytes).map_err(|e| e.to_string())?;
+    if !doc.needs_password().map_err(|e| e.to_string())? {
+        return Ok((doc, false));
+    }
+    let pw = password.ok_or(NEED_PASSWORD)?;
+    if check_password(pw).is_err() || !doc.authenticate(pw).map_err(|e| e.to_string())? {
+        return Err(WRONG_PASSWORD.into());
+    }
+    Ok((PdfDocument::from_bytes(&write(&doc, Crypt::None)?).map_err(|e| e.to_string())?, true))
 }
 
 pub fn to_bytes(doc: &PdfDocument) -> Result<Vec<u8>, String> {
+    write(doc, Crypt::Keep)
+}
+
+pub fn write(doc: &PdfDocument, crypt: Crypt) -> Result<Vec<u8>, String> {
+    use mupdf::pdf::Encryption;
     let mut buf = Vec::new();
     // Garbage-Collect: durch Original-Objekt-Änderungen verwaiste alte Content-Streams fallen weg
     let mut opts = mupdf::pdf::PdfWriteOptions::default();
     opts.set_garbage_level(1).set_compress(true);
+    match crypt {
+        Crypt::Keep => opts.set_encryption(Encryption::Keep),
+        Crypt::None => opts.set_encryption(Encryption::None),
+        Crypt::Aes256(pw) => {
+            check_password(pw)?;
+            // Besitzer- = Öffnen-Passwort: wer öffnen darf, darf alles (Rechte bleiben „alle")
+            opts.set_encryption(Encryption::Aes256).set_user_password(pw).set_owner_password(pw)
+        }
+    };
     doc.write_to_with_options(&mut buf, opts).map_err(|e| e.to_string())?;
     Ok(buf)
 }
@@ -52,10 +103,11 @@ pub fn render_png(doc: &PdfDocument, index: i32, scale: f32) -> Result<Vec<u8>, 
     Ok(out)
 }
 
-/// Scan-Seite: kein Text, nur ein Bild über (fast) die ganze Seite → Seite ist fester Hintergrund,
+/// Scan-Seite: kein sichtbarer Text, nur ein Bild über (fast) die ganze Seite → Seite ist fester Hintergrund,
 /// Elemente darin werden nicht auswählbar.
 pub fn is_scan(doc: &PdfDocument, index: i32) -> Result<bool, Error> {
-    use mupdf::text_page::TextBlockType;
+    use mupdf::text_page::{TextBlockType, TextCharFlags};
+    let drawn = TextCharFlags::FILLED | TextCharFlags::STROKED;
     let page = doc.load_page(index)?;
     let area = |r: Rect| (r.x1 - r.x0).max(0.0) * (r.y1 - r.y0).max(0.0);
     let full = area(page.bounds()?);
@@ -63,6 +115,8 @@ pub fn is_scan(doc: &PdfDocument, index: i32) -> Result<bool, Error> {
     for b in page.to_text_page(TextPageFlags::PRESERVE_IMAGES)?.blocks() {
         match b.r#type() {
             TextBlockType::Image if area(b.bounds()) >= 0.9 * full => images += 1,
+            // unsichtbarer Text (OCR, `3 Tr`) macht aus dem Scan keine Textseite
+            TextBlockType::Text if b.lines().all(|l| l.chars().all(|c| !c.flags().intersects(drawn))) => {}
             _ => return Ok(false),
         }
     }
@@ -80,6 +134,20 @@ pub enum Kind {
     Ellipse,
     Text,
     Image,
+    /// Textmarker auf PDF-Text: Punkte paarweise = Zeilenrechtecke (Highlight mit QuadPoints)
+    Highlight,
+    /// Koordinatensystem im Rechteck der zwei Punkte (`xyz`, `grid`); in der PDF Ink mit eigenem Aussehen
+    Axes,
+}
+
+impl Kind {
+    /// Ebene ohne Angabe (alte PDFs): Geschriebenes → 3, Eingefügtes → 2.
+    fn layer(self) -> u8 {
+        match self {
+            Kind::Ink | Kind::Marker | Kind::Text | Kind::Highlight => 3,
+            _ => 2,
+        }
+    }
 }
 
 /// Eigenes Objekt. Punkte in pt relativ zur linken oberen Seitenecke, dritter Wert = Druck.
@@ -101,6 +169,120 @@ pub struct Item {
     /// Bild: PNG/JPEG als Base64. Liegt in der PDF nur als Stamp-Bild, nicht doppelt in den Daten.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub image: String,
+    /// Ebene 2 = Eingefügtes, 3 = Geschriebenes (1 = PDF-Inhalt, nie ein eigenes Objekt); fehlt → nach Art
+    #[serde(default)]
+    pub layer: u8,
+    /// Bild: Drehung in Grad im Uhrzeigersinn um die Mitte (Punkte = ungedrehtes Rechteck)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rot: f32,
+    /// Koordinatensystem: Schrägbild x/y/z statt x/y
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub xyz: bool,
+    /// Koordinatensystem: Karo-Gitter im Achsenbereich
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub grid: bool,
+    /// Rechteck/Ellipse: Füllfarbe (PDF `/IC`); fehlt → keine Füllung
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<[f32; 3]>,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
+/// Karo-Gitter: 5 mm
+pub const KARO: f32 = 72.0 / 25.4 * 5.0;
+
+/// Linien eines Koordinatensystems (wie `axesLines` im Frontend): (Achsen samt Pfeilspitzen, Gitter), je Polylinie.
+/// xy: Ursprung unten links. xyz (Schrägbild): y rechts, z oben, x schräg nach vorn-links (45°, Verkürzung über `d`).
+pub fn axes_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
+    let (a, b) = (it.points[0], it.points[1]);
+    let (x0, x1, y0, y1) = (a[0].min(b[0]), a[0].max(b[0]), a[1].min(b[1]), a[1].max(b[1]));
+    let len = (it.size * 3.0).max(6.0);
+    let d = if it.xyz { ((x1 - x0).min(y1 - y0) * 0.3).max(len / 2.0) } else { len / 2.0 };
+    let o = [x0 + d, y1 - d];
+    let mut tips = vec![[x1, o[1]], [o[0], y0]];
+    if it.xyz {
+        tips.push([x0, y1]);
+    }
+    let mut axes = Vec::new();
+    for t in tips {
+        let ang = (t[1] - o[1]).atan2(t[0] - o[0]);
+        let leg = |s: f32| {
+            let g = ang + std::f32::consts::PI + s * std::f32::consts::PI / 6.0;
+            [t[0] + len * g.cos(), t[1] + len * g.sin()]
+        };
+        axes.push(vec![o, t]);
+        axes.push(vec![leg(-1.0), t, leg(1.0)]);
+    }
+    let mut grid = Vec::new();
+    if it.grid {
+        // volle Karos bis eine Pfeillänge vor die Spitzen; Obergrenze gegen absichtlich riesige Rechtecke
+        let n = |v: f32| ((v / KARO + 1e-4).floor().max(0.0) as usize).min(1000);
+        let (nx, ny) = (n(x1 - len - o[0]), n(o[1] - y0 - len));
+        let (gx, gy) = (o[0] + nx as f32 * KARO, o[1] - ny as f32 * KARO);
+        for k in 1..=nx {
+            let x = o[0] + k as f32 * KARO;
+            grid.push(vec![[x, o[1]], [x, gy]]);
+        }
+        for k in 1..=ny {
+            let y = o[1] - k as f32 * KARO;
+            grid.push(vec![[o[0], y], [gx, y]]);
+        }
+    }
+    (axes, grid)
+}
+
+/// Gitterlinien dünner als die Achsen
+fn grid_width(w: f32) -> f32 {
+    (w * 0.3).max(0.3)
+}
+
+/// Aussehen des Koordinatensystems: MuPDF zeichnet Ink nur in einer Breite → nach `update` eigenes
+/// Erscheinungsbild (Gitter dünn, Achsen in Strichbreite), in PDF-Koordinaten, BBox = Rect.
+fn axes_ap(doc: &mut PdfDocument, page: &PdfPage, annot: &PdfAnnotation, it: &Item) -> Result<(), Error> {
+    let bad = || Error::InvalidArgument("Annotation ohne Rect".into());
+    let b = page.bounds()?;
+    let inv = page.ctm()?.invert().ok_or_else(bad)?;
+    let mut ap = annot.object().get_dict("AP")?.ok_or_else(bad)?;
+    let rect = annot.object().get_dict("Rect")?.ok_or_else(bad)?;
+    let w = it.width.clamp(0.1, 200.0);
+    let [r, g, bl] = it.color.map(|v| v.clamp(0.0, 1.0));
+    let (axes, grid) = axes_lines(it);
+    let mut s = format!("q /H gs {r} {g} {bl} RG 1 J 1 j\n");
+    for (lines, lw) in [(grid, grid_width(w)), (axes, w)] {
+        if lines.is_empty() {
+            continue;
+        }
+        s += &format!("{lw} w\n");
+        for l in lines {
+            for (i, p) in l.iter().enumerate() {
+                let (x, y) = inv.transform_xy(b.x0 + p[0], b.y0 + p[1]);
+                s += &format!("{x:.2} {y:.2} {}\n", if i == 0 { "m" } else { "l" });
+            }
+        }
+        s += "S\n";
+    }
+    s += "Q";
+    let mut gs = doc.new_dict()?;
+    let op = PdfObject::new_real(it.opacity.clamp(0.05, 1.0))?;
+    gs.dict_put("CA", op.clone())?;
+    gs.dict_put("ca", op)?;
+    let mut egs = doc.new_dict()?;
+    egs.dict_put("H", gs)?;
+    let mut res = doc.new_dict()?;
+    res.dict_put("ExtGState", egs)?;
+    let mut form = doc.new_dict()?;
+    form.dict_put("Type", PdfObject::new_name("XObject")?)?;
+    form.dict_put("Subtype", PdfObject::new_name("Form")?)?;
+    form.dict_put("BBox", rect)?;
+    form.dict_put("Resources", res)?;
+    let n = doc.add_stream(&mupdf::Buffer::from_bytes(s.as_bytes())?, Some(&form), false)?;
+    ap.dict_put("N", n)
 }
 
 const IMAGE_MAX: usize = 64 << 20; // Base64-Länge
@@ -110,17 +292,23 @@ impl Item {
         let need = if self.kind == Kind::Ink || self.kind == Kind::Marker { 1 } else { 2 };
         (0..pages).contains(&self.page)
             && self.points.len() >= need
+            && (self.kind != Kind::Highlight || self.points.len() % 2 == 0)
+            && self.rot.is_finite()
             && self.points.len() <= 100_000
             && self.text.len() <= 100_000
             && (self.kind == Kind::Image) == !self.image.is_empty()
             && self.image.len() <= IMAGE_MAX
-            && self.points.iter().flatten().chain(&self.color).chain([&self.opacity, &self.size, &self.width]).all(|v| v.is_finite())
+            && self.points.iter().flatten().chain(&self.color).chain([&self.opacity, &self.size, &self.width]).chain(self.fill.iter().flatten()).all(|v| v.is_finite())
+    }
+
+    pub fn layer(&self) -> u8 {
+        if matches!(self.layer, 2 | 3) { self.layer } else { self.kind.layer() }
     }
 
     /// Gespeicherte Daten: auf 0,01 gerundet, damit die PDF nicht unnötig wächst.
     fn data(&self) -> String {
         let r = |v: f32| (v * 100.0).round() / 100.0;
-        let it = Item { points: self.points.iter().map(|p| p.map(r)).collect(), image: String::new(), ..self.clone() };
+        let it = Item { points: self.points.iter().map(|p| p.map(r)).collect(), image: String::new(), layer: self.layer(), ..self.clone() };
         serde_json::to_string(&it).unwrap_or_default()
     }
 }
@@ -167,6 +355,31 @@ pub fn image_b64(bytes: &[u8]) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// Zuschnitt (destruktiv): Bild-Base64 → nur der Ausschnitt `[l, t, r, b]` (Anteile 0…1) als PNG-Base64.
+/// PNG, weil die Crate kein JPEG schreibt; gespeicherte Stamps kommen ohnehin als PNG zurück (`stamp_png`).
+pub fn crop_b64(b64: &str, f: [f32; 4]) -> Result<String, String> {
+    use base64::Engine;
+    let e = base64::engine::general_purpose::STANDARD;
+    let [l, t, r, b] = f.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { -1.0 });
+    if l < 0.0 || t < 0.0 || r <= l || b <= t {
+        return Err("Zuschnitt ungültig".into());
+    }
+    let src = Image::from_bytes(&e.decode(b64).map_err(|e| e.to_string())?).and_then(|i| i.to_pixmap()).map_err(|e| e.to_string())?;
+    let (w, h) = (src.width() as f32, src.height() as f32);
+    let (x0, y0) = (((l * w).round() as usize).min(w as usize - 1), ((t * h).round() as usize).min(h as usize - 1));
+    let (x1, y1) = (((r * w).round() as usize).clamp(x0 + 1, w as usize), ((b * h).round() as usize).clamp(y0 + 1, h as usize));
+    let cs = src.color_space().ok_or("Bild ohne Farbraum")?;
+    let mut out = mupdf::Pixmap::new_with_w_h(&cs, (x1 - x0) as i32, (y1 - y0) as i32, src.alpha()).map_err(|e| e.to_string())?;
+    let (n, ss, ds) = (src.n() as usize, src.stride() as usize, out.stride() as usize);
+    let row = (x1 - x0) * n;
+    for y in y0..y1 {
+        out.samples_mut()[(y - y0) * ds..][..row].copy_from_slice(&src.samples()[y * ss + x0 * n..][..row]);
+    }
+    let mut png = Vec::new();
+    out.write_to(&mut png, ImageFormat::PNG).map_err(|e| format!("Bild nicht zuschneidbar: {e}"))?;
+    Ok(e.encode(png))
+}
+
 fn add_stamp(doc: &mut PdfDocument, page: &mut PdfPage, rect: Rect, it: &Item) -> Result<PdfAnnotation, Error> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
@@ -196,6 +409,32 @@ fn add_stamp(doc: &mut PdfDocument, page: &mut PdfPage, rect: Rect, it: &Item) -
     obj.dict_put("Name", PdfObject::new_name(STAMP_NAME)?)?;
     obj.dict_put("AP", ap)?;
     Ok(a)
+}
+
+/// Gedrehtes Bild: MuPDF erzeugt das Stamp-Aussehen bei `update` neu (BBox 0 0 1 1) → danach ersetzen.
+/// BBox = ungedrehte Größe, /Matrix dreht; PDF bildet die gedrehte BBox auf Rect ab (gleich groß → nur verschoben).
+fn rotate_stamp(doc: &mut PdfDocument, annot: &PdfAnnotation, it: &Item) -> Result<(), Error> {
+    let bad = || Error::InvalidArgument("Stamp ohne Aussehen".into());
+    let mut ap = annot.object().get_dict("AP")?.ok_or_else(bad)?;
+    let res = ap.get_dict("N")?.ok_or_else(bad)?.get_dict("Resources")?.ok_or_else(bad)?;
+    let (w, h) = ((it.points[0][0] - it.points[1][0]).abs().max(0.01), (it.points[0][1] - it.points[1][1]).abs().max(0.01));
+    let arr = |vs: &[f32]| -> Result<PdfObject, Error> {
+        let mut a = doc.new_array()?;
+        for &v in vs {
+            a.array_push(PdfObject::new_real(v)?)?;
+        }
+        Ok(a)
+    };
+    let (s, c) = (-it.rot.to_radians()).sin_cos(); // PDF: y nach oben → Uhrzeigersinn = negativer Winkel
+    let (bbox, m) = (arr(&[0.0, 0.0, w, h])?, arr(&[c, s, -s, c, 0.0, 0.0])?);
+    let mut form = doc.new_dict()?;
+    form.dict_put("Type", PdfObject::new_name("XObject")?)?;
+    form.dict_put("Subtype", PdfObject::new_name("Form")?)?;
+    form.dict_put("BBox", bbox)?;
+    form.dict_put("Matrix", m)?;
+    form.dict_put("Resources", res)?;
+    let n = doc.add_stream(&mupdf::Buffer::from_bytes(format!("q {w} 0 0 {h} 0 0 cm /I Do Q").as_bytes())?, Some(&form), false)?;
+    ap.dict_put("N", n)
 }
 
 /// Stamp-Bild zurück als PNG. Nur was `add_stamp` schreibt (8 bit, Grau/RGB, optional SMask);
@@ -247,7 +486,7 @@ fn stamp_png(annot: &PdfAnnotation) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
-fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item) -> Result<(), Error> {
+fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Option<PdfObject>; 2]) -> Result<(), Error> {
     let b = page.bounds()?;
     let pt = |p: &[f32; 3]| Point::new(b.x0 + p[0], b.y0 + p[1]);
     let rect = || {
@@ -265,20 +504,45 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item) -> Result<(), 
             a
         }
         Kind::Rect => page.add_rect_annotation(rect())?,
+        Kind::Axes => {
+            let (axes, grid) = axes_lines(it);
+            page.add_ink_annotation(axes.iter().chain(&grid).map(|l| l.iter().map(|p| pt(&[p[0], p[1], 0.0]))))?
+        }
         Kind::Ellipse => page.add_circle_annotation(rect())?,
         Kind::Text => {
             let mut a = page.add_free_text_annotation(rect(), &it.text)?;
             a.set_default_appearance("Helv", it.size.clamp(2.0, 200.0), Some(rgb(it.color)))?;
             a
         }
-        Kind::Image => add_stamp(doc, page, rect(), it)?,
+        Kind::Image => {
+            // gedreht: umschließendes Rechteck der gedrehten Ecken um die Mitte
+            let r = rect();
+            let (cx, cy, hw, hh) = ((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0, (r.x1 - r.x0) / 2.0, (r.y1 - r.y0) / 2.0);
+            let (s, c) = it.rot.to_radians().sin_cos();
+            let (ex, ey) = (hw * c.abs() + hh * s.abs(), hw * s.abs() + hh * c.abs());
+            add_stamp(doc, page, Rect::new(cx - ex, cy - ey, cx + ex, cy + ey), it)?
+        }
+        Kind::Highlight => {
+            let mut a = page.create_annotation(mupdf::pdf::PdfAnnotationType::Highlight)?;
+            let quads: Vec<Quad> = it.points.chunks_exact(2).map(|r| {
+                let (p, q) = (pt(&r[0]), pt(&r[1]));
+                let (x0, y0, x1, y1) = (p.x.min(q.x), p.y.min(q.y), p.x.max(q.x), p.y.max(q.y));
+                Quad::new(Point::new(x0, y0), Point::new(x1, y0), Point::new(x0, y1), Point::new(x1, y1))
+            }).collect();
+            a.set_quad_points(quads)?;
+            a
+        }
     };
     match it.kind {
         Kind::Image => {}
+        Kind::Highlight => annot.set_color(rgb(it.color))?,
         Kind::Text => annot.set_border_width(0.0)?,
         _ => {
             annot.set_color(rgb(it.color))?;
             annot.set_border_width(width)?;
+            if let (Some(f), Kind::Rect | Kind::Ellipse) = (it.fill, it.kind) {
+                annot.set_interior_color(rgb(f))?;
+            }
         }
     }
     // Stamp: Erscheinungsbild wird nicht neu erzeugt → Deckkraft fest 1
@@ -286,19 +550,127 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item) -> Result<(), 
         annot.set_opacity(it.opacity.clamp(0.05, 1.0))?;
     }
     annot.object().dict_put(OWN_KEY, PdfObject::new_string(&it.data())?)?;
+    if let Some(g) = &groups[(it.layer() - 2) as usize] {
+        annot.object().dict_put("OC", g.clone())?;
+    }
     annot.update()?;
     if it.kind == Kind::Marker {
         set_multiply(&annot)?;
     }
+    if it.kind == Kind::Image && it.rot != 0.0 {
+        rotate_stamp(doc, &annot, it)?;
+    }
+    if it.kind == Kind::Axes {
+        axes_ap(doc, page, &annot, it)?;
+    }
     Ok(())
 }
 
+/// Namen der PDF-Ebenen (Optional Content Groups) für Ebene 2 und 3; Ebene 1 (PDF-Inhalt) hat keine.
+pub const LAYER_NAMES: [&str; 2] = ["PDF Note – Elemente", "PDF Note – Notizen"];
+
+fn name_of(o: &PdfObject) -> Result<Option<String>, Error> {
+    o.get_dict("Name")?.map(|n| n.as_string()).transpose()
+}
+
+fn remove_own_groups(arr: &mut PdfObject) -> Result<(), Error> {
+    for i in (0..arr.len()? as i32).rev() {
+        if let Some(o) = arr.get_array(i)? {
+            if name_of(&o)?.is_some_and(|n| LAYER_NAMES.contains(&n.as_str())) {
+                arr.array_delete(i)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Eigene Ebenen aus `/OCProperties` entfernen (fremde bleiben); keine Ebene mehr übrig → `/OCProperties` weg.
+/// Verwaiste OCG-Objekte räumt das Garbage-Collect beim Schreiben weg.
+fn clear_layers(doc: &PdfDocument) -> Result<(), Error> {
+    let mut cat = doc.catalog()?;
+    let Some(props) = cat.get_dict("OCProperties")? else { return Ok(()) };
+    if let Some(d) = props.get_dict("D")? {
+        for k in ["Order", "ON", "OFF", "Locked"] {
+            if let Some(mut a) = d.get_dict(k)? {
+                remove_own_groups(&mut a)?;
+            }
+        }
+    }
+    match props.get_dict("OCGs")? {
+        Some(mut a) => {
+            remove_own_groups(&mut a)?;
+            if a.len()? == 0 {
+                cat.dict_delete("OCProperties")?;
+            }
+        }
+        None => cat.dict_delete("OCProperties")?,
+    }
+    Ok(())
+}
+
+/// Ebenen 2/3 als OCGs neu anlegen (nur benötigte); vorher eigene alte entfernen → nie doppelt.
+fn add_layers(doc: &mut PdfDocument, need: [bool; 2]) -> Result<[Option<PdfObject>; 2], Error> {
+    clear_layers(doc)?;
+    let mut out = [None, None];
+    if !need.contains(&true) {
+        return Ok(out);
+    }
+    let mut cat = doc.catalog()?;
+    let mut props = match cat.get_dict("OCProperties")? { Some(p) => p, None => doc.new_dict()? };
+    let mut ocgs = match props.get_dict("OCGs")? { Some(a) => a, None => doc.new_array()? };
+    let mut d = match props.get_dict("D")? { Some(d) => d, None => doc.new_dict()? };
+    let mut order = match d.get_dict("Order")? { Some(a) => a, None => doc.new_array()? };
+    for (i, name) in LAYER_NAMES.iter().enumerate() {
+        if !need[i] {
+            continue;
+        }
+        let mut g = doc.new_dict()?;
+        g.dict_put("Type", PdfObject::new_name("OCG")?)?;
+        g.dict_put("Name", PdfObject::new_string(name)?)?;
+        let g = doc.add_object(&g)?;
+        ocgs.array_push(g.clone())?;
+        order.array_push(g.clone())?;
+        out[i] = Some(g);
+    }
+    d.dict_put("Order", order)?;
+    props.dict_put("D", d)?;
+    props.dict_put("OCGs", ocgs)?;
+    cat.dict_put("OCProperties", props)?;
+    Ok(out)
+}
+
+/// Ebenen-Name (OCG aus `/OC`) je Annotation einer Seite – für Tests.
+pub fn annotation_layers(doc: &PdfDocument, index: i32) -> Result<Vec<Option<String>>, Error> {
+    let page = doc.load_pdf_page(index)?;
+    let mut out = Vec::new();
+    for a in page.annotations() {
+        out.push(match a.object().get_dict("OC")? { Some(g) => name_of(&g)?, None => None });
+    }
+    Ok(out)
+}
+
+/// Namen aller OCGs des Dokuments – für Tests.
+pub fn layer_names(doc: &PdfDocument) -> Result<Vec<String>, Error> {
+    let mut out = Vec::new();
+    if let Some(a) = doc.catalog()?.get_dict("OCProperties")?.map(|p| p.get_dict("OCGs")).transpose()?.flatten() {
+        for i in 0..a.len()? as i32 {
+            if let Some(o) = a.get_array(i)? {
+                out.push(name_of(&o)?.unwrap_or_default());
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Fügt jedes Objekt als eigene Annotation ein (Radierer löscht später ganze Objekte).
-pub fn add_items(doc: &mut PdfDocument, items: &[Item]) -> Result<(), String> {
+/// `layers`: Annotationen per `/OC` den PDF-Ebenen „Elemente“/„Notizen“ zuordnen (nicht beim Einbrennen).
+pub fn add_items(doc: &mut PdfDocument, items: &[Item], layers: bool) -> Result<(), String> {
     let count = doc.page_count().map_err(|e| e.to_string())?;
     if let Some(bad) = items.iter().find(|it| !it.valid(count)) {
         return Err(format!("ungültiges Objekt auf Seite {}", bad.page + 1));
     }
+    let need = if layers { [2, 3].map(|l| items.iter().any(|it| it.layer() == l)) } else { [false; 2] };
+    let groups = add_layers(doc, need).map_err(|e| e.to_string())?;
     for page_no in 0..count {
         let on_page: Vec<_> = items.iter().filter(|it| it.page == page_no).collect();
         if on_page.is_empty() {
@@ -307,7 +679,7 @@ pub fn add_items(doc: &mut PdfDocument, items: &[Item]) -> Result<(), String> {
         let run = || -> Result<(), Error> {
             let mut page = doc.load_pdf_page(page_no)?;
             for it in on_page {
-                add_item(doc, &mut page, it)?;
+                add_item(doc, &mut page, it, &groups)?;
             }
             page.update()?;
             Ok(())
@@ -328,6 +700,7 @@ pub fn take_own(doc: &PdfDocument, pages: std::ops::Range<i32>) -> Result<Vec<It
             let data = a.object().get_dict(OWN_KEY)?.map(|d| d.as_string()).transpose()?;
             if let Some(mut it) = data.and_then(|d| serde_json::from_str::<Item>(&d).ok()) {
                 it.page = page_no;
+                it.layer = it.layer();
                 if it.kind == Kind::Image {
                     use base64::Engine;
                     it.image = stamp_png(&a).map(|p| base64::engine::general_purpose::STANDARD.encode(p)).unwrap_or_default();
@@ -349,13 +722,13 @@ pub fn take_own(doc: &PdfDocument, pages: std::ops::Range<i32>) -> Result<Vec<It
 }
 
 /// Speichern: Kopie des Arbeitsdokuments + Objekte, optional eingebrannt (flach), atomar nach `path`.
-pub fn save(doc: &PdfDocument, items: &[Item], path: &Path, flat: bool) -> Result<(), String> {
+pub fn save(doc: &PdfDocument, items: &[Item], path: &Path, flat: bool, crypt: Crypt) -> Result<(), String> {
     let mut copy = PdfDocument::from_bytes(&to_bytes(doc)?).map_err(|e| e.to_string())?;
-    add_items(&mut copy, items)?;
+    add_items(&mut copy, items, !flat)?;
     if flat {
         copy.bake(true, false).map_err(|e| e.to_string())?;
     }
-    save_atomic(&copy, path)
+    save_atomic(&copy, path, crypt)
 }
 
 pub fn tmp_path(path: &Path) -> std::path::PathBuf {
@@ -364,9 +737,10 @@ pub fn tmp_path(path: &Path) -> std::path::PathBuf {
 
 /// Schreibt komplett neu in `<pdf>.pdfnote-tmp`, auf die Platte gezwungen, und benennt dann um:
 /// bricht das Schreiben ab (Absturz, Kill, Strom), bleibt das Original heil.
-pub fn save_atomic(doc: &PdfDocument, path: &Path) -> Result<(), String> {
+/// Verschlüsselt wird schon im RAM → auch die Temp-Datei liegt nie im Klartext auf der Platte.
+pub fn save_atomic(doc: &PdfDocument, path: &Path, crypt: Crypt) -> Result<(), String> {
     use std::io::Write;
-    let buf = to_bytes(doc)?;
+    let buf = write(doc, crypt)?;
     let tmp = tmp_path(path);
     let res = std::fs::File::create(&tmp)
         .and_then(|mut f| f.write_all(&buf).and_then(|_| f.sync_all()))
@@ -392,17 +766,44 @@ pub enum PageOp {
     InsertFile { at: i32, path: std::path::PathBuf },
     Rotate { index: i32 },
     Delete { index: i32 },
+    /// Mehrere Seiten in einem Schritt (Mehrfachauswahl)
+    RotatePages { indices: Vec<i32> },
+    DeletePages { indices: Vec<i32> },
+    /// Seiten aus der Seiten-Zwischenablage (`copy_pages`) vor `at` einfügen
+    Paste { at: i32 },
     Move { from: i32, to: i32 },
     /// Original-Objekte einer Seite verschieben/skalieren/löschen
     Orig { page: i32, edits: Vec<crate::orig::Edit> },
+    /// Ebene 1 gemeinsam (ein Schritt): Original-Objekte `edits`, dazu Absätze `paras` um (`dx`, `dy`) verschieben bzw. löschen
+    Layer1 {
+        page: i32,
+        #[serde(default)]
+        edits: Vec<crate::orig::Edit>,
+        #[serde(default)]
+        paras: Vec<usize>,
+        #[serde(default)]
+        dx: f32,
+        #[serde(default)]
+        dy: f32,
+        #[serde(default)]
+        delete: bool,
+    },
     /// Original-Textabsatz ändern/verschieben
     Text { page: i32, edit: crate::text::TextEdit },
     /// Formularfeld ausfüllen
     Field { page: i32, xref: i32, value: String },
     /// Formularfeld anlegen
     NewField { page: i32, field: crate::form::NewField },
+    /// Formularfeld löschen
+    DeleteField { page: i32, xref: i32 },
     /// Markdown-Seite einfügen (`insert`) oder neu setzen
-    Markdown { page: i32, source: String, insert: bool },
+    Markdown {
+        page: i32,
+        source: String,
+        insert: bool,
+        #[serde(default)]
+        formulas: Vec<crate::notebook::Formula>,
+    },
     /// Lesezeichen komplett ersetzen
     Outline { marks: Vec<crate::notebook::Mark> },
     /// Anker-Link `rect` auf `from` → Stelle (`to`, `x`, `y`) samt Rücksprung-Link
@@ -449,13 +850,7 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
             let is_pdf = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
             if is_pdf {
-                let src = PdfDocument::from_bytes(&bytes).map_err(err)?;
-                let annots = page_annots(&src).map_err(err)?;
-                let opts = InsertPdfOptions { target: InsertPosition::Before(*at as usize), ..Default::default() };
-                let n = doc.insert_pdf(&src, opts).map_err(err)?.page_count as i32;
-                copy_annots(doc, *at, &annots).map_err(err)?;
-                let items = take_own(doc, *at..*at + n).map_err(err)?;
-                Ok(OpResult { inserted: n, items, warning: None })
+                insert_pdf_bytes(doc, &bytes, *at).map_err(err)
             } else {
                 let img = Image::from_bytes(&bytes).map_err(err)?;
                 let (w, h) = (img.width() as f32, img.height() as f32);
@@ -486,6 +881,32 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             doc.delete_page(*index).map_err(err)?;
             Ok(OpResult::default())
         }
+        PageOp::RotatePages { indices } => {
+            let ix = page_set(indices, count)?;
+            for i in ix {
+                let mut page = doc.load_pdf_page(i).map_err(err)?;
+                let r = page.rotation().map_err(err)?;
+                page.set_rotation((r + 90).rem_euclid(360)).map_err(err)?;
+            }
+            Ok(OpResult::default())
+        }
+        PageOp::DeletePages { indices } => {
+            let ix = page_set(indices, count)?;
+            if ix.len() as i32 == count {
+                return Err("letzte Seite kann nicht gelöscht werden".into());
+            }
+            for i in ix.into_iter().rev() {
+                doc.delete_page(i).map_err(err)?;
+            }
+            Ok(OpResult::default())
+        }
+        PageOp::Paste { at } => {
+            let bytes = PAGE_CLIP.lock().map_err(|e| e.to_string())?.clone().ok_or("Zwischenablage leer")?;
+            if !at_ok(*at) {
+                return Err("ungültige Position".into());
+            }
+            insert_pdf_bytes(doc, &bytes, *at).map_err(err)
+        }
         PageOp::Move { from, to } => {
             if !idx_ok(*from) || !idx_ok(*to) {
                 return Err("ungültige Seite".into());
@@ -497,8 +918,15 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
             crate::orig::edit(doc, *page, edits)?;
             Ok(OpResult::default())
         }
-        PageOp::Markdown { page, source, insert } => {
-            let warning = crate::notebook::render(doc, *page, source, *insert)?;
+        PageOp::Layer1 { page, edits, paras, dx, dy, delete } => {
+            if !edits.is_empty() {
+                crate::orig::edit(doc, *page, edits)?;
+            }
+            let warning = if paras.is_empty() { None } else { crate::text::move_paras(doc, *page, paras, *dx, *dy, *delete)? };
+            Ok(OpResult { warning, ..Default::default() })
+        }
+        PageOp::Markdown { page, source, insert, formulas } => {
+            let warning = crate::notebook::render(doc, *page, source, *insert, formulas)?;
             Ok(OpResult { inserted: *insert as i32, warning, ..Default::default() })
         }
         PageOp::Outline { marks } => crate::notebook::set_outline(doc, marks).map(|_| OpResult::default()),
@@ -508,8 +936,48 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
-        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::Unlink { .. } => Err("ungültige Seite".into()),
+        PageOp::DeleteField { page, xref } if idx_ok(*page) => crate::form::delete(doc, *page, *xref).map(|_| OpResult::default()),
+        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } => Err("ungültige Seite".into()),
     }
+}
+
+/// Sortierte, eindeutige Seitenindizes; leer oder außerhalb → Fehler.
+fn page_set(indices: &[i32], count: i32) -> Result<Vec<i32>, String> {
+    let mut v = indices.to_vec();
+    v.sort_unstable();
+    v.dedup();
+    if v.is_empty() || v.iter().any(|i| !(0..count).contains(i)) {
+        return Err("ungültige Seite".into());
+    }
+    Ok(v)
+}
+
+/// Seiten-Zwischenablage (app-intern, über Dokumente/Tabs hinweg): eine PDF aus den kopierten Seiten samt eigenen Objekten.
+static PAGE_CLIP: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+
+/// Kopiert die Seiten `pages` samt ihrer (noch nicht gespeicherten) Objekte in die Seiten-Zwischenablage.
+pub fn copy_pages(doc: &PdfDocument, pages: &[i32], items: &[Item]) -> Result<(), String> {
+    let count = doc.page_count().map_err(|e| e.to_string())?;
+    let keep = page_set(pages, count)?;
+    let mut copy = PdfDocument::from_bytes(&to_bytes(doc)?).map_err(|e| e.to_string())?;
+    let own: Vec<Item> = items.iter().filter(|it| keep.contains(&it.page)).cloned().collect();
+    add_items(&mut copy, &own, true)?;
+    for i in (0..count).rev().filter(|i| !keep.contains(i)) {
+        copy.delete_page(i).map_err(|e| e.to_string())?;
+    }
+    *PAGE_CLIP.lock().map_err(|e| e.to_string())? = Some(write(&copy, Crypt::None)?);
+    Ok(())
+}
+
+/// Fügt die Seiten der PDF `bytes` vor `at` ein (mit Annotationen; eigene Objekte kommen als `items` zurück).
+fn insert_pdf_bytes(doc: &mut PdfDocument, bytes: &[u8], at: i32) -> Result<OpResult, Error> {
+    let src = PdfDocument::from_bytes(bytes)?;
+    let annots = page_annots(&src)?;
+    let opts = InsertPdfOptions { target: InsertPosition::Before(at as usize), ..Default::default() };
+    let n = doc.insert_pdf(&src, opts)?.page_count as i32;
+    copy_annots(doc, at, &annots)?;
+    let items = take_own(doc, at..at + n)?;
+    Ok(OpResult { inserted: n, items, warning: None })
 }
 
 /// `Annots` je Seite, ohne `/P`: sonst zieht das Grafting die Quellseite als Waisenobjekt mit.
@@ -559,7 +1027,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new() }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, fill: None }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -571,6 +1039,8 @@ mod tests {
             item(Kind::Arrow, two.clone()),
             item(Kind::Rect, two.clone()),
             item(Kind::Ellipse, two.clone()),
+            item(Kind::Axes, two.clone()),
+            Item { xyz: true, grid: true, ..item(Kind::Axes, vec![[100.0, 500.0, 0.5], [250.0, 650.0, 0.5]]) },
             Item { size: 14.0, text: "Grüße €".into(), ..item(Kind::Text, vec![[300.0, 400.0, 0.5], [450.0, 430.0, 0.5]]) },
         ]
     }
@@ -585,14 +1055,15 @@ mod tests {
         doc.new_page(Size::A4).unwrap();
         let items = all_kinds();
         let path = tmp("kinds");
-        save(&doc, &items, &path, false).unwrap();
+        save(&doc, &items, &path, false, Crypt::Keep).unwrap();
         // Arbeitsdokument bleibt unverändert (gespeichert wird eine Kopie)
         assert!(annotations(&doc, 0).unwrap().is_empty());
 
         let back = open(&path).unwrap();
         let types: Vec<_> = annotations(&back, 0).unwrap().into_iter().map(|(t, own)| (t, own.is_some())).collect();
         assert_eq!(types, vec![
-            (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true), (T::FreeText, true),
+            (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true),
+            (T::Ink, true), (T::Ink, true), (T::FreeText, true),
         ]);
         let taken = take_own(&back, 0..1).unwrap();
         assert_eq!(taken, items, "Objekte gehen beim Zurücklesen nicht verloren");
@@ -601,6 +1072,35 @@ mod tests {
         // Textfelder nutzen Helvetica (Base-14) → keine eingebettete Schrift, Subsetting unnötig
         let raw = std::fs::read(&path).unwrap();
         assert!(!raw.windows(8).any(|w| w == b"FontFile"), "Schrift eingebettet");
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Form mit Füllung: `/IC` + `/CA` bleiben erhalten, Aussehen enthält einen Füllbefehl (sonst zeigt Edge nur den Rahmen).
+    #[test]
+    fn form_fuellung_und_deckkraft() {
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let two = vec![[100.0, 100.0, 0.5], [200.0, 160.0, 0.5]];
+        let mine = vec![
+            Item { fill: Some([0.0, 1.0, 0.0]), opacity: 0.5, ..item(Kind::Rect, two.clone()) },
+            Item { fill: Some([1.0, 1.0, 0.0]), opacity: 0.5, ..item(Kind::Ellipse, two.clone()) },
+            item(Kind::Rect, two),
+        ];
+        let path = tmp("fill");
+        save(&doc, &mine, &path, false, Crypt::Keep).unwrap();
+        let back = open(&path).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let aps: Vec<String> = page.annotations().map(|a| {
+            let n = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap();
+            String::from_utf8_lossy(&n.read_stream().unwrap()).into_owned()
+        }).collect();
+        let fills = |s: &str| s.lines().any(|l| matches!(l.trim(), "f" | "B" | "f*" | "B*" | "b" | "b*"));
+        assert!(fills(&aps[0]) && fills(&aps[1]), "Füllbefehl fehlt: {aps:?}");
+        assert!(!fills(&aps[2]), "ungefüllte Form darf nicht füllen: {:?}", aps[2]);
+        let ic = |i: usize| page.annotations().nth(i).unwrap().object().get_dict("IC").unwrap().is_some();
+        assert!(ic(0) && !ic(2));
+        drop(page);
+        assert_eq!(take_own(&back, 0..1).unwrap(), mine);
         let _ = std::fs::remove_file(path);
     }
 
@@ -634,7 +1134,7 @@ mod tests {
         doc.new_page(Size::A4).unwrap();
         let img = Item { image: b64.encode(&png), ..item(Kind::Image, vec![[50.0, 50.0, 0.5], [350.0, 250.0, 0.5]]) };
         let path = tmp("stamp");
-        save(&doc, std::slice::from_ref(&img), &path, false).unwrap();
+        save(&doc, std::slice::from_ref(&img), &path, false, Crypt::Keep).unwrap();
         let back = open(&path).unwrap();
         let ann = annotations(&back, 0).unwrap();
         assert_eq!(ann.len(), 1);
@@ -652,8 +1152,16 @@ mod tests {
         let got = Image::from_bytes(&b64.decode(&taken[0].image).unwrap()).unwrap().to_pixmap().unwrap();
         assert_eq!(got.samples(), &want[..], "Pixel inkl. Alpha");
         assert_eq!(Item { image: String::new(), ..taken[0].clone() }, Item { image: String::new(), ..img });
+        // Zuschnitt: rechte zwei Spalten der unteren Zeile → Pixel inkl. Alpha übernommen
+        let cut = Image::from_bytes(&b64.decode(crop_b64(&b64.encode(&png), [0.34, 0.5, 1.0, 1.0]).unwrap()).unwrap()).unwrap().to_pixmap().unwrap();
+        assert_eq!((cut.width(), cut.height()), (2, 1));
+        assert_eq!(cut.samples(), &want[16..24], "Zuschnitt-Pixel");
+        assert!(crop_b64(&b64.encode(&png), [0.5, 0.0, 0.5, 1.0]).is_err(), "leerer Zuschnitt");
+        assert!(crop_b64(&b64.encode(&png), [f32::NAN, 0.0, 1.0, 1.0]).is_err());
+        // Rand rundet auf volle Breite → trotzdem 1 px, kein Panic
+        assert!(crop_b64(&b64.encode(&png), [0.9, 0.9, 1.0, 1.0]).is_ok());
         // Bild ohne Daten / Daten ohne Bild abgelehnt
-        assert!(add_items(&mut doc, &[item(Kind::Image, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]])]).is_err());
+        assert!(add_items(&mut doc, &[item(Kind::Image, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]])], true).is_err());
         let _ = std::fs::remove_file(path);
     }
 
@@ -664,7 +1172,7 @@ mod tests {
         let png = tmp("scan-img").with_extension("png");
         std::fs::write(&png, test_png().0).unwrap();
         page_op(&mut doc, &PageOp::InsertFile { at: 1, path: png.clone() }).unwrap();
-        save(&doc, &all_kinds()[6..], &png.with_extension("pdf"), true).unwrap();
+        save(&doc, &all_kinds()[6..], &png.with_extension("pdf"), true, Crypt::Keep).unwrap();
         let text = open(&png.with_extension("pdf")).unwrap();
         assert!(!is_scan(&doc, 0).unwrap(), "leere Seite");
         assert!(is_scan(&doc, 1).unwrap(), "Bildseite");
@@ -677,7 +1185,7 @@ mod tests {
     fn marker_multipliziert() {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
-        add_items(&mut doc, &all_kinds()[1..2]).unwrap();
+        add_items(&mut doc, &all_kinds()[1..2], true).unwrap();
         let page = doc.load_pdf_page(0).unwrap();
         let a = page.annotations().next().unwrap();
         let gs = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap()
@@ -687,13 +1195,39 @@ mod tests {
     }
 
     #[test]
+    fn highlight_und_gedrehtes_bild() {
+        use base64::Engine;
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let hl = Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(Kind::Highlight, vec![[10.0, 10.0, 0.5], [90.0, 22.0, 0.5], [10.0, 24.0, 0.5], [60.0, 36.0, 0.5]]) };
+        let png = test_png().0;
+        // 300×200, 90° im Uhrzeigersinn um (200, 150): linke obere Kachel (rot) landet rechts oben
+        let img = Item { rot: 90.0, image: base64::engine::general_purpose::STANDARD.encode(&png), ..item(Kind::Image, vec![[50.0, 50.0, 0.5], [350.0, 250.0, 0.5]]) };
+        let path = tmp("hl-rot");
+        save(&doc, &[hl.clone(), img], &path, false, Crypt::Keep).unwrap();
+        let back = open(&path).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let a = page.annotations().next().unwrap();
+        assert_eq!(a.r#type().unwrap(), T::Highlight);
+        assert_eq!(a.quad_points().unwrap().len(), 2, "ein Quad je Zeile");
+        let pix = back.load_page(0).unwrap().to_pixmap(&Matrix::IDENTITY, &Colorspace::device_rgb(), false, true).unwrap();
+        assert_eq!(&pix.pixel(250, 60).unwrap().components()[..3], &[255, 0, 0], "Bild gedreht");
+        let taken = take_own(&back, 0..1).unwrap();
+        assert_eq!(taken[0], hl);
+        assert_eq!(taken[1].rot, 90.0);
+        // ungerade Punktzahl ist kein Highlight
+        assert!(add_items(&mut doc, &[item(Kind::Highlight, vec![[1.0, 1.0, 0.5], [2.0, 2.0, 0.5], [3.0, 3.0, 0.5]])], true).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn fremde_annotationen_bleiben() {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
         let mut page = doc.load_pdf_page(0).unwrap();
         page.add_ink_annotation([[Point::new(1.0, 1.0), Point::new(5.0, 5.0)]]).unwrap();
         page.update().unwrap();
-        add_items(&mut doc, &all_kinds()[..1]).unwrap();
+        add_items(&mut doc, &all_kinds()[..1], true).unwrap();
         // kaputte eigene Daten → bleibt als fremde Annotation stehen
         let mut page = doc.load_pdf_page(0).unwrap();
         let bad = page.add_rect_annotation(Rect::new(1.0, 1.0, 9.0, 9.0)).unwrap();
@@ -708,10 +1242,10 @@ mod tests {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
         let ok = item(Kind::Ink, vec![[1.0, 1.0, 0.5]]);
-        assert!(add_items(&mut doc, &[Item { page: 5, ..ok.clone() }]).is_err());
-        assert!(add_items(&mut doc, &[Item { points: vec![[f32::NAN, 0.0, 0.5]], ..ok.clone() }]).is_err());
-        assert!(add_items(&mut doc, &[item(Kind::Rect, vec![[1.0, 1.0, 0.5]])]).is_err());
-        assert!(add_items(&mut doc, &[ok]).is_ok());
+        assert!(add_items(&mut doc, &[Item { page: 5, ..ok.clone() }], true).is_err());
+        assert!(add_items(&mut doc, &[Item { points: vec![[f32::NAN, 0.0, 0.5]], ..ok.clone() }], true).is_err());
+        assert!(add_items(&mut doc, &[item(Kind::Rect, vec![[1.0, 1.0, 0.5]])], true).is_err());
+        assert!(add_items(&mut doc, &[ok], true).is_ok());
     }
 
     #[test]
@@ -719,12 +1253,48 @@ mod tests {
         let mut doc = PdfDocument::new();
         doc.new_page(Size::A4).unwrap();
         let path = tmp("flat");
-        save(&doc, &all_kinds(), &path, true).unwrap();
+        save(&doc, &all_kinds(), &path, true, Crypt::Keep).unwrap();
         let back = open(&path).unwrap();
         assert!(annotations(&back, 0).unwrap().is_empty(), "keine Annotationen mehr");
         // Inhalt jetzt im Seiteninhalt: Text des Textfelds ist Seitentext
         assert!(page_texts(&back).unwrap()[0].contains("Grüße"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ebenen_als_ocgs() {
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let mut items = all_kinds();
+        items[2].layer = 3; // Linie manuell in Ebene 3
+        let path = tmp("ocg");
+        save(&doc, &items, &path, false, Crypt::Keep).unwrap();
+        // zweimal speichern → keine doppelten OCGs
+        let back = open(&path).unwrap();
+        let taken = take_own(&back, 0..1).unwrap();
+        assert_eq!(taken, items, "Ebene bleibt erhalten");
+        save(&back, &taken, &path, false, Crypt::Keep).unwrap();
+        let again = open(&path).unwrap();
+        assert_eq!(layer_names(&again).unwrap(), LAYER_NAMES.to_vec());
+        let want: Vec<_> = items.iter().map(|it| Some(LAYER_NAMES[(it.layer() - 2) as usize].to_string())).collect();
+        assert_eq!(annotation_layers(&again, 0).unwrap(), want);
+        // nur Ebene 3 benutzt → nur „Notizen“
+        save(&doc, &items[..1], &path, false, Crypt::Keep).unwrap();
+        assert_eq!(layer_names(&open(&path).unwrap()).unwrap(), vec![LAYER_NAMES[1]]);
+        // Einbrennen → keine Ebenen
+        let flat = tmp("ocg-flat");
+        save(&again, &taken, &flat, true, Crypt::Keep).unwrap();
+        assert!(layer_names(&open(&flat).unwrap()).unwrap().is_empty());
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(flat);
+    }
+
+    #[test]
+    fn ebene_fehlt_nach_objektart() {
+        let old: Item = serde_json::from_str(r#"{"page":0,"kind":"rect","color":[0,0,0],"opacity":1,"size":1,"width":1,"points":[]}"#).unwrap();
+        assert_eq!((old.layer, old.layer()), (0, 2));
+        assert_eq!(Item { kind: Kind::Marker, ..old.clone() }.layer(), 3);
+        assert_eq!(Item { layer: 3, ..old }.layer(), 3);
     }
 
     #[test]
@@ -752,7 +1322,7 @@ mod tests {
         p0.add_rect_annotation(Rect::new(1.0, 1.0, 9.0, 9.0)).unwrap();
         p0.update().unwrap();
         let src = tmp("insert-src");
-        save(&other, &[Item { page: 1, ..all_kinds()[0].clone() }], &src, false).unwrap();
+        save(&other, &[Item { page: 1, ..all_kinds()[0].clone() }], &src, false, Crypt::Keep).unwrap();
         let r = page_op(&mut doc, &PageOp::InsertFile { at: 0, path: src.clone() }).unwrap();
         assert_eq!(r.inserted, 2);
         assert_eq!(r.items.len(), 1);
@@ -770,7 +1340,7 @@ mod tests {
 
         // alles zusammen speichern und neu öffnen
         let out = tmp("ops-out");
-        save(&doc, &[], &out, false).unwrap();
+        save(&doc, &[], &out, false, Crypt::Keep).unwrap();
         assert_eq!(open(&out).unwrap().page_count().unwrap(), 4);
         for p in [src, png, out] {
             let _ = std::fs::remove_file(p);

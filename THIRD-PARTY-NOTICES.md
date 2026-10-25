@@ -8,17 +8,20 @@
 | Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`) |
 | Tauri (`tauri`, `tauri-build`, `@tauri-apps/api`, `@tauri-apps/cli`) | 2.x | MIT OR Apache-2.0 | Desktop-Shell (WebView2) |
 | Tauri Dialog-Plugin (`tauri-plugin-dialog`, `@tauri-apps/plugin-dialog`), darunter `rfd` 0.16 (MIT) | 2.8 | MIT OR Apache-2.0 | Datei-Öffnen-Dialog, Nachfrage beim Schließen |
+| Tauri Single-Instance-Plugin (`tauri-plugin-single-instance`) | 2.5 | MIT OR Apache-2.0 | eine Instanz: zweiter Start reicht den PDF-Pfad lokal an die laufende App |
 | serde | 1.0 | MIT OR Apache-2.0 | Objekte vom Frontend deserialisieren |
 | serde_json | 1.0 | MIT OR Apache-2.0 | eigene Objekte als JSON in der Annotation (`/PDFNote`) |
 | base64 | 0.22 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
 | perfect-freehand (Stephen Ruiz Ltd) | 1.2.3 | MIT | Ink-Glättung + Druckbreite |
 | React, React DOM | 19.3 | MIT | UI |
+| lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.59 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
 | Zod | 4.6 | MIT | Validierung an Grenzen |
+| MathJax (`mathjax-full`, MathJax Consortium), inkl. MathJax-TeX-Schriftdaten | 3.2.2 | Apache-2.0 | Formeln auf Markdown-Seiten: TeX → SVG → PDF-Pfade, lokal gebündelt (nur TeX-Eingabe, SVG-Ausgabe, base+ams; Abhängigkeiten speech-rule-engine/mhchemparser/mj-context-menu nicht gebündelt) |
 | Tailwind CSS | 4.3 | MIT | Styles (Build) |
 | Manrope (Mikhail Sharanda), Paket `@fontsource-variable/manrope` | 5.3.0 | SIL OFL 1.1 (Schrift), MIT (Paket) | UI-Schrift, lokal gebündelt |
 | IBM Plex Mono (IBM), Paket `@fontsource/ibm-plex-mono` | 5.3.0 | SIL OFL 1.1 (Schrift), MIT (Paket) | Mono-Schrift, lokal gebündelt |
 
-Nur zur Entwicklung (nicht ausgeliefert): Vite, Vitest, TypeScript, ESLint, typescript-eslint (MIT bzw. Apache-2.0).
+Nur zur Entwicklung (nicht ausgeliefert): Vite, Vitest, jsdom (DOM für Komponententests), TypeScript, ESLint, typescript-eslint (MIT bzw. Apache-2.0).
 
 ## Nur Spikes (`spikes/`, Wegwerfcode)
 

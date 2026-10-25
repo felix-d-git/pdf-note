@@ -247,6 +247,56 @@ pub fn create(doc: &mut PdfDocument, page: i32, f: &NewField) -> Result<(), Stri
     run().map_err(|e| e.to_string())?
 }
 
+/// Verweis auf Objekt `num` aus einem Array entfernen (indirekte Einträge).
+fn drop_ref(arr: &mut PdfObject, num: i32) -> Result<(), Error> {
+    let mut i = 0;
+    while i < arr.len()? as i32 {
+        let hit = match arr.get_array(i)? {
+            Some(e) => e.is_indirect()? && e.as_indirect()? == num,
+            None => false,
+        };
+        if hit {
+            arr.array_delete(i)?;
+        } else {
+            i += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Feld löschen: Widget von der Seite und aus `/AcroForm /Fields` (bzw. `/Kids` der Gruppe) nehmen –
+/// sonst bliebe ein Feld ohne Widget (bzw. ein Widget-Rest) zurück.
+pub fn delete(doc: &mut PdfDocument, page: i32, xref: i32) -> Result<(), String> {
+    let run = || -> Result<Result<(), String>, Error> {
+        let mut p = doc.load_pdf_page(page)?;
+        let Some(w) = p.load_widget(xref)? else { return Ok(Err("Feld nicht gefunden".into())) };
+        let parent = w.annotation().object().get_dict("Parent")?;
+        let mut owner = parent.as_ref().and_then(|x| x.resolve().ok().flatten()).or(parent.clone());
+        let mut lists = Vec::new();
+        if let Some(a) = doc.catalog()?.get_dict("AcroForm")? {
+            lists.extend(a.get_dict("Fields")?);
+        }
+        if let Some(o) = owner.as_mut() {
+            lists.extend(o.get_dict("Kids")?);
+        }
+        for mut l in lists {
+            drop_ref(&mut l, xref)?;
+        }
+        // Gruppe ohne Knöpfe → Gruppe selbst auch aus den Feldern
+        if let (Some(o), Some(pn)) = (&owner, parent.as_ref().filter(|x| x.is_indirect().unwrap_or(false))) {
+            if o.get_dict("Kids")?.is_none_or(|k| k.len().unwrap_or(0) == 0) {
+                if let Some(mut f) = doc.catalog()?.get_dict("AcroForm")?.and_then(|a| a.get_dict("Fields").ok().flatten()) {
+                    drop_ref(&mut f, pn.as_indirect()?)?;
+                }
+            }
+        }
+        p.delete_widget(w)?;
+        p.update()?;
+        Ok(Ok(()))
+    };
+    run().map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,6 +340,28 @@ mod tests {
         // Gruppe teilt den Wert: beide Knöpfe melden „B"
         assert!(fs.iter().filter(|f| f.kind == "radio").all(|f| f.value == "B"));
         assert_eq!(fs.iter().find(|f| f.kind == "list").unwrap().value, "b");
+    }
+
+    #[test]
+    fn feld_loeschen() {
+        let mut doc = sample();
+        let f = |kind: &str, name: &str, rect: [f32; 4]| NewField { kind: kind.into(), name: name.into(), rect, options: vec![] };
+        create(&mut doc, 0, &f("check", "H", [20.0, 60.0, 32.0, 72.0])).unwrap();
+        create(&mut doc, 0, &f("text", "T", [20.0, 80.0, 90.0, 95.0])).unwrap();
+        let h = fields(&doc, 0).unwrap().into_iter().find(|f| f.name == "H").unwrap().xref;
+        delete(&mut doc, 0, h).unwrap();
+        assert!(delete(&mut doc, 0, h).is_err(), "zweites Mal");
+        // Radiogruppe: beide Knöpfe weg → Gruppe nicht mehr in Fields
+        let radios: Vec<i32> = fields(&doc, 0).unwrap().iter().filter(|f| f.kind == "radio").map(|f| f.xref).collect();
+        for r in radios {
+            delete(&mut doc, 0, r).unwrap();
+        }
+        let doc = PdfDocument::from_bytes(&crate::pdf::to_bytes(&doc).unwrap()).unwrap();
+        let names: Vec<_> = fields(&doc, 0).unwrap().into_iter().map(|f| f.name).collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(names.contains(&"T".to_string()) && names.contains(&"Liste".to_string()));
+        let acro = doc.catalog().unwrap().get_dict("AcroForm").unwrap().unwrap().get_dict("Fields").unwrap().unwrap();
+        assert_eq!(acro.len().unwrap(), 2, "Fields: Radio-Gruppe und Haken müssen raus");
     }
 
     #[test]
