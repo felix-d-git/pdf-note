@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 jobs:
   merge:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.actor.login == 'dependabot[bot]' && startsWith(github.event.workflow_run.head_branch, 'dependabot/')
@@ -32,3 +33,5 @@ jobs:
           [ "$open" = 0 ] || { echo "$open Checks offen/rot -> warten"; exit 0; }
           case "$state" in success*|"pending 0") ;; *) echo "Status $state -> warten"; exit 0;; esac
           gh pr merge "$pr" --squash --delete-branch --match-head-commit "$SHA"
+          # Sofort releasen statt bis 00:30 warten: der Pi-Watchdog installiert es binnen einer Stunde.
+          gh workflow run auto-release.yml
