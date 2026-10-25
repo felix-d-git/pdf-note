@@ -40,7 +40,7 @@ fn b64(bytes: &[u8]) -> String {
 }
 
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new() }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0, xyz: false, grid: false, fill: None }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -85,8 +85,10 @@ fn alle_schreibpfade() {
             item(last, Kind::Ellipse, two.clone(), ""),
             item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz ÄÖÜ"),
             pdf::Item { image: b64(&pdf::render_png(&doc, 0, 0.1).unwrap()), ..item(0, Kind::Image, two.clone(), "") },
+            pdf::Item { image: b64(&pdf::render_png(&doc, 0, 0.1).unwrap()), rot: 30.0, ..item(0, Kind::Image, two.clone(), "") },
+            pdf::Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(last, Kind::Highlight, vec![[20.0, 300.0, 0.5], [200.0, 312.0, 0.5], [20.0, 314.0, 0.5], [90.0, 326.0, 0.5]], "") },
         ]);
-        pdf::save(&doc, &items, &copy, false).unwrap();
+        pdf::save(&doc, &items, &copy, false, pdf::Crypt::Keep).unwrap();
         assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{name}: Zusatzdatei neben der PDF");
 
         let back = pdf::open(&copy).unwrap();
@@ -99,11 +101,13 @@ fn alle_schreibpfade() {
         assert_eq!(got.len(), want.len(), "{name}: Objektanzahl");
         let fg: Vec<_> = (0..pages).map(|i| pdf::annotations(&back, i).unwrap().len()).collect();
         assert_eq!(fg, foreign, "{name}: fremde Annotationen");
+        assert!(got.iter().any(|it| it.kind == Kind::Highlight && it.points.len() == 4), "{name}: Highlight");
+        assert!(got.iter().any(|it| it.kind == Kind::Image && (it.rot - 30.0).abs() < 0.01), "{name}: Bild-Drehung");
 
         // Speichern unter (flach): keine eigenen Annotationen mehr, Original-Kopie unverändert
         let flat = tmp.join(format!("flach-{}", src.file_name().unwrap().to_string_lossy()));
         let saved = std::fs::read(&copy).unwrap();
-        pdf::save(&back, &got, &flat, true).unwrap();
+        pdf::save(&back, &got, &flat, true, pdf::Crypt::Keep).unwrap();
         assert_eq!(std::fs::read(&copy).unwrap(), saved, "{name}: Speichern unter ändert Quelle");
         let f = pdf::open(&flat).unwrap();
         assert!(pdf::take_own(&f, 0..pages).unwrap().is_empty(), "{name}: flach hat eigene Objekte");
@@ -120,7 +124,7 @@ fn alle_schreibpfade() {
         assert_eq!(r.items.len(), items.len(), "{name}: Objekte der angehängten PDF");
         pdf::page_op(&mut d, &PageOp::Delete { index: pages }).unwrap();
         let ops = tmp.join(format!("seiten-{}", src.file_name().unwrap().to_string_lossy()));
-        pdf::save(&d, &[], &ops, false).unwrap();
+        pdf::save(&d, &[], &ops, false, pdf::Crypt::Keep).unwrap();
         let o = pdf::open(&ops).unwrap();
         assert_eq!(o.page_count().unwrap(), 2 * pages, "{name}: Seitenzahl nach Operationen");
         assert_eq!(page_texts(&o).unwrap()[pages as usize..], text[..], "{name}: angehängter Text");
@@ -130,6 +134,34 @@ fn alle_schreibpfade() {
         n += 1;
     }
     assert!(n > 0, "keine PDFs in {}", dir.display());
+}
+
+/// v1.0.0-Fehler „Striche verschwinden": 50 kurze Striche/Formen gemischt (wie aus dem Frontend-Test) →
+/// Speichern → Neu-Öffnen → alle 50 da.
+#[test]
+#[ignore]
+fn fuenfzig_schnelle_striche() {
+    use pdf::Kind;
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs/word.pdf");
+    let tmp = std::env::temp_dir().join("pdf-note-test-50");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let copy = tmp.join("word.pdf");
+    std::fs::copy(&src, &copy).expect("testdata/pdfs/word.pdf fehlt");
+    let doc = pdf::open(&copy).unwrap();
+    let before = pdf::take_own(&doc, 0..doc.page_count().unwrap()).unwrap().len();
+    let kinds = [Kind::Ink, Kind::Rect, Kind::Ink, Kind::Line, Kind::Ink, Kind::Ellipse, Kind::Arrow];
+    let items: Vec<_> = (0..50)
+        .map(|i| {
+            let (x, y) = (30.0 + (i % 10) as f32 * 50.0, 60.0 + (i / 10) as f32 * 60.0);
+            item(0, kinds[i % kinds.len()], vec![[x, y, 0.5], [x + 20.0, y + 15.0, 0.6], [x + 35.0, y + 5.0, 0.5]], "")
+        })
+        .collect();
+    pdf::save(&doc, &items, &copy, false, pdf::Crypt::Keep).unwrap();
+    let back = pdf::open(&copy).unwrap();
+    let got = pdf::take_own(&back, 0..back.page_count().unwrap()).unwrap();
+    assert_eq!(got.len(), before + 50, "Objektanzahl nach Neu-Öffnen");
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1, "Zusatzdatei neben der PDF");
 }
 
 /// Tabs: zwei Dokumente gleichzeitig im selben Thread; Seitenoperation + Undo in einem lässt das andere unberührt,
@@ -155,8 +187,8 @@ fn zwei_dokumente_gleichzeitig() {
     std::fs::copy(&first, &pa).unwrap();
     std::fs::copy(&second, &pb).unwrap();
 
-    let (mut a, sa) = Open::open(pa.clone()).unwrap();
-    let (mut b, sb) = Open::open(pb.clone()).unwrap();
+    let (mut a, sa) = Open::open(pa.clone(), None).unwrap();
+    let (mut b, sb) = Open::open(pb.clone(), None).unwrap();
     let (na, nb) = (sa.sizes.len(), sb.sizes.len());
 
     // A: Seite einfügen und rückgängig; B: Seite einfügen und behalten
@@ -169,12 +201,12 @@ fn zwei_dokumente_gleichzeitig() {
 
     let mut items_a = sa.items.clone();
     items_a.push(item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "nur A"));
-    a.save(&items_a, None, false, false).unwrap();
-    b.save(&sb.items, None, false, false).unwrap();
+    a.save(&items_a, None, false, false, None).unwrap();
+    b.save(&sb.items, None, false, false, None).unwrap();
     drop((a, b));
 
-    let (_, ra) = Open::open(pa).unwrap();
-    let (_, rb) = Open::open(pb).unwrap();
+    let (_, ra) = Open::open(pa, None).unwrap();
+    let (_, rb) = Open::open(pb, None).unwrap();
     assert_eq!(ra.sizes.len(), na, "A: Seitenzahl");
     assert_eq!(rb.sizes.len(), nb + 1, "B: Seitenzahl");
     assert_eq!(ra.items.len(), items_a.len(), "A: Objekte");
@@ -191,7 +223,7 @@ fn kill_kind() {
     let p = std::path::PathBuf::from(p);
     let doc = pdf::open(&p).unwrap();
     loop {
-        pdf::save(&doc, &[], &p, false).unwrap();
+        pdf::save(&doc, &[], &p, false, pdf::Crypt::Keep).unwrap();
     }
 }
 
@@ -229,7 +261,7 @@ fn kill_waehrend_speichern() {
         let back = pdf::open(&copy).unwrap_or_else(|e| panic!("Runde {i}: PDF kaputt: {e}"));
         assert_eq!(page_texts(&back).unwrap(), text, "Runde {i}: Text");
     }
-    pdf_note_lib::Open::open(copy.clone()).unwrap();
+    pdf_note_lib::Open::open(copy.clone(), None).unwrap();
     assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1, "Temp-Rest nach dem Öffnen");
     println!("{}: 10 Kills, {mid} davon mitten im Schreiben, PDF heil", src.display());
 }
@@ -268,7 +300,7 @@ fn original_objekte() {
             edits.push(Edit { index: b.len() - 1, matrix: None });
         }
         pdf::page_op(&mut doc, &PageOp::Orig { page, edits }).unwrap();
-        pdf::save(&doc, &[], &copy, false).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
 
         let doc = pdf::open(&copy).unwrap();
         let after = orig::boxes(&doc, page).unwrap();
@@ -318,10 +350,10 @@ fn text_bearbeiten() {
             // Absatzreihenfolge ändert sich nach jeder Änderung → Index neu bestimmen
             let old = if para == body { &before[body].text } else { &before[single].text };
             let i = paragraphs(&doc, 0).unwrap().iter().position(|p| &p.text == old).unwrap();
-            let edit = TextEdit { para: i, text: text.clone(), dx: 0.0, dy: 0.0, size: None, font: None };
+            let edit = TextEdit { para: i, text: text.clone(), ..Default::default() };
             warnings.push(pdf::page_op(&mut doc, &PageOp::Text { page: 0, edit }).unwrap().warning);
         }
-        pdf::save(&doc, &[], &copy, false).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
 
         let doc = pdf::open(&copy).unwrap();
         let after = paragraphs(&doc, 0).unwrap();
@@ -340,6 +372,109 @@ fn text_bearbeiten() {
         assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
         assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
         println!("{f}: Absätze {body}+{single} geändert, Hinweise {warnings:?}, {} → {} Bytes", original.len(), std::fs::metadata(&copy).unwrap().len());
+    }
+}
+
+/// Direkt-Bearbeitung wie im Frontend (Text im Absatz tippen, Breitengriff, Farbe in der Mini-Leiste): ein `page_op`
+/// mit Text + Breite + Farbe → speichern → neu öffnen: Text geändert und schmaler umbrochen, Rest der Seite gleich.
+#[test]
+#[ignore]
+fn text_direkt() {
+    use pdf::PageOp;
+    use pdf_note_lib::text::{paragraphs, TextEdit};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-direkt");
+    let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    for f in ["latex.pdf", "word.pdf"] {
+        let src = dir.join(f);
+        let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(f);
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let before = paragraphs(&doc, 0).unwrap();
+        let body = before.iter().position(|p| p.text.split_whitespace().count() >= 8 && p.bbox[3] - p.bbox[1] > 1.8 * p.size).unwrap();
+        let p = &before[body];
+        // Wort in der Mitte eingefügt (Cursor an Klickstelle), Breite auf 70 %, rot
+        let mid = p.text.char_indices().filter(|(_, c)| *c == ' ').nth(3).unwrap().0;
+        // nur die erste Hälfte behalten: schmaler, aber nicht höher → überdeckt den nächsten Absatz nicht
+        let half = p.text.char_indices().filter(|(_, c)| *c == ' ').nth(p.text.split_whitespace().count() / 2).map_or(p.text.len(), |(i, _)| i);
+        let text = format!("{} direkt{}", &p.text[..mid], &p.text[mid..half.max(mid)]);
+        let width = 0.7 * (p.bbox[2] - p.bbox[0]);
+        let edit = TextEdit { para: body, text: text.clone(), width: Some(width), color: Some([1.0, 0.0, 0.0]), ..Default::default() };
+        pdf::page_op(&mut doc, &PageOp::Text { page: 0, edit }).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = paragraphs(&doc, 0).unwrap();
+        let all = words(&page_texts(&doc).unwrap()[0]);
+        assert!(all.contains(&words(&text)), "{f}: neuer Text fehlt: {text}
+{all}");
+        let q = after.iter().find(|q| words(&q.text).contains("direkt")).expect("geänderter Absatz fehlt");
+        assert!(q.bbox[2] - q.bbox[0] <= width + 1.0, "{f}: Breite {} > {width}", q.bbox[2] - q.bbox[0]);
+        assert!(q.color[0] > 0.9 && q.color[1] < 0.1, "{f}: Farbe {:?}", q.color);
+        for (i, o) in before.iter().enumerate().filter(|(i, _)| *i != body) {
+            assert!(after.iter().any(|a| a.text == o.text), "{f}: Absatz {i} verändert: {}", o.text);
+        }
+        let t = page_texts(&doc).unwrap();
+        for i in 1..texts.len() {
+            assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
+        }
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
+    }
+}
+
+/// Mehrere Absätze gemeinsam verschieben (Ebene 1, ein `page_op`) → speichern → neu öffnen:
+/// beide an der neuen Stelle, übrige Absätze und Text anderer Seiten gleich.
+#[test]
+#[ignore]
+fn absaetze_verschieben() {
+    use pdf::PageOp;
+    use pdf_note_lib::text::paragraphs;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-verschieben");
+    for f in ["latex.pdf", "word.pdf"] {
+        let src = dir.join(f);
+        let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(f);
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let before = paragraphs(&doc, 0).unwrap();
+        // zwei kurze Absätze (≤ 2 Zeilen) verschieben, 8 pt nach rechts/unten ist auf jeder Seite frei genug
+        let pick: Vec<usize> = before.iter().enumerate().filter(|(_, p)| p.bbox[3] - p.bbox[1] < 2.5 * p.size && p.text.len() > 3).map(|(i, _)| i).take(2).collect();
+        assert_eq!(pick.len(), 2, "{f}: zu wenige Absätze");
+        let (dx, dy) = (8.0, 6.0);
+        pdf::page_op(&mut doc, &PageOp::Layer1 { page: 0, edits: vec![], paras: pick.clone(), dx, dy, delete: false }).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        let after = paragraphs(&doc, 0).unwrap();
+        for &i in &pick {
+            let (o, w) = (&before[i], before[i].text.split_whitespace().collect::<Vec<_>>().join(" "));
+            let q = after.iter().find(|q| q.text.split_whitespace().collect::<Vec<_>>().join(" ") == w).unwrap_or_else(|| panic!("{f}: Absatz {i} fehlt: {w}"));
+            // Ursprung statt bbox: bei Ersatzschrift ändern sich Breite/Höhe der bbox, die Grundlinie nicht
+            let ((ox, oy), (qx, qy)) = (o.origin(), q.origin());
+            assert!((qx - ox - dx).abs() < 0.5 && (qy - oy - dy).abs() < 0.5, "{f}: Absatz {i}: ({ox},{oy}) -> ({qx},{qy})");
+        }
+        for (i, o) in before.iter().enumerate().filter(|(i, _)| !pick.contains(i)) {
+            assert!(after.iter().any(|a| a.text == o.text && a.bbox.iter().zip(o.bbox).all(|(x, y)| (x - y).abs() < 0.05)), "{f}: Absatz {i} verändert: {} {:?} pick={pick:?}
+vorher {:?}
+nachher {:?}", o.text, o.bbox, before.iter().map(|p| (&p.text, p.bbox)).collect::<Vec<_>>(), after.iter().map(|p| (&p.text, p.bbox)).collect::<Vec<_>>());
+        }
+        let t = page_texts(&doc).unwrap();
+        for i in 1..texts.len() {
+            assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
+        }
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
     }
 }
 
@@ -387,7 +522,7 @@ fn formular() {
     // doppelter Name wird abgelehnt
     let dup = NewField { kind: "text".into(), name: "Neu Text".into(), rect: [20.0, 200.0, 160.0, 220.0], options: vec![] };
     assert!(pdf::page_op(&mut doc, &PageOp::NewField { page: 0, field: dup }).is_err());
-    pdf::save(&doc, &[], &copy, false).unwrap();
+    pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
 
     let mut doc = pdf::open(&copy).unwrap();
     assert_eq!(page_texts(&doc).unwrap(), texts, "Seitentext verändert");
@@ -418,6 +553,18 @@ fn formular() {
     let again = fields(&doc, 0).unwrap();
     assert_eq!(again.iter().find(|f| f.xref == check.xref).unwrap().value, check.on);
     assert_eq!(again.iter().find(|f| f.xref == combo.xref).unwrap().value, "Zwei");
+
+    // selbst angelegte Checkbox löschen → speichern → neu öffnen: Feld und Widget weg, Rest unverändert
+    pdf::page_op(&mut doc, &PageOp::DeleteField { page: 0, xref: check.xref }).unwrap();
+    pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
+    let doc = pdf::open(&copy).unwrap();
+    let gone = fields(&doc, 0).unwrap();
+    assert!(gone.iter().all(|f| f.name != "Neu Haken" && f.xref != check.xref), "Checkbox noch da");
+    assert_eq!(gone.len(), again.len() - 1, "Feldanzahl");
+    assert!(doc.load_pdf_page(0).unwrap().load_widget(check.xref).unwrap().is_none(), "Widget-Rest");
+    let acro = doc.catalog().unwrap().get_dict("AcroForm").unwrap().unwrap().get_dict("Fields").unwrap().unwrap();
+    let names = (0..acro.len().unwrap() as i32).filter_map(|i| acro.get_array(i).unwrap()).filter_map(|o| o.get_dict("T").unwrap()).map(|t| t.as_string().unwrap()).collect::<Vec<_>>();
+    assert!(!names.iter().any(|t| t == "Neu Haken") && names.iter().any(|t| t == "Neu Liste"), "AcroForm/Fields: {names:?}");
 
     assert_eq!(original, std::fs::read(&src).unwrap(), "Original verändert");
     let extra: Vec<_> = std::fs::read_dir(&solo).unwrap().map(|e| e.unwrap().file_name()).collect();
@@ -456,12 +603,12 @@ fn notizbuch() {
             pdf::page_op(&mut doc, &PageOp::Blank { at: count + i as i32, width: 595.0, height: 842.0, template: Some(t) }).unwrap();
         }
         let md = "# Notiz\n\nText mit **fett** und Ümlaut.\n\n- eins\n- zwei\n";
-        pdf::page_op(&mut doc, &PageOp::Markdown { page: count + 3, source: md.into(), insert: true }).unwrap();
+        pdf::page_op(&mut doc, &PageOp::Markdown { page: count + 3, source: md.into(), insert: true, formulas: Vec::new() }).unwrap();
         let mut marks = old.clone();
         marks.push(Mark { title: "Notizen".into(), page: count, level: 0 });
         marks.push(Mark { title: "Markdown".into(), page: count + 3, level: 1 });
         pdf::page_op(&mut doc, &PageOp::Outline { marks: marks.clone() }).unwrap();
-        pdf::save(&doc, &[], &copy, false).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
 
         let doc = pdf::open(&copy).unwrap();
         let after = page_texts(&doc).unwrap();
@@ -512,7 +659,7 @@ fn suche_und_links() {
         let old = links(&doc, 0).unwrap();
         pdf::page_op(&mut doc, &PageOp::Blank { at: count, width: 595.0, height: 842.0, template: None }).unwrap();
         pdf::page_op(&mut doc, &PageOp::Link { from: count, rect: [50.0, 50.0, 200.0, 70.0], to: 0, x: 40.0, y: 100.0 }).unwrap();
-        pdf::save(&doc, &[], &copy, false).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
 
         let mut doc = pdf::open(&copy).unwrap();
         assert_eq!(page_texts(&doc).unwrap()[..texts.len()], texts[..], "{}: Original-Seiten", src.display());
@@ -545,17 +692,403 @@ fn ocr_scan() {
         let mut doc = pdf::open(&copy).unwrap();
         let before = page_texts(&doc).unwrap();
         let r = pdf::page_op(&mut doc, &PageOp::Ocr).unwrap();
-        pdf::save(&doc, &[], &copy, false).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
         let doc = pdf::open(&copy).unwrap();
         let after = page_texts(&doc).unwrap();
         if before.iter().all(|t| t.trim().is_empty()) {
             let word = after.iter().flat_map(|t| t.split_whitespace()).find(|w| w.chars().count() >= 4 && w.chars().all(char::is_alphanumeric));
             let word = word.unwrap_or_else(|| panic!("{name}: nichts erkannt ({:?})", r.warning));
             assert!(!pdf_note_lib::nav::search(&doc, word).unwrap().is_empty(), "{name}: „{word}“ nicht suchbar");
+            // Ebene 1: Scan-Bild bleibt unwählbar, OCR-Text ist markierbar
+            assert!(pdf::is_scan(&doc, 0).unwrap(), "{name}: nach OCR kein Scan mehr");
+            let chars: String = pdf_note_lib::text::chars(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+            assert!(chars.contains(word), "{name}: OCR-Text nicht markierbar");
         } else {
             assert_eq!(after, before, "{name}: Seiten mit Text verändert");
         }
         println!("{name}: OK ({:?})", r.warning);
     }
     assert!(solo.join("Gescannt.pdf").is_file() && std::fs::read_dir(&solo).unwrap().count() == 2, "Fremddateien neben der PDF");
+}
+
+/// Ebenen als echte PDF-Ebenen (OCGs): `/OC` je Annotation, nach Neu-Öffnen richtig, keine doppelten OCGs,
+/// flach ohne Ebenen.
+#[test]
+#[ignore]
+fn ebenen() {
+    use pdf::{Kind, LAYER_NAMES};
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-ebenen");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let copy = solo.join("word.pdf");
+    std::fs::copy(dir.join("word.pdf"), &copy).unwrap();
+    let doc = pdf::open(&copy).unwrap();
+    let foreign = pdf::annotations(&doc, 0).unwrap().len();
+    let two = vec![[30.0, 30.0, 0.5], [120.0, 90.0, 0.5]];
+    let items = vec![
+        item(0, Kind::Ink, vec![[20.0, 20.0, 0.2], [60.0, 45.0, 0.5]], ""),
+        item(0, Kind::Rect, two.clone(), ""),
+        pdf::Item { layer: 3, ..item(0, Kind::Ellipse, two.clone(), "") },
+        item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz"),
+    ];
+    let want = [3, 2, 3, 3];
+    for round in 0..3 {
+        let d = pdf::open(&copy).unwrap();
+        let mut back = pdf::take_own(&d, 0..1).unwrap();
+        if round == 0 {
+            back = items.clone();
+        } else {
+            assert_eq!(back.iter().map(|it| it.layer).collect::<Vec<_>>(), want, "Ebenen nach Neu-Öffnen (Runde {round})");
+        }
+        pdf::save(&d, &back, &copy, false, pdf::Crypt::Keep).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        assert_eq!(pdf::layer_names(&d).unwrap(), LAYER_NAMES.to_vec(), "doppelte/fehlende OCGs (Runde {round})");
+        let oc = pdf::annotation_layers(&d, 0).unwrap();
+        let own = &oc[oc.len() - items.len()..];
+        let exp: Vec<_> = want.iter().map(|l| Some(LAYER_NAMES[*l as usize - 2].to_string())).collect();
+        assert_eq!(own, &exp[..], "/OC je Annotation (Runde {round})");
+        assert!(oc[..foreign].iter().all(Option::is_none), "fremde Annotationen bekommen kein /OC");
+    }
+    let flat = solo.join("flach.pdf");
+    let d = pdf::open(&copy).unwrap();
+    let back = pdf::take_own(&d, 0..1).unwrap();
+    pdf::save(&d, &back, &flat, true, pdf::Crypt::Keep).unwrap();
+    assert!(pdf::layer_names(&pdf::open(&flat).unwrap()).unwrap().is_empty(), "flach: Ebenen bleiben");
+    println!("word.pdf: Ebenen OK");
+}
+
+#[test]
+#[ignore]
+fn bild_zuschneiden_drehen() {
+    use base64::Engine;
+    use pdf::Kind;
+    let e = base64::engine::general_purpose::STANDARD;
+    // PNG-Kopf: Breite/Höhe big-endian ab Byte 16
+    let dims = |b: &str| {
+        let p = e.decode(b).unwrap();
+        (u32::from_be_bytes(p[16..20].try_into().unwrap()), u32::from_be_bytes(p[20..24].try_into().unwrap()))
+    };
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-bild");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let src = pdf::open(&dir.join("latex.pdf")).unwrap();
+    let full = b64(&pdf::render_png(&src, 0, 1.0).unwrap());
+    let (w, h) = dims(&full);
+    let mut size = Vec::new();
+    for (name, image, rot) in [("ganz", full.clone(), 0.0), ("zugeschnitten", pdf::crop_b64(&full, [0.25, 0.25, 0.75, 0.75]).unwrap(), 30.0)] {
+        let copy = solo.join(format!("{name}.pdf"));
+        std::fs::copy(dir.join("word.pdf"), &copy).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        let mut items = pdf::take_own(&d, 0..1).unwrap();
+        items.push(pdf::Item { image: image.clone(), rot, ..item(0, Kind::Image, vec![[50.0, 50.0, 0.5], [300.0, 400.0, 0.5]], "") });
+        pdf::save(&d, &items, &copy, false, pdf::Crypt::Keep).unwrap();
+        size.push(std::fs::metadata(&copy).unwrap().len());
+        let back = pdf::take_own(&pdf::open(&copy).unwrap(), 0..1).unwrap();
+        let img = back.iter().find(|it| it.kind == Kind::Image).expect("Bild nach Neu-Öffnen bearbeitbar");
+        assert!((img.rot - rot).abs() < 0.01, "{name}: Drehung");
+        assert_eq!(dims(&img.image), dims(&image), "{name}: Pixelmaße");
+    }
+    assert_eq!(dims(&pdf::crop_b64(&full, [0.25, 0.25, 0.75, 0.75]).unwrap()), (((w as f32 * 0.75).round() - (w as f32 * 0.25).round()) as u32, ((h as f32 * 0.75).round() - (h as f32 * 0.25).round()) as u32));
+    assert!(size[1] < size[0], "zugeschnitten nicht kleiner: {size:?}");
+    println!("Bild: {w}×{h} → Zuschnitt, Datei {} → {} Bytes", size[0], size[1]);
+}
+
+/// Koordinatensysteme: xy + xyz mit Gitter speichern → neu öffnen → je ein Objekt mit gleichen Parametern,
+/// in der PDF als Ink mit eigenem Aussehen (sichtbar ohne PDF Note).
+#[test]
+#[ignore]
+fn koordinatensysteme() {
+    use pdf::Kind;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-axes");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        let blank = pdf::render_png(&d, 0, 0.5).unwrap();
+        let foreign = pdf::annotations(&d, 0).unwrap().len();
+        let mut items = pdf::take_own(&d, 0..1).unwrap();
+        let mine = [
+            pdf::Item { layer: 2, size: 2.0, width: 2.0, grid: true, ..item(0, Kind::Axes, vec![[60.0, 60.0, 0.5], [220.0, 200.0, 0.5]], "") },
+            pdf::Item { layer: 2, size: 1.5, width: 1.5, xyz: true, grid: true, opacity: 0.8, ..item(0, Kind::Axes, vec![[250.0, 60.0, 0.5], [420.0, 230.0, 0.5]], "") },
+        ];
+        items.extend(mine.clone());
+        pdf::save(&d, &items, &copy, false, pdf::Crypt::Keep).unwrap();
+        let back = pdf::open(&copy).unwrap();
+        let annots = pdf::annotations(&back, 0).unwrap();
+        assert_eq!(annots.len(), foreign + 2, "{}: je eine Annotation", src.display());
+        assert!(annots[foreign..].iter().all(|(t, own)| *t == mupdf::pdf::PdfAnnotationType::Ink && own.is_some()));
+        assert_ne!(pdf::render_png(&back, 0, 0.5).unwrap(), blank, "{}: Aussehen fehlt", src.display());
+        let taken: Vec<_> = pdf::take_own(&back, 0..1).unwrap().into_iter().filter(|it| it.kind == Kind::Axes).collect();
+        assert_eq!(taken, mine, "{}: Parameter nach Neu-Öffnen", src.display());
+        n += 1;
+    }
+    assert!(n > 0);
+    println!("Koordinatensysteme: {n} PDFs OK");
+}
+
+/// Formen mit Füllfarbe + 50 % Deckkraft: speichern → neu öffnen → Füllung + Deckkraft erhalten, Aussehen enthält einen Fülloperator.
+#[test]
+#[ignore]
+fn formen_fuellung() {
+    use pdf::Kind;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-fill");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let d = pdf::open(&copy).unwrap();
+        let foreign = pdf::annotations(&d, 0).unwrap().len();
+        let mut items = pdf::take_own(&d, 0..1).unwrap();
+        let mine = [
+            pdf::Item { layer: 2, fill: Some([0.0, 0.8, 0.0]), opacity: 0.5, ..item(0, Kind::Rect, vec![[60.0, 60.0, 0.5], [220.0, 200.0, 0.5]], "") },
+            pdf::Item { layer: 2, fill: Some([1.0, 0.8, 0.0]), opacity: 0.5, ..item(0, Kind::Ellipse, vec![[250.0, 60.0, 0.5], [420.0, 230.0, 0.5]], "") },
+        ];
+        items.extend(mine.clone());
+        pdf::save(&d, &items, &copy, false, pdf::Crypt::Keep).unwrap();
+        let back = pdf::open(&copy).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let ours: Vec<_> = page.annotations().skip(foreign).collect();
+        assert_eq!(ours.len(), 2, "{}: je eine Annotation", src.display());
+        for a in &ours {
+            let ap = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap();
+            let s = String::from_utf8_lossy(&ap.read_stream().unwrap()).into_owned();
+            assert!(s.lines().any(|l| matches!(l.trim(), "f" | "B" | "f*" | "B*" | "b" | "b*")), "{}: kein Fülloperator: {s}", src.display());
+            assert!(a.object().get_dict("IC").unwrap().is_some() && a.object().get_dict("CA").unwrap().is_some());
+        }
+        drop(ours);
+        drop(page);
+        let taken: Vec<_> = pdf::take_own(&back, 0..1).unwrap().into_iter().filter(|it| matches!(it.kind, Kind::Rect | Kind::Ellipse) && it.fill.is_some()).collect();
+        assert_eq!(taken, mine, "{}: Parameter nach Neu-Öffnen", src.display());
+        n += 1;
+    }
+    assert!(n > 0);
+    println!("Formen-Füllung: {n} PDFs OK");
+}
+
+/// Verschlüsseln (Speichern unter + Passwort) → ohne Passwort nicht lesbar, mit Passwort Text + Objekte gleich;
+/// Strg+S bleibt verschlüsselt (inkl. Temp-Datei); Speichern unter ohne Passwort entschlüsselt.
+#[test]
+#[ignore]
+fn verschluesselung() {
+    use pdf::Kind;
+    use pdf_note_lib::Open;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let tmp = std::env::temp_dir().join("pdf-note-test-crypt");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let (plain, enc, dec) = (tmp.join("latex.pdf"), tmp.join("geschuetzt.pdf"), tmp.join("offen.pdf"));
+    std::fs::copy(dir.join("latex.pdf"), &plain).unwrap();
+    let text = page_texts(&pdf::open(&plain).unwrap()).unwrap();
+
+    let (mut open, s) = Open::open(plain.clone(), None).unwrap();
+    // Notizen-Ebene: so liest das Öffnen sie zurück
+    let note = |p: Vec<[f32; 3]>, t: &str| pdf::Item { layer: 3, ..item(0, if t.is_empty() { Kind::Ink } else { Kind::Text }, p, t) };
+    let mut items = s.items.clone();
+    items.push(note(vec![[50.0, 50.0, 0.5], [120.0, 90.0, 0.5]], ""));
+    items.push(note(vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "geheim notiert"));
+    open.save(&items, Some(&enc), false, false, Some("pdf-note")).unwrap();
+    let raw = std::fs::read(&enc).unwrap();
+    assert!(raw.windows(8).any(|w| w == b"/Encrypt"), "kein Encrypt-Eintrag");
+    assert!(!raw.windows(14).any(|w| w == b"geheim notiert"), "Notiz im Klartext");
+    assert_eq!(pdf::open(&enc).err().as_deref(), Some(pdf::NEED_PASSWORD));
+    assert!(Document::open(enc.to_str().unwrap()).unwrap().needs_password().unwrap(), "MuPDF ohne Passwort lesbar");
+    assert_eq!(page_texts(&pdf::open(&plain).unwrap()).unwrap(), text, "offene Datei verändert");
+
+    let (mut e, se) = Open::open(enc.clone(), Some("pdf-note".into())).unwrap();
+    assert_eq!(page_texts(&pdf::open_with(&enc, Some("pdf-note")).unwrap().0).unwrap(), text, "Text");
+    assert_eq!(se.items, items, "Objekte");
+
+    // Strg+S: weiter verschlüsselt, keine Temp-Datei bleibt liegen
+    let mut more = se.items.clone();
+    more.push(note(vec![[60.0, 300.0, 0.5], [160.0, 320.0, 0.5]], ""));
+    e.save(&more, None, false, false, None).unwrap();
+    assert_eq!(pdf::open(&enc).err().as_deref(), Some(pdf::NEED_PASSWORD), "Strg+S entschlüsselt");
+    let (_, again) = Open::open(enc.clone(), Some("pdf-note".into())).unwrap();
+    assert_eq!(again.items, more, "Objekte nach Strg+S");
+
+    // Entschlüsseln = Speichern unter ohne Passwort
+    e.save(&more, Some(&dec), false, false, None).unwrap();
+    let (_, d) = Open::open(dec.clone(), None).unwrap();
+    assert_eq!(d.items, more, "Objekte entschlüsselt");
+    assert_eq!(page_texts(&pdf::open(&dec).unwrap()).unwrap(), text, "Text entschlüsselt");
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 3, "Zusatzdatei (Temp) liegen geblieben");
+    println!("latex.pdf: Verschlüsselung OK");
+}
+
+/// Seiten-Zwischenablage ist global → Tests, die sie nutzen, nacheinander
+static CLIP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Seiten über die Seiten-Zwischenablage von Dokument A nach B kopieren, zwei davon löschen → Seitenzahl + Inhalt
+/// stimmen auch nach Speichern + Neu-Öffnen; Objekt auf einer kopierten Seite kommt mit.
+#[test]
+#[ignore]
+fn seiten_zwischenablage() {
+    use pdf::{Kind, PageOp};
+    let _clip = CLIP.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-pageclip");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let b_path = solo.join("b.pdf");
+    std::fs::copy(dir.join("word.pdf"), &b_path).unwrap();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let a = pdf::open(&src).unwrap();
+        let ta = page_texts(&a).unwrap();
+        if ta.len() < 3 {
+            continue;
+        }
+        let mut b = pdf::open(&b_path).unwrap();
+        let tb = page_texts(&b).unwrap();
+        let nb = tb.len() as i32;
+        let note = item(1, Kind::Text, vec![[10.0, 10.0, 0.5], [60.0, 22.0, 0.5]], "Kopiert");
+        pdf::copy_pages(&a, &[2, 0, 1], &[note]).unwrap();
+        let r = pdf::page_op(&mut b, &PageOp::Paste { at: nb }).unwrap();
+        assert_eq!((r.inserted, r.items.len()), (3, 1), "{}: Paste", src.display());
+        assert_eq!((r.items[0].page, r.items[0].text.as_str()), (nb + 1, "Kopiert"), "{}: Objekt", src.display());
+        assert_eq!(page_texts(&b).unwrap().len() as i32, nb + 3);
+        // erste und letzte kopierte Seite weg → übrig bleibt Seite 2 von A samt Objekt
+        pdf::page_op(&mut b, &PageOp::DeletePages { indices: vec![nb + 2, nb] }).unwrap();
+        let mut keep = r.items;
+        keep[0].page = nb;
+        let out = solo.join("out.pdf");
+        pdf::save(&b, &keep, &out, false, pdf::Crypt::Keep).unwrap();
+        let mut got = pdf::open(&out).unwrap();
+        let after = page_texts(&got).unwrap();
+        assert_eq!(after.len() as i32, nb + 1, "{}: Seitenzahl", src.display());
+        assert_eq!(after[..tb.len()], tb[..], "{}: Seiten von B", src.display());
+        assert_eq!(after[nb as usize], ta[1], "{}: kopierte Seite", src.display());
+        let own = pdf::take_own(&got, nb..nb + 1).unwrap();
+        assert_eq!(own.len(), 1, "{}: Objekt nach Neu-Öffnen", src.display());
+        assert!(pdf::page_op(&mut got, &PageOp::DeletePages { indices: (0..nb + 1).collect() }).is_err(), "alle Seiten löschen");
+        pdf::page_op(&mut got, &PageOp::RotatePages { indices: vec![0, nb] }).unwrap();
+        println!("{}: OK", src.display());
+        n += 1;
+    }
+    assert!(n > 0);
+}
+
+/// v1.2.0 B §1: Strg+S darf nichts einbrennen. Jede Objektart über die echte `Open`-API speichern → neu öffnen →
+/// alle wieder eigene Objekte mit gleichen Parametern; mehrfach Strg+S → kein Doppeln; „Speichern unter" + Einbrennen
+/// → Zieldatei ohne `/PDFNote`, offene Datei bleibt bearbeitbar.
+#[test]
+#[ignore]
+fn strg_s_bleibt_bearbeitbar() {
+    use pdf::Kind;
+    use pdf_note_lib::Open;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-ctrl-s");
+    let _ = std::fs::remove_dir_all(&solo);
+    std::fs::create_dir_all(&solo).unwrap();
+    let no_img = |v: &[pdf::Item]| v.iter().map(|it| pdf::Item { image: String::new(), ..it.clone() }).collect::<Vec<_>>();
+    let mut n = 0;
+    for entry in std::fs::read_dir(&dir).expect("testdata/pdfs/ fehlt") {
+        let src = entry.unwrap().path();
+        if src.extension().is_none_or(|e| e != "pdf") {
+            continue;
+        }
+        let name = src.display();
+        let copy = solo.join(src.file_name().unwrap());
+        std::fs::copy(&src, &copy).unwrap();
+        let (mut open, s) = Open::open(copy.clone(), None).unwrap();
+        let png = b64(&pdf::render_png(&pdf::open(&copy).unwrap(), 0, 0.1).unwrap());
+        let two = vec![[30.0, 30.0, 0.5], [120.0, 90.0, 0.5]];
+        let l = |layer: u8, it: pdf::Item| pdf::Item { layer, ..it };
+        let mut items = s.items.clone();
+        items.extend([
+            l(3, item(0, Kind::Ink, vec![[20.0, 20.0, 0.2], [60.0, 45.0, 0.5], [120.0, 30.0, 0.9]], "")),
+            l(3, pdf::Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(0, Kind::Marker, vec![[20.0, 100.0, 0.5], [200.0, 100.0, 0.5]], "") }),
+            l(2, item(0, Kind::Line, two.clone(), "")),
+            l(2, item(0, Kind::Arrow, two.clone(), "")),
+            l(2, pdf::Item { fill: Some([0.0, 0.8, 0.0]), opacity: 0.5, ..item(0, Kind::Rect, two.clone(), "") }),
+            l(2, item(0, Kind::Ellipse, two.clone(), "")),
+            l(3, item(0, Kind::Text, vec![[40.0, 200.0, 0.5], [200.0, 230.0, 0.5]], "Notiz ÄÖÜ")),
+            l(2, pdf::Item { image: png.clone(), ..item(0, Kind::Image, two.clone(), "") }),
+            l(2, pdf::Item { grid: true, ..item(0, Kind::Axes, vec![[60.0, 60.0, 0.5], [220.0, 200.0, 0.5]], "") }),
+            l(3, pdf::Item { opacity: 0.35, color: [1.0, 0.9, 0.0], ..item(0, Kind::Highlight, vec![[20.0, 300.0, 0.5], [200.0, 312.0, 0.5]], "") }),
+        ]);
+        let foreign = pdf::annotations(&pdf::open(&copy).unwrap(), 0).unwrap().len();
+
+        // Strg+S zweimal hintereinander (mit Neu-Öffnen dazwischen) → jedes Mal alle Objekte genau einmal zurück
+        open.save(&items, None, false, false, None).unwrap();
+        for round in 1..=3 {
+            let (mut again, back) = Open::open(copy.clone(), None).unwrap();
+            assert_eq!(no_img(&back.items), no_img(&items), "{name}: Runde {round}: Objekte nach Strg+S + Neu-Öffnen");
+            assert!(back.items.iter().any(|it| it.kind == Kind::Image && !it.image.is_empty()), "{name}: Bild");
+            assert_eq!(pdf::annotations(&pdf::open(&copy).unwrap(), 0).unwrap().len(), foreign + 10, "{name}: Annotationen doppelt");
+            again.save(&back.items, None, false, false, None).unwrap();
+        }
+
+        // Speichern unter + Einbrennen → Ziel fest, offene Datei unverändert bearbeitbar
+        let flat = solo.join(format!("flach-{}", src.file_name().unwrap().to_string_lossy()));
+        let (mut cur, now) = Open::open(copy.clone(), None).unwrap();
+        cur.save(&now.items, Some(&flat), true, false, None).unwrap();
+        assert!(!std::fs::read(&flat).unwrap().windows(8).any(|w| w == b"/PDFNote"), "{name}: /PDFNote nach Einbrennen");
+        assert!(Open::open(flat.clone(), None).unwrap().1.items.is_empty(), "{name}: eingebrannt noch Objekte");
+        cur.save(&now.items, None, false, false, None).unwrap();
+        assert_eq!(no_img(&Open::open(copy.clone(), None).unwrap().1.items), no_img(&items), "{name}: offene Datei nach Einbrennen");
+        println!("{name}: OK");
+        n += 1;
+    }
+    assert!(n > 0);
+}
+
+/// Tempo-Messung (§6) an einer ≥ 300-Seiten-PDF aus `gross-100.pdf` ×3; Werte gehen in die TODO-Notiz.
+#[test]
+#[ignore]
+fn tempo_messung() {
+    use pdf_note_lib::{pdf::PageOp, Open};
+    use std::time::Instant;
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs/gross-100.pdf");
+    let tmp = std::env::temp_dir().join("pdf-note-tempo-300.pdf");
+    let mut doc = pdf::open(&src).unwrap();
+    let n = doc.page_count().unwrap();
+    let clip = CLIP.lock().unwrap_or_else(|e| e.into_inner());
+    pdf::copy_pages(&doc, &(0..n).collect::<Vec<_>>(), &[]).unwrap();
+    for _ in 0..2 {
+        let at = doc.page_count().unwrap();
+        pdf::page_op(&mut doc, &PageOp::Paste { at }).unwrap();
+    }
+    drop(clip);
+    doc.save(tmp.to_str().unwrap()).unwrap();
+    let t = Instant::now();
+    let (open, st) = Open::open(tmp.clone(), None).unwrap();
+    let pages = st.sizes.len() as i32;
+    println!("Seiten {pages}, Öffnen {:?}", t.elapsed());
+    assert!(pages >= 300);
+    let d = open.doc();
+    // Sprung ±20 Seiten bei Zoom 100 % × DPR 1,5; grob = Vorschau vor dem scharfen Bild; Miniatur 120 px
+    for (name, scale) in [("scharf 1.5", 1.5), ("grob 0.4", 0.4), ("Miniatur", 120.0 / 595.0 * 1.5)] {
+        let t = Instant::now();
+        let mut bytes = 0;
+        for i in 150..170 {
+            bytes += pdf::render_png(d, i, scale).unwrap().len();
+        }
+        println!("{name}: {:?}/Seite, {} KB/Seite", t.elapsed() / 20, bytes / 20 / 1024);
+    }
+    let [w, h] = st.sizes[150];
+    println!("RAM je dekodierter Seite bei 1.5: {:.1} MB", w * 1.5 * h * 1.5 * 4.0 / 1e6);
+    drop(open);
+    let _ = std::fs::remove_file(tmp);
 }

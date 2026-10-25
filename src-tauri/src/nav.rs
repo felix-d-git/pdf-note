@@ -43,12 +43,36 @@ pub fn search(doc: &PdfDocument, query: &str) -> Result<Vec<Hit>, String> {
     Ok(out)
 }
 
-/// Link auf eine Stelle im selben Dokument. Externe Links (URI, Launch, andere Datei) werden nie geliefert.
+/// Link auf eine Stelle im selben Dokument (`page` ≥ 0) oder auf eine Adresse (`uri`, `page` −1).
+/// Launch und andere Dateien werden nie geliefert; die App führt nichts davon selbst aus.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Anchor {
     pub rect: [f32; 4],
     pub page: i32,
     pub y: f32,
+    #[serde(default)]
+    pub uri: Option<String>,
+}
+
+/// Nur http/https, ASCII ohne Leer-/Steuerzeichen, Anführungszeichen und Shell-/Kommandozeilen-Metazeichen.
+/// Die Frontend-Adresse ist `new URL(…).href` (schon prozentkodiert); hier wird trotzdem alles erneut geprüft.
+pub fn web_url(s: &str) -> Result<&str, String> {
+    let rest = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://")).ok_or("nur http/https")?;
+    let ok = !rest.is_empty()
+        && !rest.starts_with(['/', ':', '?', '#'])
+        && s.len() <= 2048
+        && s.bytes().all(|b| (0x21..=0x7e).contains(&b) && !br#""'`<>^|\{}"#.contains(&b));
+    if ok { Ok(s) } else { Err("ungültige Adresse".into()) }
+}
+
+/// Adresse im Standard-Browser öffnen: ohne Shell, die Adresse ist ein einzelnes Argument.
+pub fn open_url(s: &str) -> Result<(), String> {
+    let url = web_url(s)?;
+    let mut c = std::process::Command::new("rundll32");
+    c.args(["url.dll,FileProtocolHandler", url]);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000); // CREATE_NO_WINDOW
+    c.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 fn top(kind: &DestinationKind) -> Option<f32> {
@@ -73,13 +97,18 @@ pub fn links(doc: &PdfDocument, index: i32) -> Result<Vec<Anchor>, String> {
     let count = doc.page_count().map_err(err)?;
     let ctm = page.ctm().map_err(err)?;
     let page_no = doc.lookup_page_number(&page.object()).ok();
-    let none = Anchor { rect: [0.0; 4], page: -1, y: 0.0 };
+    let none = Anchor { rect: [0.0; 4], page: -1, y: 0.0, uri: None };
     let mut out = Vec::new();
     for annot in page.link_annotations().map_err(err)? {
         let Ok(Some(l)) = annot.and_then(|a| a.to_pdf_link(doc, page_no, Some(&ctm))) else {
             out.push(none.clone());
             continue;
         };
+        let rect = [l.bounds.x0 - ox, l.bounds.y0 - oy, l.bounds.x1 - ox, l.bounds.y1 - oy];
+        if let LinkAction::Action(PdfAction::Uri(u)) = &l.action {
+            out.push(Anchor { rect, page: -1, y: 0.0, uri: Some(u.clone()) });
+            continue;
+        }
         let dest = match l.action {
             LinkAction::Dest(d) | LinkAction::Action(PdfAction::GoTo(d)) => Some(d),
             _ => None,
@@ -88,9 +117,10 @@ pub fn links(doc: &PdfDocument, index: i32) -> Result<Vec<Anchor>, String> {
             Some(PdfDestination::Page { page, kind }) if (page as i32) < count => {
                 let ty = origin(doc, page as i32).map_err(err)?.1;
                 Some(Anchor {
-                    rect: [l.bounds.x0 - ox, l.bounds.y0 - oy, l.bounds.x1 - ox, l.bounds.y1 - oy],
+                    rect,
                     page: page as i32,
                     y: top(&kind).map_or(0.0, |t| t - ty).max(0.0),
+                    uri: None,
                 })
             }
             _ => None,
@@ -205,7 +235,7 @@ mod tests {
     #[test]
     fn suche_findet_markdown_text() {
         let mut d = doc(2);
-        crate::notebook::render(&mut d, 1, "# Titel\n\nDer Zaunkönig singt.", true).unwrap();
+        crate::notebook::render(&mut d, 1, "# Titel\n\nDer Zaunkönig singt.", true, &[]).unwrap();
         let hits = search(&d, "zaunkönig").unwrap();
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].page, 1);
@@ -244,5 +274,33 @@ mod tests {
         assert!((links(&d, 0).unwrap()[0].y - 200.0).abs() < 0.5, "{:?}", links(&d, 0));
         let back = links(&d, 1).unwrap();
         assert!((back[0].rect[1] - 191.0).abs() < 0.5, "{back:?}");
+    }
+
+    #[test]
+    fn web_url_nur_http_ohne_metazeichen() {
+        for ok in ["https://a.de", "http://a.de/x?y=1&z=%20#f", "HTTPS://a.de".to_lowercase().as_str()] {
+            assert!(web_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "javascript:alert(1)", "file:///C:/x.exe", "ftp://a.de", "mailto:a@b.de", "https://", "https:///x", "//a.de", "a.de",
+            "https://a.de x", "https://a.de\"x", "https://a.de&calc|calc", "https://a.de^&calc", "https://a.de/\n", "https://a.de/\t",
+            "https://a.de`x`", "https://a.de\\x", "https://ä.de", "http://a.de<x>", "http://a.de'x",
+        ] {
+            assert!(web_url(bad).is_err(), "{bad}");
+        }
+        assert!(web_url(&format!("https://a.de/{}", "a".repeat(2100))).is_err());
+    }
+
+    #[test]
+    fn uri_link_wird_geliefert() {
+        let mut d = doc(1);
+        let mut page = d.load_pdf_page(0).unwrap();
+        let l = PdfLink { bounds: Rect::new(10.0, 20.0, 110.0, 40.0), action: LinkAction::Action(PdfAction::Uri("https://example.org/".into())) };
+        page.add_links(&mut d, &[l]).unwrap();
+        let d = PdfDocument::from_bytes(&crate::pdf::to_bytes(&d).unwrap()).unwrap();
+        let a = links(&d, 0).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!((a[0].page, a[0].uri.as_deref()), (-1, Some("https://example.org/")));
+        assert!((a[0].rect[2] - 110.0).abs() < 0.5, "{a:?}");
     }
 }

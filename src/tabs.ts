@@ -22,11 +22,8 @@ const setPane = (s: Tabs, p: Pane, id: number | undefined): Tabs => {
   return { ...s, panes };
 };
 
-/** Tab anzeigen: steht er schon in der anderen Hälfte, wird diese aktiv; sonst in der aktiven Hälfte. */
-export function show(s: Tabs, id: number): Tabs {
-  if (s.split && s.panes[other(s.active)] === id) return { ...s, active: other(s.active) };
-  return setPane(s, s.active, id);
-}
+/** Tab anzeigen in der aktiven Hälfte; steht er schon in der anderen, zeigen beide ihn (zwei Ansichten eines Dokuments). */
+export const show = (s: Tabs, id: number): Tabs => setPane(s, s.active, id);
 
 /** Öffnen: bereits offene Datei springt zu ihrem Tab, sonst neuer Tab am Ende. */
 export function openTab(s: Tabs, id: number, path: string): Tabs {
@@ -64,6 +61,18 @@ export function toggleSplit(s: Tabs): Tabs {
   return { ...s, split: true, active: second ? 1 : 0, panes: [s.panes[0], second?.id] };
 }
 
+/**
+ * Tab in Hälfte `p` ziehen (Split View). Kommt er aus der anderen Hälfte, tauschen beide Hälften ihre Dokumente;
+ * `both` (Strg) oder leere Zielhälfte → dieselbe PDF in beiden Hälften (zwei Ansichten eines Dokuments).
+ */
+export function toPane(s: Tabs, id: number, p: Pane, both = false): Tabs {
+  if (!s.split) return show(s, id);
+  const prev = s.panes[p];
+  let next = setPane({ ...s, active: p }, p, id);
+  if (!both && prev !== undefined && s.panes[other(p)] === id) next = setPane(next, other(p), prev);
+  return next;
+}
+
 export const focus = (s: Tabs, p: Pane): Tabs => (s.split && s.active !== p ? { ...s, active: p } : s);
 
 export function moveTab(s: Tabs, from: number, to: number): Tabs {
@@ -78,3 +87,16 @@ export function setDirty(s: Tabs, id: number, dirty: boolean): Tabs {
   if (s.tabs.find((t) => t.id === id)?.dirty === dirty) return s;
   return { ...s, tabs: s.tabs.map((t) => (t.id === id ? { ...t, dirty } : t)) };
 }
+
+/**
+ * Hört diese Ansicht auf Tastatur/Zwischenablage? Nur die aktive Hälfte, und nur eine Ansicht, die in einer Hälfte steht
+ * (versteckte Tabs zählen nie – sonst bekämen sie bei aktiver linker Hälfte mit: Einfügen landet im falschen Dokument).
+ * `p` = Hälfte der Ansicht, `shown` = Dokument steht in einer Hälfte.
+ */
+export const viewActive = (s: Tabs, p: Pane, shown: boolean) => shown && p === s.active;
+
+/** Tab-Klick in der Leiste einer Hälfte: Dokument der Hälfte `p` ersetzen; die andere Hälfte bleibt (gleiche PDF in beiden erlaubt). */
+export const pickDoc = (s: Tabs, id: number, p: Pane): Tabs => toPane(s, id, p, true);
+
+/** Split View: der erste Maus-/Touchpad-Klick in die inaktive Hälfte aktiviert sie nur; Stift und Finger wirken sofort. */
+export const onlyActivates = (active: boolean, pointerType: string) => !active && pointerType === "mouse";

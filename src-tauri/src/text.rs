@@ -36,6 +36,10 @@ pub struct Para {
 }
 
 impl Para {
+    /// Ursprung des ersten Zeichens (x, Grundlinie): bleibt bei Ersatzschrift exakt vergleichbar, die bbox nicht
+    pub fn origin(&self) -> (f32, f32) {
+        (self.lines[0].x0, self.lines[0].base)
+    }
     fn left(&self) -> f32 {
         self.lines.get(1).unwrap_or(&self.lines[0]).x0
     }
@@ -102,6 +106,41 @@ fn lines(page: &PdfPage) -> Result<Vec<Line>, Error> {
                 style,
                 text,
             });
+        }
+    }
+    Ok(out)
+}
+
+/// Textzeile zum Markieren/Kopieren: ein Rechteck je Zeichen (`text` zeichenweise gleich lang wie `boxes`).
+#[derive(Serialize, Debug, Clone)]
+pub struct CharLine {
+    pub text: String,
+    pub boxes: Vec<[f32; 4]>,
+}
+
+/// Alle Zeichen einer Seite inkl. unsichtbarem OCR-Text (auch auf Scan-Seiten) – für die Textauswahl in Ebene 1.
+pub fn chars(doc: &PdfDocument, index: i32) -> Result<Vec<CharLine>, String> {
+    let err = |e: Error| e.to_string();
+    if !(0..doc.page_count().map_err(err)?).contains(&index) {
+        return Err("ungültige Seite".into());
+    }
+    let page = doc.load_page(index).map_err(err)?;
+    let b = page.bounds().map_err(err)?;
+    let mut out = Vec::new();
+    for block in page.to_text_page(TextPageFlags::empty()).map_err(err)?.blocks() {
+        for l in block.lines() {
+            let mut line = CharLine { text: String::new(), boxes: Vec::new() };
+            for c in l.chars() {
+                let q = c.quad();
+                let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x].map(|v| v - b.x0);
+                let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y].map(|v| v - b.y0);
+                let (lo, hi) = (|v: [f32; 4]| v.into_iter().fold(f32::MAX, f32::min), |v: [f32; 4]| v.into_iter().fold(f32::MIN, f32::max));
+                line.text.push(c.char().unwrap_or(char::REPLACEMENT_CHARACTER));
+                line.boxes.push([lo(xs), lo(ys), hi(xs), hi(ys)]);
+            }
+            if !line.boxes.is_empty() {
+                out.push(line);
+            }
         }
     }
     Ok(out)
@@ -197,8 +236,8 @@ pub enum Family {
 }
 
 /// Änderung an Absatz `para` (Reihenfolge wie `paragraphs`): neuer Text (leer = löschen), Verschiebung in pt,
-/// optional andere Größe/Schrift (dann immer Ersatzschrift).
-#[derive(Deserialize, Debug, Clone)]
+/// optional andere Größe/Schrift (dann immer Ersatzschrift), Breite (Umbruch, pt) und Farbe (0…1).
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct TextEdit {
     pub para: usize,
     pub text: String,
@@ -210,6 +249,10 @@ pub struct TextEdit {
     pub size: Option<f32>,
     #[serde(default)]
     pub font: Option<Family>,
+    #[serde(default)]
+    pub width: Option<f32>,
+    #[serde(default)]
+    pub color: Option<[f32; 3]>,
 }
 
 /// Glyph einer Schrift: Fontressource, Code-Bytes, Breite in 1/1000 em.
@@ -482,7 +525,7 @@ pub(crate) fn reflow(text: &str, width: f32, indent: f32, space: f32, justify: b
     out
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02X}")).collect()
 }
 
@@ -537,6 +580,8 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     check_page(doc, index)?;
     let ok = [e.dx, e.dy].iter().all(|v| v.is_finite() && v.abs() < 1e4)
         && e.size.is_none_or(|s| s.is_finite() && (2.0..=500.0).contains(&s))
+        && e.width.is_none_or(|w| w.is_finite() && (1.0..=1e4).contains(&w))
+        && e.color.is_none_or(|c| c.iter().all(|v| (0.0..=1.0).contains(v)))
         && e.text.chars().count() <= 20_000;
     if !ok {
         return Err("ungültige Textänderung".into());
@@ -599,7 +644,11 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     let left = p.left();
     let right = p.lines.iter().map(|l| l.bbox[2]).fold(f32::MIN, f32::max);
     // einzeilig (Überschrift, kurze Zeile): Rahmen = Textbreite wäre zu eng → bis zum Rand gegenüber dem linken
-    let right = if p.lines.len() == 1 { right.max(b.x1 - b.x0 - left) } else { right };
+    let right = match e.width {
+        Some(w) => left + w,
+        None if p.lines.len() == 1 => right.max(b.x1 - b.x0 - left),
+        None => right,
+    };
     let width = (right - left).max(size);
     let indent = first.x0 - left;
     let justify = p.lines.len() > 2 && p.lines[..p.lines.len() - 1].iter().all(|l| (l.bbox[2] - right).abs() < 0.3 * p.size);
@@ -624,9 +673,28 @@ pub fn edit(doc: &mut PdfDocument, index: i32, e: &TextEdit) -> Result<Option<St
     let mut s = b"q\n".to_vec();
     s.extend(contents(&page).map_err(err)?);
     s.extend(b"\nQ\n");
-    s.extend(emit(&set, &fonts, size, p.color, &inv).into_bytes());
+    s.extend(emit(&set, &fonts, size, e.color.unwrap_or(p.color), &inv).into_bytes());
     let stream = doc.add_stream(&mupdf::Buffer::from_bytes(&s).map_err(err)?, None, false).map_err(err)?;
     page.object().dict_put("Contents", stream).map_err(err)?;
+    Ok((!notes.is_empty()).then(|| notes.join("; ")))
+}
+
+/// Absätze `paras` (Indizes wie `paragraphs`) um (`dx`, `dy`) verschieben oder löschen. Nach jeder Änderung
+/// ändert sich die Reihenfolge → jeder Absatz wird über Text + Rahmen neu gesucht.
+pub fn move_paras(doc: &mut PdfDocument, index: i32, paras: &[usize], dx: f32, dy: f32, delete: bool) -> Result<Option<String>, String> {
+    let before = paragraphs(doc, index)?;
+    // einzeilig: Rahmen etwas weiter, sonst bricht die breitere Ersatzschrift die Zeile beim bloßen Verschieben um
+    let targets = paras.iter().map(|&i| before.get(i).map(|p| (p.text.clone(), p.bbox, (p.bbox[3] - p.bbox[1] < 1.6 * p.size).then(|| (p.bbox[2] - p.bbox[0]) * 1.3 + 2.0 * p.size))).ok_or("Absatz nicht gefunden")).collect::<Result<Vec<_>, _>>()?;
+    // vorderster in Schieberichtung zuerst: sonst „überdeckt" ein Absatz die noch nicht verschobenen Mitläufer
+    let ahead = |b: &[f32; 4]| (b[0] + b[2]) * dx + (b[1] + b[3]) * dy;
+    let mut targets = targets;
+    targets.sort_by(|a, b| ahead(&b.1).total_cmp(&ahead(&a.1)));
+    let mut notes = Vec::new();
+    for (text, bb, width) in targets {
+        let i = paragraphs(doc, index)?.iter().position(|p| p.text == text && p.bbox.iter().zip(bb).all(|(a, b)| (a - b).abs() < 0.5)).ok_or("Absatz nicht gefunden")?;
+        let e = if delete { TextEdit { para: i, ..Default::default() } } else { TextEdit { para: i, text, dx, dy, width, ..Default::default() } };
+        notes.extend(edit(doc, index, &e)?);
+    }
     Ok((!notes.is_empty()).then(|| notes.join("; ")))
 }
 
@@ -659,7 +727,7 @@ mod tests {
                         BT /F1 12 Tf 20 110 Td (Zweiter Absatz) Tj ET";
 
     fn edit_of(para: usize, text: &str) -> TextEdit {
-        TextEdit { para, text: text.into(), dx: 0.0, dy: 0.0, size: None, font: None }
+        TextEdit { para, text: text.into(), ..Default::default() }
     }
 
     #[test]
@@ -745,6 +813,19 @@ mod tests {
         assert_eq!(q.font, "NimbusRoman-Regular");
         assert!((q.size - 10.0).abs() < 0.01);
         assert!((q.lines[0].x0 - 50.0).abs() < 0.5 && (q.lines[0].base - 110.0).abs() < 0.5, "{:?}", q.lines[0]);
+    }
+
+    #[test]
+    fn mehrere_absaetze_verschieben_ohne_falschen_ueberlauf() {
+        // Absatz 0 rückt in die alte Stelle von Absatz 1, beide gemeinsam gewählt: kein Überlauf-Hinweis
+        let mut d = doc_with(PAGE);
+        assert_eq!(move_paras(&mut d, 0, &[0, 1], 0.0, 50.0, false).unwrap(), None);
+        let p = paragraphs(&d, 0).unwrap();
+        assert_eq!(p.len(), 2, "{p:?}");
+        assert!(p.iter().any(|p| p.text == "Zweiter Absatz" && (p.lines[0].base - 140.0).abs() < 0.5), "{p:?}");
+        // allein verschoben überdeckt Absatz 0 den stehenden Absatz 1 wirklich
+        let mut d = doc_with(PAGE);
+        assert!(move_paras(&mut d, 0, &[0], 0.0, 50.0, false).unwrap().is_some_and(|w| w.contains("läuft über")));
     }
 
     #[test]

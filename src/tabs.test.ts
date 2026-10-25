@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, setDirty, show, toggleSplit, type Tabs } from "./tabs";
+import { activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, onlyActivates, openTab, setDirty, pickDoc, show, toggleSplit, toPane, viewActive, type Tabs } from "./tabs";
 
 const three = (): Tabs => openTab(openTab(openTab(EMPTY_TABS, 1, "C:\\a.pdf"), 2, "C:\\b.pdf"), 3, "C:\\c.pdf");
 const ids = (s: Tabs) => s.tabs.map((t) => t.id);
@@ -54,10 +54,11 @@ describe("Split", () => {
     expect(s.active).toBe(1);
   });
 
-  it("Dokument aus der anderen Hälfte wählen aktiviert die andere Hälfte statt es doppelt zu zeigen", () => {
-    const s = show(toggleSplit(three()), 3);
-    expect(s.panes).toEqual([3, 1]);
-    expect(s.active).toBe(0);
+  it("Dokument der anderen Hälfte zeigen/öffnen → zwei Ansichten, aktive Hälfte bleibt (Öffnen je Leiste in dieser Hälfte)", () => {
+    const s = show(toggleSplit(three()), 3); // rechts aktiv
+    expect(s.panes).toEqual([3, 3]);
+    expect(s.active).toBe(1);
+    expect(openTab(focus(toggleSplit(three()), 1), 9, "c:/C.pdf").panes).toEqual([3, 3]);
   });
 
   it("Öffnen und Tab-Klick betreffen nur die aktive Hälfte", () => {
@@ -87,8 +88,57 @@ describe("Split", () => {
     expect(activeId(s)).toBe(1);
   });
 
+  it("Tab in die andere Hälfte ziehen tauscht die Hälften", () => {
+    const s = toPane(toggleSplit(three()), 3, 1);
+    expect(s.panes).toEqual([1, 3]);
+    expect(s.active).toBe(1);
+  });
+
+  it("Strg+Ziehen oder leere Zielhälfte → gleiche PDF in beiden Hälften; Schließen leert beide", () => {
+    expect(toPane(toggleSplit(three()), 3, 1, true).panes).toEqual([3, 3]);
+    let s = toPane(toggleSplit(openTab(EMPTY_TABS, 1, "a")), 1, 1);
+    expect(s.panes).toEqual([1, 1]);
+    expect(show(s, 1).panes).toEqual([1, 1]);
+    s = closeTab(s, 1);
+    expect(s.panes).toEqual([undefined, undefined]);
+  });
+
+  it("Tab aus der Leiste in eine Hälfte ziehen ersetzt nur diese", () => {
+    expect(toPane(toggleSplit(three()), 2, 0).panes).toEqual([2, 1]);
+  });
+
   it("focus ohne Split ändert nichts", () => {
     const s = three();
     expect(focus(s, 1)).toBe(s);
+  });
+
+  it("nur Ansichten in einer Hälfte hören auf Tastatur/Einfügen (versteckte Tabs nie)", () => {
+    const s = three(); // Tab 3 aktiv in Hälfte 0, Tabs 1+2 versteckt
+    expect(viewActive(s, 0, true)).toBe(true);
+    expect(viewActive(s, 0, false)).toBe(false); // vorher: versteckte Tabs galten als Hälfte 0 → mehrere Ziele
+    const sp = toggleSplit(s);
+    expect(viewActive(sp, 1, true)).toBe(true);
+    expect(viewActive(sp, 0, true)).toBe(false);
+  });
+
+  it("Tab-Leiste je Hälfte: jedes offene Dokument wählbar, nur diese Hälfte ändert sich und wird aktiv", () => {
+    const sp = toggleSplit(three()); // [3, 1]
+    expect(sp.panes).toEqual([3, 1]);
+    expect(pickDoc(sp, 2, 1).panes).toEqual([3, 2]);
+    expect(pickDoc(sp, 3, 1).panes).toEqual([3, 3]); // zweite Ansicht derselben PDF
+    expect(pickDoc(sp, 1, 0).panes).toEqual([1, 1]); // kein Tausch
+    expect(pickDoc(sp, 2, 0).active).toBe(0);
+    // neues Dokument steht in beiden Leisten (eine Tab-Liste), Schließen in einer Leiste schließt es überall
+    const o = openTab(sp, 4, "C:\\d.pdf");
+    expect(ids(o)).toEqual([1, 2, 3, 4]);
+    expect(o.panes).toEqual([3, 4]);
+    expect(closeTab(pickDoc(o, 4, 0), 4).panes).toEqual([3, 1]);
+  });
+
+  it("erster Maus-Klick in die inaktive Hälfte aktiviert nur, Stift zeichnet sofort", () => {
+    expect(onlyActivates(false, "mouse")).toBe(true);
+    expect(onlyActivates(true, "mouse")).toBe(false);
+    expect(onlyActivates(false, "pen")).toBe(false);
+    expect(onlyActivates(false, "touch")).toBe(false);
   });
 });
