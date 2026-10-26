@@ -8,3 +8,7 @@ src-tauri/target/
 testdata/pdfs/
 graphify-out/
 src-tauri/gen/
+
+# Persönliche Tool-Konfiguration (Claude Code), bleibt lokal
+CLAUDE.md
+.claude/
