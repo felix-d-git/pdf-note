@@ -1,9 +1,11 @@
 import {
   ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FilePenLine, FileOutput, FilePlus, Files, Flame,
   FolderOpen, Grid3x3, Hand, History, ImagePlus, Keyboard, Layers, Lock, MousePointer2, NotebookPen, Palette, PenTool, Redo2, RotateCw,
-  Save, ScanText, Search, Type, Undo2, Wrench, X, type LucideIcon,
+  Save, Scale, ScanText, Search, Type, Undo2, Wrench, X, type LucideIcon,
 } from "lucide-react";
+import { resourceDir } from "@tauri-apps/api/path";
 import { useEffect, useRef, useState } from "react";
+import { version } from "../package.json";
 import { STRINGS, T, keyText } from "./i18n";
 import { combos, KEYS, LAYERS, pressOf, TOOL_LABELS } from "./keys";
 import { BTN, FIELD, IconBtn, on } from "./ui";
@@ -195,6 +197,24 @@ const EN: Chapter[] = [
 ];
 
 const KEYS_ID = "keys";
+const SOURCE = "https://github.com/felix-d-git/pdf-note";
+/**
+ * „Über / Lizenzen“ = Appropriate Legal Notices nach AGPL-3.0 §5(d): Copyright, keine Gewährleistung, Lizenz, Quellcode,
+ * Lizenztexte (Ordner `licenses` aus scripts/licenses.mjs). Adresse nur als Text – die App öffnet keine Netzwerkverbindung.
+ */
+const about = (dir: string | undefined): Chapter => T === STRINGS.de
+  ? { id: "about", icon: Scale, title: "Über / Lizenzen", lines: [
+    `PDF Note ${version} – Copyright (C) 2026 felix-d-git`,
+    "Ohne jede Gewährleistung. PDF Note ist freie Software: Du darfst es unter den Bedingungen der GNU Affero General Public License v3.0 (nur diese Version) weitergeben und ändern.",
+    `Quellcode: ${SOURCE}/tree/v${version}`,
+    `Lizenztexte von PDF Note und aller verwendeten Komponenten (MuPDF, Tauri, React, Schriften …): ${dir ?? "Ordner „licenses“ im Installationsordner"}`,
+  ] }
+  : { id: "about", icon: Scale, title: "About / licenses", lines: [
+    `PDF Note ${version} – Copyright (C) 2026 felix-d-git`,
+    "Without any warranty. PDF Note is free software: you may redistribute and modify it under the terms of the GNU Affero General Public License v3.0 (only this version).",
+    `Source code: ${SOURCE}/tree/v${version}`,
+    `License texts of PDF Note and all components it uses (MuPDF, Tauri, React, fonts …): ${dir ?? "folder “licenses” in the installation folder"}`,
+  ] };
 /** Zeilen der Werkzeug-Tabelle (aus derselben Liste wie die Werkzeugleiste) */
 const toolRows = (): [LucideIcon, string, string][] => [
   ...TOOL_LABELS.map(([, icon, name, key]): [LucideIcon, string, string] => [icon, name, keyText(key)]),
@@ -216,11 +236,14 @@ function Row({ line }: { line: Line }) {
 export function Help({ onClose, onTour }: { onClose: () => void; onTour: () => void }) {
   const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const [licenses, setLicenses] = useState<string>();
   useEffect(() => ref.current?.querySelector("input")?.focus(), []);
+  // Installationsordner\licenses (ohne \\?\-Präfix); ohne Tauri (Tests) bleibt der allgemeine Hinweis
+  useEffect(() => void resourceDir().then((d) => setLicenses(d.replace(/^\\\\\?\\/, "").replace(/[\\/]+$/, "") + "\\licenses"), () => {}), []);
   const all = T === STRINGS.de ? DE : EN;
   const keysTitle = T.keysTitle;
   const needle = q.trim().toLowerCase();
-  const shown = [...all, { id: KEYS_ID, icon: Keyboard, title: keysTitle, lines: [] }].filter(
+  const shown = [...all, { id: KEYS_ID, icon: Keyboard, title: keysTitle, lines: [] }, about(licenses)].filter(
     (c) => !needle || (c.id === KEYS_ID ? [keysTitle, ...keyRows().flat()].join(" ").toLowerCase() : text(c)).includes(needle));
   const go = (id: string) => ref.current?.querySelector(`#help-${id}`)?.scrollIntoView({ block: "start" });
 
