@@ -596,6 +596,7 @@ impl<T: NativeDevice + ?Sized> NativeDevice for Rc<RefCell<T>> {
 /// ```
 pub(crate) fn create<D: NativeDevice>(device: D) -> Result<Device, Error> {
     const {
+        // Geändert für PDF Note (2026-10-14): max_align_t -> u128, siehe vendor/mupdf/PATCH.md
         assert!(align_of::<D>() <= align_of::<u128>());
     }
 

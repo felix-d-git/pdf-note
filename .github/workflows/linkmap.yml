@@ -1,0 +1,43 @@
+# Issue #10: welche MuPDF-Drittbibliotheken landen unter MSVC wirklich in pdf-note.exe? Release-Build mit Linker-Map,
+# Auswertung je Bibliothek in der Job-Zusammenfassung, Map als Artefakt. Läuft nur bei Änderungen an vendor/mupdf oder
+# an der Auswertung selbst, sonst von Hand (langer Release-Build; Dependabot-PRs bleiben unberührt).
+name: MuPDF-Linkmap
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: [".github/workflows/linkmap.yml", "scripts/linkmap.mjs", "vendor/mupdf/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  linkmap:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}\target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> ../target
+      - run: npm ci
+      # dist/ braucht tauri-build (frontendDist)
+      - run: npm run build
+      # /MAP nur für den letzten Link (pdf-note.exe), Profil release wie im Installer; cmd reicht die Argumente unverändert durch
+      - shell: cmd
+        run: cargo rustc --release --locked --manifest-path src-tauri/Cargo.toml --bin pdf-note -- -C link-arg=/MAP:%GITHUB_WORKSPACE%\pdf-note.map
+      - shell: bash
+        run: node scripts/linkmap.mjs pdf-note.map | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linkmap
+          path: pdf-note.map
+          if-no-files-found: ignore
