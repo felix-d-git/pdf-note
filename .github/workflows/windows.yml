@@ -30,4 +30,20 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # erzeugt in beforeBuildCommand die Lizenzsammlung THIRD-PARTY-LICENSES/ (scripts/licenses.mjs)
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
       - run: npm run tauri build
+      # Issue #7: jede Datei der Lizenzsammlung muss im Installer liegen (<Installationsordner>\licenses)
+      - name: Lizenztexte im Installer
+        shell: bash
+        run: |
+          exe=$(ls target/release/bundle/nsis/*-setup.exe)
+          7z l "$exe" | tr '\\' / > installer.txt
+          miss=0
+          for f in THIRD-PARTY-LICENSES/*; do
+            grep -qF "licenses/${f##*/}" installer.txt || { echo "fehlt im Installer: ${f##*/}"; miss=1; }
+          done
+          [ "$miss" = 0 ] || { cat installer.txt; exit 1; }
+          echo "$(ls THIRD-PARTY-LICENSES | wc -l) Lizenzdateien im Installer"

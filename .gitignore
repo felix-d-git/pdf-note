@@ -8,6 +8,14 @@ src-tauri/target/
 testdata/pdfs/
 graphify-out/
 src-tauri/gen/
+# erzeugt von scripts/licenses.mjs (npm run licenses); eingecheckt nur Lizenztexte ohne Quelle im Build
+/THIRD-PARTY-LICENSES/*
+!/THIRD-PARTY-LICENSES/LIESMICH.txt
+!/THIRD-PARTY-LICENSES/leptonica-*
+!/THIRD-PARTY-LICENSES/libjpeg-*
+!/THIRD-PARTY-LICENSES/freetype-*
+!/THIRD-PARTY-LICENSES/webview2-*
+!/THIRD-PARTY-LICENSES/URW-*
 
 # Persönliche Tool-Konfiguration (Claude Code), bleibt lokal
 CLAUDE.md
