@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, test } from "vitest";
+import { version } from "../package.json";
 import { CmdPalette, commands, Help } from "./help";
 import { keyText, T } from "./i18n";
 import { combos, KEYS } from "./keys";
@@ -40,6 +41,20 @@ test("Hilfe-Suche findet Kapitel", () => {
   const titles = [...div.querySelectorAll("section h2")].map((h) => h.textContent);
   expect(titles.length).toBeGreaterThan(0);
   expect(titles.length).toBeLessThan(10);
+  unmount();
+});
+
+test("Hilfe: Über/Lizenzen nach AGPL §5(d) – Copyright, keine Gewährleistung, Lizenz, Quellcode, Lizenzordner, kein Link", () => {
+  const { div, unmount } = mount(<Help onClose={() => {}} onTour={() => {}} />);
+  const about = div.querySelector("#help-about");
+  const text = about?.textContent ?? "";
+  expect(text).toContain(`PDF Note ${version} – Copyright (C) 2026 felix-d-git`);
+  expect(text).toMatch(/Gewährleistung|warranty/);
+  expect(text).toContain("GNU Affero General Public License v3.0");
+  expect(text).toContain(`https://github.com/felix-d-git/pdf-note/tree/v${version}`);
+  expect(text).toContain("licenses");
+  // offline: nur Text, nichts zum Anklicken
+  expect(about?.querySelector("a")).toBeNull();
   unmount();
 });
 

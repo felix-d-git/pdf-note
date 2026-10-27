@@ -1,0 +1,40 @@
+PDF Note – Lizenzen / Licenses
+==============================
+
+PDF Note – Copyright (C) 2026 felix-d-git
+Freie Software unter der GNU Affero General Public License v3.0 (nur diese Version), OHNE JEDE GEWÄHRLEISTUNG.
+Free software under the GNU Affero General Public License v3.0 only, WITHOUT ANY WARRANTY.
+Quellcode / source code: siehe / see SOURCE.md
+
+Dieser Ordner wird bei jedem Build neu erzeugt (scripts/licenses.mjs) und enthält die Lizenztexte und
+Copyright-Hinweise aller mit PDF Note ausgelieferten Komponenten.
+This folder is regenerated on every build and holds the license texts and copyright notices of all
+components shipped with PDF Note.
+
+PDF-Note-LICENSE-AGPL-3.0.txt  Lizenz von PDF Note / license of PDF Note
+SOURCE.md                      Quellcode-Angebot (AGPL-3.0 §6) / offer of Corresponding Source
+rust-crates.html               alle Rust-Crates der Windows-Binary (cargo-about) / all Rust crates
+npm-bundle.md                  gebündelte npm-Pakete: React, Zod, MathJax, lucide-react, perfect-freehand, Tauri-API …
+font-*-OFL.txt                 Schriften Manrope, IBM Plex Mono (SIL Open Font License 1.1)
+mupdf-COPYING.txt              MuPDF (Artifex, AGPL-3.0)
+mupdf-<bibliothek>-*           mitgebaute MuPDF-Drittbibliotheken (thirdparty/ in mupdf-sys)
+                               MuPDF third-party libraries built into the binary
+leptonica-LICENSE.txt          Leptonica 1.85 (BSD-2-Clause) – fehlt in mupdf-sys, von github.com/DanBloomberg/leptonica
+libjpeg-IJG-README.txt         libjpeg 9f (IJG-Lizenz, Abschnitt LEGAL ISSUES) – fehlt in mupdf-sys,
+                               von github.com/ArtifexSoftware/thirdparty-libjpeg (Tag v9f).
+                               This software is based in part on the work of the Independent JPEG Group.
+freetype-FTL.TXT               FreeType 2.13.3 – PDF Note nutzt FreeType unter der GPL-2.0-or-later
+freetype-GPLv2.TXT             (freetype-GPLv2.TXT); die FTL liegt zur Vollständigkeit bei. Beide fehlen in mupdf-sys,
+                               von github.com/freetype/freetype (Tag VER-2-13-3)
+webview2-sdk-LICENSE.txt       Microsoft WebView2 SDK (WebView2LoaderStatic.lib über webview2-com-sys 0.39.1, bitidentisch
+webview2-sdk-NOTICE.txt        mit NuGet Microsoft.Web.WebView2 1.0.3800.47; LICENSE.txt dort wortgleich)
+URW-Base35-OFL-1.1.txt         URW-Base-35-Schriften in MuPDF (resources/fonts/urw), SIL OFL 1.1 – fehlt in mupdf-sys,
+                               von ArtifexSoftware/mupdf resources/fonts/urw/OFL.txt
+URW-Base35-AGPL-Font-Exception.txt  dieselben Schriften alternativ: AGPL-3.0 mit Font-Ausnahme
+                               (ArtifexSoftware/urw-base35-fonts LICENSE, Commit 9927f3c)
+
+Die Tesseract-Sprachdaten (Apache-2.0) haben ihre Lizenz im Ordner tessdata.
+The Tesseract language data (Apache-2.0) carries its license in the tessdata folder.
+
+Eingecheckt sind nur LIESMICH.txt, leptonica-*, libjpeg-*, freetype-*, webview2-* und URW-* (keine Quelle im Build).
+Bei einem Versionssprung dieser Bibliotheken die Texte am Upstream-Tag prüfen.
