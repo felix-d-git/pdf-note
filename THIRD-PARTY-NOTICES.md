@@ -4,7 +4,7 @@
 
 | Komponente | Version | Lizenz | Verwendung |
 |---|---|---|---|
-| MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex; Rust-Bindings: messense) | 0.8.0 | AGPL-3.0 | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Feature `base14-fonts`: URW-Base-14-Schriften (Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes; AGPL-3.0 in der MuPDF-Distribution, Font-Embedding-Ausnahme ungeklärt – siehe `docs/LIZENZ-AUDIT.md` Y4); beim Bearbeiten von PDF-Text als Ersatzschrift in die bearbeitete PDF eingebettet. Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/` siehe nächste Tabelle |
+| MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex; Rust-Bindings: messense) | 0.8.0 | AGPL-3.0 | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Feature `base14-fonts`: URW-Base-14-Schriften, Lizenz siehe Abschnitt „URW-Schriften“ unten. Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/` siehe nächste Tabelle |
 | Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`) |
 | Tauri (`tauri`, `tauri-build`, `@tauri-apps/api`, `@tauri-apps/cli`) | 2.x | MIT OR Apache-2.0 | Desktop-Shell (WebView2) |
 | Tauri Dialog-Plugin (`tauri-plugin-dialog`, `@tauri-apps/plugin-dialog`), darunter `rfd` 0.16 (MIT) | 2.8 | MIT OR Apache-2.0 | Datei-Öffnen-Dialog, Nachfrage beim Schließen |
@@ -45,13 +45,25 @@ Unter Windows/MSVC baut `mupdf-sys` per msbuild die komplette `libmupdf` samt `l
 
 Silbentrennungsmuster (`resources/hyphen`) sind wegen der deaktivierten HTML-Engine aus (`FZ_ENABLE_HYPHEN=0`); die Schriften `han`, `droid`, `noto`, `sil` entfernt `mupdf-sys` aus dem Build.
 
+### URW-Schriften (Base 14, in `mupdf-sys` 0.8.0)
+
+Nimbus Sans, Nimbus Roman, Nimbus Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes – Copyright (URW)++ Design & Development. MuPDF (`resources/fonts/urw/*.cff`) enthält sie als CFF-Teilmengen des URW-Releases vom 2017-07-27 (MuPDF-Commit `72aaafb`; Dingbats/Symbol aus dem Release von 2016).
+
+**Lizenz:** `OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817)` – jede der beiden genügt:
+
+- **SIL OFL 1.1** – `THIRD-PARTY-LICENSES/URW-Base35-OFL-1.1.txt` (= `resources/fonts/urw/OFL.txt` in MuPDF upstream; in der Crate `mupdf-sys` nicht enthalten). Die OFL gilt nicht für Dokumente, die mit den Schriften erstellt werden.
+- **AGPL-3.0 mit Font-Ausnahme** – `THIRD-PARTY-LICENSES/URW-Base35-AGPL-Font-Exception.txt` (= `LICENSE` in ArtifexSoftware/urw-base35-fonts):
+  > As a special exception, permission is granted to include these font programs in a Postscript or PDF file that consists of a document that contains text to be displayed or printed using this font, regardless of the conditions or license applying to the document itself.
+
+Die App bettet Nimbus Sans/Roman/Mono PS vollständig in PDFs ein: als Ersatzschrift beim Bearbeiten von Text, im Notizbuch-Export und in der unsichtbaren OCR-Textebene. Die erzeugten PDFs stehen deshalb nicht unter der AGPL. Bei unsichtbarem OCR-Text deckt die OFL das eindeutig ab, die AGPL-Ausnahme spricht nur von Text, der „displayed or printed“ wird. Belege: `docs/LIZENZ-AUDIT.md`, „Ergebnis Y4“.
+
 ### Weitere ausgelieferte Rust-Crates (transitiv)
 
 Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Version 1.2.0, 222 Crates für `x86_64-pc-windows-msvc`). Lizenzen dort: MIT OR Apache-2.0 (überwiegend), MIT, Apache-2.0 (`tao`), Unicode-3.0 (ICU4X: `icu_*`, `zerovec`, `yoke`, `tinystr`, … über `url`/`idna`), BSD-3-Clause (`alloc-no-stdlib`, `alloc-stdlib`, `brotli`), Zlib (`foldhash`), 0BSD/CC0-1.0/MIT-0/Unlicense als Wahlmöglichkeit, ISC.
 
 **MPL-2.0:** `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` (über `tauri-utils`) und `option-ext` (über `dirs`) stehen unter der Mozilla Public License 2.0. Ihr Quellcode ist unverändert auf https://crates.io erhältlich (jeweilige Version laut `src-tauri/Cargo.lock`).
 
-**Microsoft WebView2 Loader:** `webview2-com-sys` (MIT) linkt unter MSVC Microsofts `WebView2LoaderStatic.lib` aus dem WebView2-SDK statisch ein (Microsoft-Lizenz, nur als Binärdatei verfügbar) – Bewertung offen, siehe `docs/LIZENZ-AUDIT.md` R3.
+**Microsoft WebView2 Loader:** `webview2-com-sys` (MIT) linkt unter MSVC Microsofts `WebView2LoaderStatic.lib` aus dem WebView2-SDK 1.0.3800.47 statisch ein. Copyright (C) Microsoft Corporation, BSD-artige Lizenz: `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`. Den Loader gibt es nur als Binärdatei. Er wird als System Library im Sinne von AGPL-3.0 §1 behandelt (bewusst akzeptiertes Restrisiko, Begründung: `docs/LIZENZ-AUDIT.md`, „Entscheidung R3“). Für den eigenen Code gilt zusätzlich die Erlaubnis in `LICENSE-ADDITIONAL-PERMISSION.md`.
 
 ### Weitere gebündelte npm-Pakete (transitiv)
 
