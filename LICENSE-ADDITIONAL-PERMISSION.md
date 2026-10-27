@@ -17,4 +17,4 @@ of the Microsoft WebView2 Loader.
 
 **Reichweite:** Die Erlaubnis betrifft nur den Code, an dem felix-d-git die Rechte hält. Die Lizenzen von Drittkomponenten, vor allem MuPDF (AGPL-3.0, Artifex), ändert sie nicht. Wie der Loader dort eingeordnet wird, steht in `docs/LIZENZ-AUDIT.md`, Abschnitt „Entscheidung R3“. Wer das Programm weitergibt, darf diese Erlaubnis nach §7 Abs. 2 entfernen.
 
-Hintergrund: Tauri bzw. wry linkt unter Windows/MSVC über `webview2-com-sys` Microsofts `WebView2LoaderStatic.lib`. Der Loader steht unter einer BSD-artigen Microsoft-Lizenz (`THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`), ist aber nur als Binärdatei erhältlich.
+Hintergrund: Tauri bzw. wry linkt unter Windows/MSVC über `webview2-com-sys` Microsofts `WebView2LoaderStatic.lib`. Der Loader steht unter einer BSD-artigen Microsoft-Lizenz (`THIRD-PARTY-LICENSES/webview2-sdk-LICENSE.txt`), ist aber nur als Binärdatei erhältlich.

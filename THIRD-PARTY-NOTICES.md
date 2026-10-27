@@ -63,7 +63,7 @@ Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Versi
 
 **MPL-2.0:** `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` (über `tauri-utils`) und `option-ext` (über `dirs`) stehen unter der Mozilla Public License 2.0. Ihr Quellcode ist unverändert auf https://crates.io erhältlich (jeweilige Version laut `src-tauri/Cargo.lock`).
 
-**Microsoft WebView2 Loader:** `webview2-com-sys` (MIT) linkt unter MSVC Microsofts `WebView2LoaderStatic.lib` aus dem WebView2-SDK 1.0.3800.47 statisch ein. Copyright (C) Microsoft Corporation, BSD-artige Lizenz: `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`. Den Loader gibt es nur als Binärdatei. Er wird als System Library im Sinne von AGPL-3.0 §1 behandelt (bewusst akzeptiertes Restrisiko, Begründung: `docs/LIZENZ-AUDIT.md`, „Entscheidung R3“). Für den eigenen Code gilt zusätzlich die Erlaubnis in `LICENSE-ADDITIONAL-PERMISSION.md`.
+**Microsoft WebView2 Loader:** `webview2-com-sys` (MIT) linkt unter MSVC Microsofts `WebView2LoaderStatic.lib` aus dem WebView2-SDK 1.0.3800.47 statisch ein. Copyright (C) Microsoft Corporation, BSD-artige Lizenz: `THIRD-PARTY-LICENSES/webview2-sdk-LICENSE.txt`. Den Loader gibt es nur als Binärdatei. Er wird als System Library im Sinne von AGPL-3.0 §1 behandelt (bewusst akzeptiertes Restrisiko, Begründung: `docs/LIZENZ-AUDIT.md`, „Entscheidung R3“). Für den eigenen Code gilt zusätzlich die Erlaubnis in `LICENSE-ADDITIONAL-PERMISSION.md`.
 
 ### Weitere gebündelte npm-Pakete (transitiv)
 

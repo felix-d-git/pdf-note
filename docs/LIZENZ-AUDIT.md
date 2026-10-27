@@ -49,7 +49,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 |---|---|---|
 | `vendor/mupdf/` | mupdf-rs 0.8.0 (messense), 1 Zeile gepatcht | AGPL-3.0, `LICENSE` + `PATCH.md` vorhanden |
 | `mupdf-sys` 0.8.0 (crates.io) | MuPDF-C-Quellen (Artifex) + `thirdparty/` | AGPL-3.0 + Drittlizenzen (Y1) |
-| `webview2-com-sys` 0.39.1 | `WebView2LoaderStatic.lib` (Microsoft, Binär; bitidentisch mit NuGet `Microsoft.Web.WebView2` 1.0.3800.47) | Microsoft WebView2-SDK-Lizenz (BSD-artig, `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`), **kein Quellcode** (R3, akzeptiert) |
+| `webview2-com-sys` 0.39.1 | `WebView2LoaderStatic.lib` (Microsoft, Binär; bitidentisch mit NuGet `Microsoft.Web.WebView2` 1.0.3800.47) | Microsoft WebView2-SDK-Lizenz (BSD-artig, `THIRD-PARTY-LICENSES/webview2-sdk-LICENSE.txt`), **kein Quellcode** (R3, akzeptiert) |
 | `spikes/ink-test.html` | perfect-freehand 1.2.3 inline | MIT (Y7) |
 
 Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + Projekt-Referenzen): FreeType, HarfBuzz, jbig2dec, lcms2(mt), libjpeg, OpenJPEG, zlib, brotli, gumbo-parser, MuJS, extract, Tesseract, Leptonica, zxing-cpp, zint. Feature-Defines: `FZ_ENABLE_JS/HTML/EPUB/BROTLI/DOCX_OUTPUT = 0`, `FZ_ENABLE_BARCODE = 1` (Default), `FZ_ENABLE_HYPHEN = 0` (folgt aus deaktivierter HTML-Engine → Silbentrennungsmuster werden nicht genutzt). Die Fonts `han/droid/noto/sil` entfernt `mupdf-sys` aus `libresources`; es bleiben die URW-Base-14-Fonts.
@@ -160,7 +160,7 @@ Vollständige Listen: Anhang A–D.
    - npm: Vite-Option `build.license: true` (seit Vite 7, erzeugt `dist/.vite/license.md` aller gebündelten Pakete) oder `license-checker-rseidelsohn --production`.
    - MuPDF-C-Bibliotheken: Lizenzdateien aus `mupdf-sys-0.8.0/mupdf/thirdparty/*/{COPYING,LICENSE*}` sowie Leptonica-Lizenz von Upstream kopieren.
    - Fonts: `OFL.txt` von Manrope und IBM Plex Mono (`node_modules/@fontsource*/…/LICENSE`); URW: `THIRD-PARTY-LICENSES/URW-Base35-*.txt` (liegt bereits vor).
-   - WebView2-SDK-Lizenztext: `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt` (liegt bereits vor).
+   - WebView2-SDK-Lizenztext: `THIRD-PARTY-LICENSES/webview2-sdk-LICENSE.txt` (liegt bereits vor).
    - Alles per `bundle.resources` in den Installer (z. B. `"../THIRD-PARTY-LICENSES/*": "licenses/"`) und im CI prüfen, dass die Dateien im NSIS-Paket landen.
 4. **R2 – Corresponding Source**: Repo öffentlich, jedes Release mit Tag; im Release-Text und in der App: „Quellcode: https://github.com/felix-d-git/pdf-note/tree/vX.Y.Z“. Weil MuPDF über crates.io kommt, zusätzlich `mupdf-sys-0.8.0.crate` als Release-Asset anhängen oder ausdrücklich auf crates.io verweisen (AGPL §6(d) erlaubt Drittserver, wenn die Verfügbarkeit gesichert ist – ein eigenes Asset ist robuster). Vorlage `SOURCE.md` siehe unten.
 5. ~~**R3 – WebView2 Loader**: Entscheidung treffen~~ – erledigt: Option „Risiko mit Begründung akzeptieren“, siehe „Entscheidung R3“. Die Einschätzung dort setzt voraus, dass R1 und R2 vor dem ersten öffentlichen Installer erledigt sind.
@@ -210,7 +210,7 @@ Entschieden 2026-10-27: **Option 1 – den Loader als System Library behandeln u
 
 - `webview2-com-sys` 0.39.1 enthält `x64/`, `x86/` und `arm64/WebView2LoaderStatic.lib`. Laut SHA-256 sind sie **bitidentisch** mit dem NuGet-Paket `Microsoft.Web.WebView2` **1.0.3800.47** (x64: `89c6b872…`). Die Prüfsumme der Crate stimmt mit `Cargo.lock` überein.
 - Unter MSVC linkt `src/lib.rs` die Bibliothek mit `link(name = "WebView2LoaderStatic", kind = "static")`. `WebView2Loader.dll` wird nicht ausgeliefert.
-- **Lizenz:** `LICENSE.txt` im NuGet-Paket, inhaltlich BSD-3-Clause („Copyright (C) Microsoft Corporation. All rights reserved.“). Weitergabe als Binärdatei ist erlaubt, wenn Copyright, Bedingungen und Haftungsausschluss in der Dokumentation wiedergegeben werden. Die Lizenz ist GPL-kompatibel, es fehlt nur der Quellcode. Kopie: `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`. Die Crate selbst nennt nur „MIT“ und enthält keinen Microsoft-Lizenztext.
+- **Lizenz:** `LICENSE.txt` im NuGet-Paket, inhaltlich BSD-3-Clause („Copyright (C) Microsoft Corporation. All rights reserved.“). Weitergabe als Binärdatei ist erlaubt, wenn Copyright, Bedingungen und Haftungsausschluss in der Dokumentation wiedergegeben werden. Die Lizenz ist GPL-kompatibel, es fehlt nur der Quellcode. Kopie: `THIRD-PARTY-LICENSES/webview2-sdk-LICENSE.txt`. Die Crate selbst nennt nur „MIT“ und enthält keinen Microsoft-Lizenztext.
 - **Inhalt:** Laut den Strings in der `.lib` enthält sie nur Microsoft-Code (`edge_embedded_browser/client/win/loader_impl.cc`, `environment_helper.cc` u. a.). Die Fremdkomponenten aus `NOTICE.txt` des SDK (Antlr, StringTemplate) gehören zu `wv2winrt` und stecken nicht im Loader.
 - **Funktion:** Der Loader sucht die installierte WebView2-Laufzeit (Registry `EdgeUpdate\ClientState`) und startet `EmbeddedBrowserWebView.dll`. wry 0.57 ruft davon nur `CreateCoreWebView2EnvironmentWithOptions` und `GetAvailableCoreWebView2BrowserVersionString` auf.
 - **Betroffen ist nur die Binärverteilung:** Repo und Quellcode-Release enthalten den Loader nicht, er kommt erst beim Bauen über crates.io dazu.
