@@ -1,13 +1,13 @@
 # Lizenz-Audit PDF Note
 
-Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0
+Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11)
 Ziel der Veröffentlichung: Repo öffentlich + Windows-Installer (NSIS) als GitHub-Release.
 
 > Dies ist eine technische Compliance-Analyse, keine Rechtsberatung. Punkte mit **UNKLAR** brauchen eine manuelle (ggf. juristische) Prüfung.
 
 ## Ergebnis in einem Satz
 
-Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompatibel – es gibt **keinen Copyleft-Konflikt im Quellcode**. Die Risiken liegen bei den **Pflichten der Binärverteilung**: Der Installer enthält keine Drittanbieter-Lizenztexte, es fehlt ein Quellcode-Angebot nach AGPL §6, und Microsofts quelloffen nicht verfügbare `WebView2LoaderStatic.lib` wird statisch in die AGPL-Binary gelinkt.
+Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompatibel – es gibt **keinen Copyleft-Konflikt im Quellcode**. Die Risiken liegen bei den **Pflichten der Binärverteilung**: Der Installer enthält keine Drittanbieter-Lizenztexte, es fehlt ein Quellcode-Angebot nach AGPL §6, und Microsofts quelloffen nicht verfügbare `WebView2LoaderStatic.lib` wird statisch in die AGPL-Binary gelinkt (als System Library eingeordnet, bewusst akzeptiertes Restrisiko – R3).
 
 ## Risiko-Matrix
 
@@ -15,11 +15,11 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 |---|---|---|---|
 | R1 | 🔴 RED | Installer liefert außer `LICENSE` (AGPL) und `tessdata/LICENSE` **keine** Lizenztexte/Copyright-Hinweise der ~240 gebündelten Komponenten mit (MIT, BSD, ISC, Apache-2.0, OFL-1.1, Unicode-3.0, MPL-2.0, Zlib, IJG …). Das JS-Bundle enthält 0 Lizenzkommentare (Minifier entfernt sie). Verstoß gegen die Bedingung „copyright notice and permission notice shall be included“ bei jeder Binärweitergabe. | offen → #7 |
 | R2 | 🔴 RED | **AGPL §6 – Corresponding Source** für jede Binär-Weitergabe: Repo ist privat, Releases verweisen nicht auf den Quellstand, MuPDF-C-Quellen kommen über `mupdf-sys` von crates.io. Muss vor der ersten öffentlichen Installer-Weitergabe gelöst sein. | offen → #8 |
-| R3 | 🔴 RED (UNKLAR) | `webview2-com-sys` linkt unter MSVC Microsofts **`WebView2LoaderStatic.lib`** (nur Binär, kein Quellcode) **statisch** in die Binary. AGPL §1/§6 verlangt Quellcode für das Gesamtwerk außer „System Libraries“. Ob der Loader als System Library gilt, ist nicht eindeutig. | offen → #9 (juristische Prüfung) |
+| R3 | 🟡 YELLOW (akzeptiert) | `webview2-com-sys` linkt unter MSVC Microsofts **`WebView2LoaderStatic.lib`** (SDK 1.0.3800.47, BSD-artig, nur Binär) **statisch** in die Binary. AGPL §1/§6 verlangt Quellcode für das Gesamtwerk außer „System Libraries“. Der Loader dient nur dazu, die WebView2-Laufzeit von Windows zu nutzen (§1 (b) erfüllt). Strittig ist nur §1 (a), weil er mit dem SDK und nicht mit der Laufzeit kommt. Entscheidung: als System Library behandeln, Restrisiko gering; zusätzliche Erlaubnis nach §7 für den eigenen Code. | entschieden → #9, siehe „Entscheidung R3“ |
 | Y1 | 🟡 YELLOW | `mupdf-sys` baut unter MSVC die **gesamte** `libmupdf`/`libthirdparty` (msbuild ignoriert die `make`-Feature-Schalter). Bisher nicht genannt: zxing-cpp (Apache-2.0), zint (BSD-3-Clause), gumbo-parser (Apache-2.0), MuJS (ISC), extract (AGPL-3.0), brotli (MIT), Leptonica-Lizenztext fehlt im Crate. Was der Linker tatsächlich übernimmt, ist **UNKLAR**. | Notices im PR ergänzt (#14) (konservativ); Verifikation → #10 |
 | Y2 | 🟡 YELLOW | FreeType als „FTL“ aufgeführt. Die FTL ist wegen der Werbeklausel **GPL-inkompatibel**; im AGPL-Gesamtwerk gilt die Alternative **GPL-2.0-or-later**. | im PR korrigiert (#14) |
 | Y3 | 🟡 YELLOW | Transitive Rust-Crates fehlen in `THIRD-PARTY-NOTICES.md`, darunter **MPL-2.0** (`cssparser`, `selectors`, `dtoa-short`, `option-ext` – MPL §3.2 verlangt Hinweis auf Bezugsquelle des Quellcodes), **Unicode-3.0** (ICU4X), BSD-3-Clause, Zlib, `tao` (nur Apache-2.0). | im PR zusammengefasst (#14); Volltexte → R1 (#7) |
-| Y4 | 🟡 YELLOW (UNKLAR) | URW-Base-14-Schriften (AGPL-3.0) werden beim Textbearbeiten **in Nutzer-PDFs eingebettet**. Upstream (`urw-base35-fonts`) gewährt dafür nach Kenntnisstand eine Font-Embedding-Ausnahme (nicht am Original geprüft), die MuPDF-Distribution enthält aber keinen Lizenztext zu den Fonts. Ohne Ausnahme könnte die AGPL auf erzeugte PDFs ausstrahlen. | offen → #11 |
+| Y4 | 🟢 GREEN (geklärt) | URW-Base-14-Schriften werden **vollständig in Nutzer-PDFs eingebettet** (Textbearbeitung, Notizbuch, OCR-Ebene). Am Original belegt: `OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817)`. Beide Lizenzen erlauben das Einbetten, ohne dass die AGPL auf das Dokument übergreift. Lizenztexte in `THIRD-PARTY-LICENSES/`. | geklärt → #11, siehe „Ergebnis Y4“; Auslieferung der Texte → R1 (#7) |
 | Y5 | 🟡 YELLOW | AGPL §5(d): Programme mit interaktiver Oberfläche sollen „Appropriate Legal Notices“ anzeigen (Copyright, keine Gewährleistung, Lizenz, Weg zum Lizenztext). Die App hat kein „Über/Lizenzen“. | offen → #12 |
 | Y6 | 🟡 YELLOW | Kein Copyright-Vermerk des Projekts (weder `README`, `LICENSE` noch Quelltext). | im PR ergänzt (#14) |
 | Y7 | 🟡 YELLOW | `spikes/ink-test.html` enthält perfect-freehand inline, aber nur „MIT, (c) …“ statt des vollständigen MIT-Hinweises. | im PR ergänzt (#14) |
@@ -49,7 +49,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 |---|---|---|
 | `vendor/mupdf/` | mupdf-rs 0.8.0 (messense), 1 Zeile gepatcht | AGPL-3.0, `LICENSE` + `PATCH.md` vorhanden |
 | `mupdf-sys` 0.8.0 (crates.io) | MuPDF-C-Quellen (Artifex) + `thirdparty/` | AGPL-3.0 + Drittlizenzen (Y1) |
-| `webview2-com-sys` 0.39.1 | `WebView2LoaderStatic.lib` (Microsoft, Binär) | Microsoft WebView2-SDK-Lizenz (BSD-artig), **kein Quellcode** (R3) |
+| `webview2-com-sys` 0.39.1 | `WebView2LoaderStatic.lib` (Microsoft, Binär; bitidentisch mit NuGet `Microsoft.Web.WebView2` 1.0.3800.47) | Microsoft WebView2-SDK-Lizenz (BSD-artig, `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`), **kein Quellcode** (R3, akzeptiert) |
 | `spikes/ink-test.html` | perfect-freehand 1.2.3 inline | MIT (Y7) |
 
 Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + Projekt-Referenzen): FreeType, HarfBuzz, jbig2dec, lcms2(mt), libjpeg, OpenJPEG, zlib, brotli, gumbo-parser, MuJS, extract, Tesseract, Leptonica, zxing-cpp, zint. Feature-Defines: `FZ_ENABLE_JS/HTML/EPUB/BROTLI/DOCX_OUTPUT = 0`, `FZ_ENABLE_BARCODE = 1` (Default), `FZ_ENABLE_HYPHEN = 0` (folgt aus deaktivierter HTML-Engine → Silbentrennungsmuster werden nicht genutzt). Die Fonts `han/droid/noto/sil` entfernt `mupdf-sys` aus `libresources`; es bleiben die URW-Base-14-Fonts.
@@ -59,7 +59,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 |---|---|---|---|
 | `src-tauri/resources/tessdata/{deu,eng}.traineddata` | tesseract-ocr/tessdata_fast 4.1.0 | Apache-2.0, `LICENSE` liegt bei und wird ausgeliefert | 🟢 |
 | Manrope (Variable), IBM Plex Mono 400/500 (woff/woff2 im `dist`) | Fontsource | OFL-1.1 – Lizenztext muss mitgeliefert werden | 🟡 → R1 |
-| URW Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes | MuPDF `resources/fonts/urw` | AGPL-3.0 (Embedding-Ausnahme UNKLAR) | 🟡 Y4 |
+| URW Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) – Lizenztext muss mitgeliefert werden | 🟢 Y4 → R1 |
 | MathJax-TeX-Fontdaten | `mathjax-full` 3.2.2 | Apache-2.0 | 🟢 → R1 |
 | Lucide-Icons (Tree-Shaking) | `lucide-react` 1.59 | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
 | App-Icon `src-tauri/icons/*` | nicht dokumentiert | **UNKLAR** | 🟡 Y9 |
@@ -70,10 +70,10 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 |---|---|
 | Permissiv | ~210 Rust-Crates (MIT, Apache-2.0, MIT OR Apache-2.0, BSD-2/3, ISC, Zlib, 0BSD, CC0/MIT-0, Unlicense OR MIT, Unicode-3.0); npm: React, React DOM, scheduler, Zod, perfect-freehand, lucide-react, @tauri-apps/*, mathjax-full; C: HarfBuzz, lcms2, libjpeg (IJG), OpenJPEG, zlib, brotli, gumbo, MuJS, zxing-cpp, zint, Tesseract, Leptonica; Tesseract-Modelle; NSIS-Installer-Stub (zlib/libpng-Lizenz) |
 | Weak Copyleft | MPL-2.0: `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` (keine „Incompatible With Secondary Licenses“-Markierung → mit AGPL kombinierbar) |
-| Strong Copyleft | AGPL-3.0: MuPDF, `mupdf`, `mupdf-sys`, jbig2dec, extract, URW-Fonts; FreeType (gewählt: GPL-2.0-or-later) |
-| Schrift | OFL-1.1: Manrope, IBM Plex Mono |
-| Proprietär / binär ohne Quelle | `WebView2LoaderStatic.lib` (Microsoft) – R3 |
-| Ohne Lizenz / UNKLAR | App-Icon (Y9), Font-Ausnahme URW (Y4) |
+| Strong Copyleft | AGPL-3.0: MuPDF, `mupdf`, `mupdf-sys`, jbig2dec, extract; FreeType (gewählt: GPL-2.0-or-later) |
+| Schrift | OFL-1.1: Manrope, IBM Plex Mono, URW-Base-14 (wahlweise AGPL-3.0 mit PS/PDF-Font-Ausnahme) |
+| Proprietär / binär ohne Quelle | `WebView2LoaderStatic.lib` (Microsoft, BSD-artige Lizenz, kein Quellcode) – R3 (akzeptiert) |
+| Ohne Lizenz / UNKLAR | App-Icon (Y9) |
 
 ## Phase 3 – Kompatibilität
 
@@ -84,7 +84,8 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 - **OFL-1.1:** Fonts dürfen gebündelt werden, nicht einzeln verkauft; Lizenz + Copyright müssen beiliegen (R1). Die OFL greift nicht auf die Software über.
 - **Unicode-3.0, Zlib, 0BSD, CC0, Unlicense:** permissiv, kompatibel.
 - **Dual-/Multi-Lizenzen** (`MIT OR Apache-2.0` usw.): es darf eine gewählt werden; Empfehlung: beide Texte mitliefern.
-- **Microsoft WebView2 Loader:** siehe R3 – der einzige Punkt, an dem eine Unvereinbarkeit mit der AGPL denkbar ist.
+- **Microsoft WebView2 Loader:** die Lizenz selbst ist GPL-kompatibel, es fehlt nur der Quellcode. Einzige Stelle, an der eine Unvereinbarkeit mit der AGPL denkbar ist – eingeordnet als System Library, siehe „Entscheidung R3“.
+- **URW-Schriften in erzeugten PDFs:** OFL-1.1 bzw. die PS/PDF-Font-Ausnahme lassen eingebettete Schriften nicht auf das Dokument übergreifen (Y4).
 - **Unlizenzierter Code:** keiner gefunden; alle 222 Crates und alle npm-Pakete haben ein SPDX-Feld.
 
 ## Phase 4 – Pflichten-Check
@@ -95,10 +96,10 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 | MIT / ISC / BSD / Zlib / Unicode-3.0 / 0BSD | Copyright + Lizenztext in Kopien/Doku | ❌ R1 |
 | Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 222 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
 | MPL-2.0 | Hinweis auf Bezugsquelle der Quellform + Lizenztext | ❌ R1 (Hinweis im PR) |
-| OFL-1.1 | Copyright + Lizenz bei jeder Kopie der Fonts | ❌ R1 |
+| OFL-1.1 (Manrope, IBM Plex Mono, URW) | Copyright + Lizenz bei jeder Kopie der Fonts | ❌ R1 (URW-Text liegt in `THIRD-PARTY-LICENSES/`) |
 | IJG (libjpeg) | Satz „based in part on the work of the Independent JPEG Group“ in der Doku | ✅ (PR) |
 | FreeType (GPL-2.0+) | GPL-Pflichten, über AGPL ohnehin erfüllt | ✅ mit R2 |
-| Microsoft WebView2-SDK | Copyright + Lizenzbedingungen mitliefern | ❌ R1, Grundsatzfrage R3 |
+| Microsoft WebView2-SDK | Copyright + Lizenzbedingungen in der Doku wiedergeben | ❌ R1 (Text liegt in `THIRD-PARTY-LICENSES/`, muss in den Installer); Grundsatzfrage R3 entschieden |
 | NSIS | keine Attributionspflicht für den Stub | ✅ |
 
 ## Phase 5 – Deliverables
@@ -127,8 +128,8 @@ Vollständige Listen: Anhang A–D.
 | gumbo-parser | MuPDF-thirdparty | Apache-2.0 | Permissiv | mupdf-sys (MSVC, HTML aus) | 🟡 Y1 |
 | MuJS | MuPDF-thirdparty | ISC | Permissiv | mupdf-sys (MSVC, JS aus) | 🟡 Y1 |
 | brotli (C) | MuPDF-thirdparty | MIT | Permissiv | mupdf-sys (MSVC, Brotli aus) | 🟡 Y1 |
-| URW-Base-14-Fonts | MuPDF `resources/fonts/urw` | AGPL-3.0 (+ Font-Ausnahme?) | Strong Copyleft | mupdf-sys | 🟡 Y4 |
-| WebView2 Loader (static) | SDK in webview2-com-sys 0.39.1 | Microsoft (BSD-artig), nur Binär | Proprietär/Binär | crates.io | 🔴 R3 |
+| URW-Base-14-Fonts | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) | Schrift | mupdf-sys | 🟢 Y4, Text → R1 |
+| WebView2 Loader (static) | SDK 1.0.3800.47 in webview2-com-sys 0.39.1 | Microsoft (BSD-artig), nur Binär | Proprietär/Binär | crates.io | 🟡 R3 akzeptiert, Text → R1 |
 | Tauri, wry, tao, Plugins | 2.12 / 0.57 / 0.37 | MIT OR Apache-2.0 (tao: Apache-2.0) | Permissiv | crates.io / npm | 🔴 R1 |
 | windows, windows-sys, webview2-com | 0.62 / 0.60–0.61 / 0.39 | MIT OR Apache-2.0 / MIT | Permissiv | crates.io | 🔴 R1 |
 | ICU4X (`icu_*`, `zerovec`, …) | 2.3 | Unicode-3.0 | Permissiv | crates.io (über `url`/`idna`) | 🔴 R1 |
@@ -158,13 +159,13 @@ Vollständige Listen: Anhang A–D.
    - Rust: `cargo about generate` (MIT OR Apache-2.0) mit `about.toml` (`accepted = [...]`, `targets = ["x86_64-pc-windows-msvc"]`) → `THIRD-PARTY-LICENSES/rust.html` o. ä.
    - npm: Vite-Option `build.license: true` (seit Vite 7, erzeugt `dist/.vite/license.md` aller gebündelten Pakete) oder `license-checker-rseidelsohn --production`.
    - MuPDF-C-Bibliotheken: Lizenzdateien aus `mupdf-sys-0.8.0/mupdf/thirdparty/*/{COPYING,LICENSE*}` sowie Leptonica-Lizenz von Upstream kopieren.
-   - Fonts: `OFL.txt` von Manrope und IBM Plex Mono (`node_modules/@fontsource*/…/LICENSE`).
-   - WebView2-SDK-Lizenztext.
+   - Fonts: `OFL.txt` von Manrope und IBM Plex Mono (`node_modules/@fontsource*/…/LICENSE`); URW: `THIRD-PARTY-LICENSES/URW-Base35-*.txt` (liegt bereits vor).
+   - WebView2-SDK-Lizenztext: `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt` (liegt bereits vor).
    - Alles per `bundle.resources` in den Installer (z. B. `"../THIRD-PARTY-LICENSES/*": "licenses/"`) und im CI prüfen, dass die Dateien im NSIS-Paket landen.
 4. **R2 – Corresponding Source**: Repo öffentlich, jedes Release mit Tag; im Release-Text und in der App: „Quellcode: https://github.com/felix-d-git/pdf-note/tree/vX.Y.Z“. Weil MuPDF über crates.io kommt, zusätzlich `mupdf-sys-0.8.0.crate` als Release-Asset anhängen oder ausdrücklich auf crates.io verweisen (AGPL §6(d) erlaubt Drittserver, wenn die Verfügbarkeit gesichert ist – ein eigenes Asset ist robuster). Vorlage `SOURCE.md` siehe unten.
-5. **R3 – WebView2 Loader**: Entscheidung treffen (siehe Issue): (a) juristische Bewertung „System Library“ dokumentieren, (b) quelloffene Loader-Alternative prüfen (z. B. OpenWebView2Loader), oder (c) Risiko bewusst akzeptieren und begründen. Ohne Entscheidung keine öffentliche Binärverteilung.
+5. ~~**R3 – WebView2 Loader**: Entscheidung treffen~~ – erledigt: Option „Risiko mit Begründung akzeptieren“, siehe „Entscheidung R3“. Die Einschätzung dort setzt voraus, dass R1 und R2 vor dem ersten öffentlichen Installer erledigt sind.
 6. **Y1 – Verlinkung verifizieren**: Release-Build mit `/MAP` bzw. `dumpbin /SYMBOLS` auswerten, welche Drittbibliotheken tatsächlich in `pdf-note.exe` landen; Notices danach präzisieren (lieber zu viel als zu wenig nennen).
-7. **Y4 – URW-Fonts**: Lizenz der URW-Fonts (Font-Embedding-Ausnahme in `ArtifexSoftware/urw-base35-fonts`) belegen und in `THIRD-PARTY-NOTICES.md` zitieren; alternativ beim Textbearbeiten nur Teilmengen einbetten oder OFL-Ersatzschriften nutzen.
+7. ~~**Y4 – URW-Fonts**: Lizenz belegen und zitieren~~ – erledigt, siehe „Ergebnis Y4“ und `THIRD-PARTY-NOTICES.md`.
 8. **Y5 – „Über / Lizenzen“** in der App (Hilfe-Dialog): Copyright, „ohne jede Gewährleistung“, AGPL-3.0, Link/Datei zum Lizenztext, Quellcode-URL, Liste der Drittlizenzen (aus R1).
 
 **Dauerhaft**
@@ -200,6 +201,71 @@ targets = ["x86_64-pc-windows-msvc"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
 ```
+
+## Entscheidung R3 – Microsoft WebView2 Loader (#9)
+
+Entschieden 2026-10-27: **Option 1 – den Loader als System Library behandeln und das Restrisiko bewusst akzeptieren.** Für den eigenen Code gilt zusätzlich die Erlaubnis in `LICENSE-ADDITIONAL-PERMISSION.md`.
+
+### Befund (am Original geprüft)
+
+- `webview2-com-sys` 0.39.1 enthält `x64/`, `x86/` und `arm64/WebView2LoaderStatic.lib`. Laut SHA-256 sind sie **bitidentisch** mit dem NuGet-Paket `Microsoft.Web.WebView2` **1.0.3800.47** (x64: `89c6b872…`). Die Prüfsumme der Crate stimmt mit `Cargo.lock` überein.
+- Unter MSVC linkt `src/lib.rs` die Bibliothek mit `link(name = "WebView2LoaderStatic", kind = "static")`. `WebView2Loader.dll` wird nicht ausgeliefert.
+- **Lizenz:** `LICENSE.txt` im NuGet-Paket, inhaltlich BSD-3-Clause („Copyright (C) Microsoft Corporation. All rights reserved.“). Weitergabe als Binärdatei ist erlaubt, wenn Copyright, Bedingungen und Haftungsausschluss in der Dokumentation wiedergegeben werden. Die Lizenz ist GPL-kompatibel, es fehlt nur der Quellcode. Kopie: `THIRD-PARTY-LICENSES/Microsoft-WebView2-SDK.txt`. Die Crate selbst nennt nur „MIT“ und enthält keinen Microsoft-Lizenztext.
+- **Inhalt:** Laut den Strings in der `.lib` enthält sie nur Microsoft-Code (`edge_embedded_browser/client/win/loader_impl.cc`, `environment_helper.cc` u. a.). Die Fremdkomponenten aus `NOTICE.txt` des SDK (Antlr, StringTemplate) gehören zu `wv2winrt` und stecken nicht im Loader.
+- **Funktion:** Der Loader sucht die installierte WebView2-Laufzeit (Registry `EdgeUpdate\ClientState`) und startet `EmbeddedBrowserWebView.dll`. wry 0.57 ruft davon nur `CreateCoreWebView2EnvironmentWithOptions` und `GetAvailableCoreWebView2BrowserVersionString` auf.
+- **Betroffen ist nur die Binärverteilung:** Repo und Quellcode-Release enthalten den Loader nicht, er kommt erst beim Bauen über crates.io dazu.
+
+### Rechtliche Einordnung (AGPL-3.0 §1)
+
+> The "System Libraries" of an executable work include anything, other than the work as a whole, that (a) is included in the normal form of packaging a Major Component, but which is not part of that Major Component, and (b) serves only to enable use of the work with that Major Component […]. A "Major Component" […] means a major essential component (kernel, window system, and so on) of the specific operating system […]
+
+| Merkmal | Bewertung |
+|---|---|
+| WebView2-Laufzeit als „Major Component“ | vertretbar: fester Bestandteil von Windows 11, auf Windows 10 breit vorinstalliert, Windows-eigene Komponenten nutzen sie |
+| (b) dient nur der Nutzung dieser Komponente | erfüllt: der Loader findet und startet die Laufzeit, sonst nichts |
+| (a) in der üblichen Verpackung der Komponente enthalten | **Schwachpunkt:** er kommt mit dem SDK, nicht mit der Laufzeit. Das Gegenargument: Mit statischen Bibliotheken aus Windows-SDK und MSVC ist es genauso, und GPL-Programme linken sie üblicherweise, ohne dass das als Verstoß gilt. |
+
+Die Freiheit, die das Copyleft schützt, bleibt erhalten: Jeder kann den Quellcode ändern und mit demselben frei erhältlichen SDK (automatisch über crates.io) neu bauen. Eine eindeutige Rechtslage gibt es trotzdem nicht.
+
+### Verworfene Alternativen
+
+- **Quelloffener Loader** (`jchv/OpenWebView2Loader`, ISC, 9 Commits, der Autor empfiehlt selbst den offiziellen Loader; der eingebaute Loader von `webview/webview`, MIT): Es gibt keine fertige Rust-Crate. Nötig wären ein Patch von `webview2-com-sys` und ein eigener Nachbau. Das widerspricht `GRUNDSAETZE.md` §4 („eine Bibliothek nachzubilden nicht“, „kein übernommener Fremdcode“). Außerdem hinge er an der **undokumentierten** internen Funktion `CreateWebViewEnvironmentWithOptionsInternal` von `EmbeddedBrowserWebView.dll`.
+- **Bei Artifex nachfragen:** Eine Antwort deckt nur Artifex ab, nicht die Autoren von mupdf-rs oder FreeType, und eine formlose Auskunft ist keine Lizenz. Kann später nachgeholt werden, falls gewünscht.
+
+### Risikoabschätzung
+
+**Wer könnte etwas geltend machen?** Nur Rechteinhaber an Copyleft-Code in der Binary: Artifex (MuPDF, jbig2dec, extract), die Autoren von mupdf-rs (`mupdf`, `mupdf-sys`) und das FreeType-Projekt (GPL-2.0-or-later gewählt). Microsoft nicht: Dessen Lizenz ist erfüllt, *sobald* der Lizenztext mitgeliefert wird (R1). Nutzer und Dritte haben keine eigenen Ansprüche.
+
+| Szenario | Wahrscheinlichkeit | Folge |
+|---|---|---|
+| 1. Niemand beanstandet etwas | sehr hoch | keine |
+| 2. Formloser Hinweis eines Rechteinhabers (E-Mail, Issue) | gering | **AGPL §8 Abs. 4:** War es der erste Hinweis dieses Rechteinhabers und wird der Verstoß binnen **30 Tagen** behoben, gilt die Lizenz **dauerhaft** wieder. Abhilfe: Installer aus den Releases nehmen (der Quellcode ist nicht betroffen und bleibt online), danach mit dem Rechteinhaber klären oder umbauen. Kosten: keine. |
+| 3. Förmliche Abmahnung durch einen Anwalt (in Deutschland üblicher Weg; die GPL ist hier gerichtlich durchsetzbar, LG München I, Az. 21 O 6123/04, 2004) | sehr gering | Gefordert werden Unterlassungserklärung (meist mit Vertragsstrafe) und Erstattung der Anwaltskosten. §8 beseitigt diese Ansprüche nicht automatisch. Bei einer ersten Abmahnung einer **natürlichen Person, die nicht gewerblich handelt**, deckelt § 97a Abs. 3 UrhG den Gegenstandswert für die Anwaltskosten auf 1.000 € (Gebühr im niedrigen dreistelligen Bereich; Ausnahme bei Unbilligkeit). Eine Unterlassungserklärung nicht ungeprüft unterschreiben. |
+| 4. Schadensersatz für die vergangene Verbreitung | äußerst gering | §8 regelt nur die Zukunft. Theoretisch wäre eine Lizenzanalogie denkbar (Artifex hat in den USA gegen ein kommerzielles Produkt geklagt: Artifex v. Hancom, 2017, Vergleich 2018). Bei einer kostenlosen, quelloffenen App ohne Erlös ist der Schaden gering und eine solche Klage unrealistisch. |
+
+**Gesamtbewertung:** Das Restrisiko ist **gering, aber nicht null**. Realistisch ist allenfalls Szenario 2, und das kostet nichts. Szenario 3 wäre der ungünstige Fall mit überschaubaren Kosten. Deshalb 🟡 statt 🔴.
+
+**Die Einschätzung gilt nur unter diesen Bedingungen:**
+1. **R1 (#7)** ist vor dem ersten öffentlichen Installer erledigt, insbesondere der Microsoft-Lizenztext. Ohne ihn verletzt der Installer klar die Microsoft-Lizenz und die übrigen Attributionspflichten; das ist dann keine Grauzone mehr.
+2. **R2 (#8)** ist erledigt (Quellcode-Angebot). Ein klarer AGPL-Verstoß an anderer Stelle würde jede Kulanz zunichtemachen.
+3. Die Verbreitung bleibt **nicht gewerblich**, kostenlos und ohne Werbung. Sonst entfällt der Deckel aus § 97a Abs. 3 UrhG, und die Interessenlage der Rechteinhaber ändert sich.
+4. Hinweise sind erreichbar (GitHub-Issues offen) und werden **sofort** bearbeitet.
+5. Bei jedem Update von `webview2-com-sys` werden SDK-Version und Lizenztext neu geprüft.
+
+**Notfallplan bei Hinweis oder Abmahnung:** (1) Am selben Tag die Installer-Assets aus allen Releases entfernen. (2) Den Eingang bestätigen und die Abhilfe mitteilen. (3) Eine Abmahnung bzw. Unterlassungserklärung vor der Unterschrift prüfen lassen (ggf. modifizierte Erklärung). (4) Danach entscheiden: Erlaubnis beim Rechteinhaber einholen oder einen quelloffenen Loader einbauen.
+
+## Ergebnis Y4 – URW-Schriften (#11)
+
+Geklärt 2026-10-27. Lizenz der URW-Base-14-Schriften in MuPDF: **`OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817)`**.
+
+**Belege**
+- **Font-Ausnahme:** `LICENSE` in ArtifexSoftware/urw-base35-fonts (Commit `9927f3c`, 2017-08-17) – „As a special exception, permission is granted to include these font programs in a Postscript or PDF file that consists of a document that contains text to be displayed or printed using this font, regardless of the conditions or license applying to the document itself.“ SPDX führt den Text als `PS-or-PDF-font-exception-20170817` mit Verweis auf diese Datei. Kopie: `THIRD-PARTY-LICENSES/URW-Base35-AGPL-Font-Exception.txt`.
+- **OFL-1.1:** MuPDF upstream enthält `resources/fonts/urw/OFL.txt` (seit Commit `2514431`, 2016): „Copyright 2016 by (URW)++ Design & Development. This Font Software is licensed under the SIL Open Font License, Version 1.1.“ In der Crate `mupdf-sys` fehlt die Datei. URW hat die Version-2.0-Schriften 2017 zusätzlich unter OFL-1.1 (ohne Reserved Font Name) und LPPL-1.3c veröffentlicht. Das Original-Repo `URWTypeFoundry/Core_35` ist gelöscht; belegt über das Archiv `twardoch/urw-core35-fonts`. Kopie: `THIRD-PARTY-LICENSES/URW-Base35-OFL-1.1.txt`.
+- **Herkunft der Schriften in MuPDF:** Die `.cff`-Dateien in `mupdf-sys` 0.8.0 tragen Version `1.00` und „Copyright 2014 by (URW)++ Design & Development“, identisch mit `urw-base35-fonts`. MuPDF-Commit `72aaafb` (2018): „Update base 14 fonts to URW++ release from 2017-07-27“; die AFM-Dateien dort tragen „Creation Date: 7/27/2017“. `NimbusSans-Regular.t1` ist im Core-35-Archiv und in `urw-base35-fonts` bitidentisch. MuPDF erzeugt daraus CFF-Teilmengen (`tocff.sh`, `tx -cff … -g subset.mes`); beide Lizenzen erlauben das.
+
+**Nutzung in der App** (`text.rs` `substitute()` → `doc.add_font()`, CID/Identity-H, ohne Subsetting): Nimbus Sans/Roman/Mono PS werden vollständig eingebettet, und zwar beim Bearbeiten von Text, im Notizbuch-Export (`notebook.rs`) und in der OCR-Textebene (`ocr.rs`, `3 Tr` = unsichtbar). Die OFL deckt alle drei Fälle ab („does not apply to any document created using the fonts“). Die AGPL-Ausnahme spricht von Text, der „displayed or printed“ wird; bei unsichtbarem OCR-Text ist das nicht wörtlich erfüllt, deshalb sind beide Lizenzwege angegeben.
+
+**Pflicht:** Copyright und OFL-Text bei jeder Kopie der Schriften, also im Installer (R1, #7).
 
 ## Anhang – vollständige Listen
 
