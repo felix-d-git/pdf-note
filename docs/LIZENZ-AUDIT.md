@@ -24,7 +24,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 | Y6 | 🟡 YELLOW | Kein Copyright-Vermerk des Projekts (weder `README`, `LICENSE` noch Quelltext). | im PR ergänzt (#14) |
 | Y7 | 🟡 YELLOW | `spikes/ink-test.html` enthält perfect-freehand inline, aber nur „MIT, (c) …“ statt des vollständigen MIT-Hinweises. | im PR ergänzt (#14) |
 | Y8 | 🟡 YELLOW | AGPL §5(a): geänderte Datei `vendor/mupdf/src/device/native.rs` ohne Änderungsvermerk/Datum; `PATCH.md` ohne Datum. | im PR ergänzt (#14) |
-| Y9 | 🟡 YELLOW (UNKLAR) | Herkunft des App-Icons (`src-tauri/icons/*`) ist nicht dokumentiert (Datei-Symbol mit Kurve, Lucide-Stil). | offen → #13 |
+| Y9 | 🟡 YELLOW (UNKLAR) | Herkunft des App-Icons (`src-tauri/icons/*`) war nicht dokumentiert. Icon ersetzt durch eigenes, mit Google Gemini erzeugtes Logo; Herkunft in `THIRD-PARTY-NOTICES.md` (App-Icon). | erledigt → #13 |
 | Y10 | 🟡 YELLOW | IJG-Lizenz (libjpeg) verlangt in der Dokumentation den Satz „This software is based in part on the work of the Independent JPEG Group“. Fehlte. | im PR ergänzt (#14) |
 | G | 🟢 GREEN | Alle übrigen Komponenten: permissiv bzw. AGPL-kompatibel, keine Lizenz fehlt, keine NC/proprietären Lizenzen im Quellbaum. Dev-Abhängigkeiten (u. a. `lightningcss` MPL-2.0, `caniuse-lite` CC-BY-4.0) werden nicht ausgeliefert. Spikes (`pdfium-render`, PDFium) werden nicht ausgeliefert. | – |
 
@@ -62,7 +62,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 | URW Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) – Lizenztext muss mitgeliefert werden | 🟢 Y4 → R1 |
 | MathJax-TeX-Fontdaten | `mathjax-full` 3.2.2 | Apache-2.0 | 🟢 → R1 |
 | Lucide-Icons (Tree-Shaking) | `lucide-react` 1.59 | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
-| App-Icon `src-tauri/icons/*` | nicht dokumentiert | **UNKLAR** | 🟡 Y9 |
+| App-Icon `src-tauri/icons/*` | eigenes Werk (KI-generiert mit Gemini) | AGPL-3.0-only | 🟢 Y9 |
 
 ## Phase 2 – Kategorisierung (ausgelieferte Komponenten)
 
@@ -73,7 +73,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 | Strong Copyleft | AGPL-3.0: MuPDF, `mupdf`, `mupdf-sys`, jbig2dec, extract; FreeType (gewählt: GPL-2.0-or-later) |
 | Schrift | OFL-1.1: Manrope, IBM Plex Mono, URW-Base-14 (wahlweise AGPL-3.0 mit PS/PDF-Font-Ausnahme) |
 | Proprietär / binär ohne Quelle | `WebView2LoaderStatic.lib` (Microsoft, BSD-artige Lizenz, kein Quellcode) – R3 (akzeptiert) |
-| Ohne Lizenz / UNKLAR | App-Icon (Y9) |
+| Ohne Lizenz / UNKLAR | – (App-Icon Y9 geklärt) |
 
 ## Phase 3 – Kompatibilität
 
@@ -145,14 +145,14 @@ Vollständige Listen: Anhang A–D.
 | Manrope | 5.3.0 (Fontsource) | OFL-1.1 | Schrift | npm, im Bundle | 🔴 R1 |
 | IBM Plex Mono | 5.3.0 (Fontsource) | OFL-1.1 | Schrift | npm, im Bundle | 🔴 R1 |
 | Tesseract-Modelle deu/eng | 4.1.0 | Apache-2.0 | Daten | `src-tauri/resources/tessdata/` | 🟢 Lizenz liegt bei |
-| App-Icon | – | **UNKLAR** | Asset | `src-tauri/icons/` | 🟡 Y9 |
+| App-Icon | 2026 | AGPL-3.0-only (eigenes Werk) | Asset | `src-tauri/icons/` | 🟢 Y9 |
 | pdfium-render, PDFium | 0.9.4 / 157 | MIT OR Apache-2.0 / Apache-2.0, BSD-3 | Permissiv | nur `spikes/` | 🟢 nicht ausgeliefert |
 
 ### Action Plan
 
 **Vor dem Öffentlich-Stellen des Repos** (Quellcode-Veröffentlichung)
 1. PR `second → master` mit den Korrekturen dieses Audits mergen (Y2, Y3, Y6, Y7, Y8, Y10, Y1 als konservative Liste).
-2. Y9 klären: Icon-Herkunft (selbst gezeichnet? aus Lucide `file` + `spline` abgeleitet?) in `THIRD-PARTY-NOTICES.md` festhalten; bei Lucide-Ableitung ISC-Hinweis ergänzen.
+2. ~~Y9 klären~~ – erledigt: neues, eigenes Icon (Gemini), Herkunft in `THIRD-PARTY-NOTICES.md`.
 
 **Vor der ersten öffentlichen Installer-Weitergabe** (Binärverteilung)
 3. **R1 – Lizenzsammlung erzeugen und ausliefern**

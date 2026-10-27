@@ -69,6 +69,10 @@ Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Versi
 
 `scheduler` 0.28 (MIT, Meta – Teil von React DOM). Die `mathjax-full`-Abhängigkeiten `speech-rule-engine`, `mhchemparser`, `mj-context-menu`, `@xmldom/xmldom`, `commander`, `wicked-good-xpath`, `esm` landen nicht im `dist`-Bundle (geprüft am Vite-Build).
 
+### App-Icon
+
+`src-tauri/icons/*`: eigenes Werk des Projektautors (felix-d-git), 2026 mit Google Gemini als KI-Bild erzeugt, danach bearbeitet (Ecken transparent, Größen per `tauri icon`). Keine fremde Vorlage, keine Lucide-Ableitung. Soweit schutzfähig: AGPL-3.0-only wie das Projekt.
+
 ### Installer
 
 NSIS-Installer-Stub (zlib/libpng-Lizenz) und die Tauri-NSIS-Erweiterungen (MIT OR Apache-2.0) werden von `tauri build` erzeugt.
