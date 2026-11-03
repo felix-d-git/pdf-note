@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> ../target
+          # neuer Schlüssel, sobald sich die MuPDF-Defines in .cargo/config.toml ändern (mupdf-sys merkt das nicht selbst)
+          prefix-key: v1-rust-hyphen0
       - run: npm ci
       - run: npm run check
       - run: cargo test --manifest-path src-tauri/Cargo.toml
