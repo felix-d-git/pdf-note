@@ -1,6 +1,6 @@
 # Lizenz-Audit PDF Note
 
-Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11)
+Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“
 Ziel der Veröffentlichung: Repo öffentlich + Windows-Installer (NSIS) als GitHub-Release.
 
 > Dies ist eine technische Compliance-Analyse, keine Rechtsberatung. Punkte mit **UNKLAR** brauchen eine manuelle (ggf. juristische) Prüfung.
@@ -17,7 +17,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 | R2 | 🔴 RED | **AGPL §6 – Corresponding Source** für jede Binär-Weitergabe: Repo ist privat, Releases verweisen nicht auf den Quellstand, MuPDF-C-Quellen kommen über `mupdf-sys` von crates.io. Muss vor der ersten öffentlichen Installer-Weitergabe gelöst sein. | offen → #8 |
 | R3 | 🟡 YELLOW (akzeptiert) | `webview2-com-sys` linkt unter MSVC Microsofts **`WebView2LoaderStatic.lib`** (SDK 1.0.3800.47, BSD-artig, nur Binär) **statisch** in die Binary. AGPL §1/§6 verlangt Quellcode für das Gesamtwerk außer „System Libraries“. Der Loader dient nur dazu, die WebView2-Laufzeit von Windows zu nutzen (§1 (b) erfüllt). Strittig ist nur §1 (a), weil er mit dem SDK und nicht mit der Laufzeit kommt. Entscheidung: als System Library behandeln, Restrisiko gering; zusätzliche Erlaubnis nach §7 für den eigenen Code. | entschieden → #9, siehe „Entscheidung R3“ |
 | Y1 | 🟡 YELLOW | `mupdf-sys` baut unter MSVC die **gesamte** `libmupdf`/`libthirdparty` (msbuild ignoriert die `make`-Feature-Schalter). Bisher nicht genannt: zxing-cpp (Apache-2.0), zint (BSD-3-Clause), gumbo-parser (Apache-2.0), MuJS (ISC), extract (AGPL-3.0), brotli (MIT), Leptonica-Lizenztext fehlt im Crate. Was der Linker tatsächlich übernimmt, ist **UNKLAR**. | Notices im PR ergänzt (#14) (konservativ); Verifikation → #10 |
-| Y2 | 🟡 YELLOW | FreeType als „FTL“ aufgeführt. Die FTL ist wegen der Werbeklausel **GPL-inkompatibel**; im AGPL-Gesamtwerk gilt die Alternative **GPL-2.0-or-later**. | im PR korrigiert (#14) |
+| Y2 | 🟡 YELLOW | FreeType als „FTL“ aufgeführt. Die FTL ist wegen der Werbeklausel **mit der GPLv2 unvereinbar** (mit GPLv3/AGPLv3 laut FreeType vereinbar); gewählt ist die Alternative **GPL-2.0-or-later**. | im PR korrigiert (#14) |
 | Y3 | 🟡 YELLOW | Transitive Rust-Crates fehlen in `THIRD-PARTY-NOTICES.md`, darunter **MPL-2.0** (`cssparser`, `selectors`, `dtoa-short`, `option-ext` – MPL §3.2 verlangt Hinweis auf Bezugsquelle des Quellcodes), **Unicode-3.0** (ICU4X), BSD-3-Clause, Zlib, `tao` (nur Apache-2.0). | im PR zusammengefasst (#14); Volltexte → R1 (#7) |
 | Y4 | 🟢 GREEN (geklärt) | URW-Base-14-Schriften werden **vollständig in Nutzer-PDFs eingebettet** (Textbearbeitung, Notizbuch, OCR-Ebene). Am Original belegt: `OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817)`. Beide Lizenzen erlauben das Einbetten, ohne dass die AGPL auf das Dokument übergreift. Lizenztexte in `THIRD-PARTY-LICENSES/`. | geklärt → #11, siehe „Ergebnis Y4“; Auslieferung der Texte → R1 (#7) |
 | Y5 | 🟡 YELLOW | AGPL §5(d): Programme mit interaktiver Oberfläche sollen „Appropriate Legal Notices“ anzeigen (Copyright, keine Gewährleistung, Lizenz, Weg zum Lizenztext). Die App hat kein „Über/Lizenzen“. | offen → #12 |
@@ -40,8 +40,8 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 **Paketmanager**
 | Quelle | Umfang |
 |---|---|
-| `src-tauri/Cargo.lock` | 222 ausgelieferte Crates (Windows/MSVC, normal) + 23 reine Build-Crates – Anhang A/B |
-| `package-lock.json` | 296 Einträge, davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
+| `src-tauri/Cargo.lock` | 219 Crates (Windows/MSVC, normal; davon 139 gelinkt, 80 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
+| `package-lock.json` | 302 Einträge, davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
 | `spikes/*/Cargo.lock` | Wegwerf-Spikes, nicht ausgeliefert |
 
 **Vendor / inline / native Bibliotheken**
@@ -52,7 +52,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 | `webview2-com-sys` 0.39.1 | `WebView2LoaderStatic.lib` (Microsoft, Binär; bitidentisch mit NuGet `Microsoft.Web.WebView2` 1.0.3800.47) | Microsoft WebView2-SDK-Lizenz (BSD-artig, `THIRD-PARTY-LICENSES/webview2-sdk-LICENSE.txt`), **kein Quellcode** (R3, akzeptiert) |
 | `spikes/ink-test.html` | perfect-freehand 1.2.3 inline | MIT (Y7) |
 
-Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + Projekt-Referenzen): FreeType, HarfBuzz, jbig2dec, lcms2(mt), libjpeg, OpenJPEG, zlib, brotli, gumbo-parser, MuJS, extract, Tesseract, Leptonica, zxing-cpp, zint. Feature-Defines: `FZ_ENABLE_JS/HTML/EPUB/BROTLI/DOCX_OUTPUT = 0`, `FZ_ENABLE_BARCODE = 1` (Default), `FZ_ENABLE_HYPHEN = 0` (folgt aus deaktivierter HTML-Engine → Silbentrennungsmuster werden nicht genutzt). Die Fonts `han/droid/noto/sil` entfernt `mupdf-sys` aus `libresources`; es bleiben die URW-Base-14-Fonts.
+Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + Projekt-Referenzen): FreeType, HarfBuzz, jbig2dec, lcms2(mt), libjpeg, OpenJPEG, zlib, brotli, gumbo-parser, MuJS, extract, Tesseract, Leptonica, zxing-cpp, zint. Feature-Defines: `FZ_ENABLE_XPS/SVG/CBZ/IMG/HTML/EPUB/JS/BROTLI/DOCX_OUTPUT = 0`, `FZ_ENABLE_BARCODE = 1` (Default). **Korrektur 2026-11 (M1):** FB2/MOBI/TXT/Office bleiben unter MSVC an und damit die HTML-Engine samt Silbentrennung (`hyph-all.zip`); `FZ_ENABLE_HYPHEN = 0` setzt jetzt `.cargo/config.toml` (`_CL_`). Die Fonts `han/droid/noto/sil` entfernt `mupdf-sys` aus `libresources`; es bleiben die URW-Base-14-Fonts.
 
 **Nicht-Code-Assets**
 | Asset | Herkunft | Lizenz | Status |
@@ -61,7 +61,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 | Manrope (Variable), IBM Plex Mono 400/500 (woff/woff2 im `dist`) | Fontsource | OFL-1.1 – Lizenztext muss mitgeliefert werden | 🟡 → R1 |
 | URW Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) – Lizenztext muss mitgeliefert werden | 🟢 Y4 → R1 |
 | MathJax-TeX-Fontdaten | `mathjax-full` 3.2.2 | Apache-2.0 | 🟢 → R1 |
-| Lucide-Icons (Tree-Shaking) | `lucide-react` 1.59 | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
+| Lucide-Icons (Tree-Shaking) | `lucide-react` 1.64 | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
 | App-Icon `src-tauri/icons/*` | eigenes Werk (KI-generiert mit Gemini) | AGPL-3.0-only | 🟢 Y9 |
 
 ## Phase 2 – Kategorisierung (ausgelieferte Komponenten)
@@ -79,14 +79,14 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 
 - **Copyleft-Infektion:** Das Projekt ist selbst AGPL-3.0-only – die AGPL von MuPDF erzwingt nichts, was nicht ohnehin gilt. Konsequenz: der **gesamte** Quellcode muss bei jeder Weitergabe der Binary verfügbar sein (R2). §13 (Netzwerknutzung) ist für eine Offline-Desktop-App ohne Server nicht einschlägig.
 - **Apache-2.0 + AGPL-3.0:** kompatibel (GPLv3-Familie). Kein GPL-2.0-only im Baum.
-- **FreeType:** FTL ist GPL-inkompatibel → GPL-2.0-or-later-Option wählen (Y2, im PR dokumentiert).
+- **FreeType:** FTL ist mit GPLv2 unvereinbar (mit GPLv3 vereinbar) → GPL-2.0-or-later-Option gewählt (Y2, im PR dokumentiert).
 - **MPL-2.0:** dateibasiertes Copyleft, AGPL ist zulässige „Secondary License“ → kompatibel; Pflicht: Hinweis, dass der MPL-Quellcode verfügbar ist (Y3).
 - **OFL-1.1:** Fonts dürfen gebündelt werden, nicht einzeln verkauft; Lizenz + Copyright müssen beiliegen (R1). Die OFL greift nicht auf die Software über.
 - **Unicode-3.0, Zlib, 0BSD, CC0, Unlicense:** permissiv, kompatibel.
 - **Dual-/Multi-Lizenzen** (`MIT OR Apache-2.0` usw.): es darf eine gewählt werden; Empfehlung: beide Texte mitliefern.
 - **Microsoft WebView2 Loader:** die Lizenz selbst ist GPL-kompatibel, es fehlt nur der Quellcode. Einzige Stelle, an der eine Unvereinbarkeit mit der AGPL denkbar ist – eingeordnet als System Library, siehe „Entscheidung R3“.
 - **URW-Schriften in erzeugten PDFs:** OFL-1.1 bzw. die PS/PDF-Font-Ausnahme lassen eingebettete Schriften nicht auf das Dokument übergreifen (Y4).
-- **Unlizenzierter Code:** keiner gefunden; alle 222 Crates und alle npm-Pakete haben ein SPDX-Feld.
+- **Unlizenzierter Code:** keiner gefunden; alle 219 Crates und alle npm-Pakete haben ein SPDX-Feld (7 Windows-Crates, u. a. `webview2-com*`, ohne Lizenzdatei auf oberster Ebene).
 
 ## Phase 4 – Pflichten-Check
 
@@ -94,7 +94,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 |---|---|---|
 | AGPL-3.0 (MuPDF, eigenes Werk) | Lizenztext beilegen; Corresponding Source anbieten (§6); geänderte Dateien kennzeichnen mit Datum (§5a); Appropriate Legal Notices in UI (§5d) | Text ✅ · Quelle ❌ R2 · Vermerk ✅ (PR) · UI ❌ Y5 |
 | MIT / ISC / BSD / Zlib / Unicode-3.0 / 0BSD | Copyright + Lizenztext in Kopien/Doku | ❌ R1 |
-| Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 222 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
+| Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 219 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
 | MPL-2.0 | Hinweis auf Bezugsquelle der Quellform + Lizenztext | ❌ R1 (Hinweis im PR) |
 | OFL-1.1 (Manrope, IBM Plex Mono, URW) | Copyright + Lizenz bei jeder Kopie der Fonts | ❌ R1 (URW-Text liegt in `THIRD-PARTY-LICENSES/`) |
 | IJG (libjpeg) | Satz „based in part on the work of the Independent JPEG Group“ in der Doku | ✅ (PR) |
@@ -125,21 +125,21 @@ Vollständige Listen: Anhang A–D.
 | Leptonica | MuPDF-thirdparty | BSD-2-Clause | Permissiv | mupdf-sys (Lizenzdatei fehlt im Crate) | 🔴 R1 – Text von Upstream holen |
 | zxing-cpp | MuPDF-thirdparty | Apache-2.0 | Permissiv | mupdf-sys (MSVC, `FZ_ENABLE_BARCODE=1`) | 🟡 Y1 |
 | zint (Backend) | MuPDF-thirdparty | BSD-3-Clause | Permissiv | mupdf-sys (MSVC) | 🟡 Y1 |
-| gumbo-parser | MuPDF-thirdparty | Apache-2.0 | Permissiv | mupdf-sys (MSVC, HTML aus) | 🟡 Y1 |
+| gumbo-parser | MuPDF-thirdparty | Apache-2.0 | Permissiv | mupdf-sys (MSVC, gelinkt über FB2/TXT/Office) | 🟡 Y1 |
 | MuJS | MuPDF-thirdparty | ISC | Permissiv | mupdf-sys (MSVC, JS aus) | 🟡 Y1 |
 | brotli (C) | MuPDF-thirdparty | MIT | Permissiv | mupdf-sys (MSVC, Brotli aus) | 🟡 Y1 |
 | URW-Base-14-Fonts | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) | Schrift | mupdf-sys | 🟢 Y4, Text → R1 |
 | WebView2 Loader (static) | SDK 1.0.3800.47 in webview2-com-sys 0.39.1 | Microsoft (BSD-artig), nur Binär | Proprietär/Binär | crates.io | 🟡 R3 akzeptiert, Text → R1 |
 | Tauri, wry, tao, Plugins | 2.12 / 0.57 / 0.37 | MIT OR Apache-2.0 (tao: Apache-2.0) | Permissiv | crates.io / npm | 🔴 R1 |
-| windows, windows-sys, webview2-com | 0.62 / 0.60–0.61 / 0.39 | MIT OR Apache-2.0 / MIT | Permissiv | crates.io | 🔴 R1 |
+| windows, windows-sys, webview2-com | 0.62 / 0.61 / 0.39 | MIT OR Apache-2.0 / MIT | Permissiv | crates.io | 🔴 R1 |
 | ICU4X (`icu_*`, `zerovec`, …) | 2.3 | Unicode-3.0 | Permissiv | crates.io (über `url`/`idna`) | 🔴 R1 |
 | `cssparser`, `selectors`, `dtoa-short`, `option-ext` | 0.37 / 0.38 / 0.3 / 0.2 | MPL-2.0 | Weak Copyleft | crates.io (Tauri-Utils, `dirs`) | 🟡 Y3 (PR) + R1 |
 | `serde`, `serde_json`, `base64` | 1.0 / 1.0 / 0.22 | MIT OR Apache-2.0 | Permissiv | crates.io | 🔴 R1 |
-| `rfd` | 0.16 | MIT | Permissiv | crates.io | 🔴 R1 |
+| `rfd` | 0.17 | MIT | Permissiv | crates.io | 🔴 R1 |
 | React, React DOM, scheduler | 19.3 / 0.28 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | Zod | 4.6.7 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | perfect-freehand | 1.2.3 | MIT | Permissiv | npm, im Bundle; inline in Spike | 🔴 R1, Spike Y7 (PR) |
-| lucide-react | 1.59 | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
+| lucide-react | 1.64 | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
 | mathjax-full | 3.2.2 | Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | @tauri-apps/api, plugin-dialog | 2.12 / 2.8 | MIT OR Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | Manrope | 5.3.0 (Fontsource) | OFL-1.1 | Schrift | npm, im Bundle | 🔴 R1 |
@@ -267,11 +267,33 @@ Geklärt 2026-10-27. Lizenz der URW-Base-14-Schriften in MuPDF: **`OFL-1.1 OR (A
 
 **Pflicht:** Copyright und OFL-Text bei jeder Kopie der Schriften, also im Installer (R1, #7).
 
+## Nachtrag 2026-11 – Voll-Audit (#20, #21)
+
+Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 installiert) und Rust-Crates (219), das gebaute Bundle per Sourcemap, die msbuild-Projekte und C-Quellen von `mupdf-sys` 0.8.0 (MuPDF 1.27.2), Assets und eigener Code. Kein MSVC-Build: „gelinkt“ ist aus Quellen und Aufrufketten abgeleitet; die Bestätigung liefert der Workflow „MuPDF-Linkmap“ (`scripts/linkmap.mjs`).
+
+| ID | Stufe | Befund | Status |
+|---|---|---|---|
+| M1 | 🔴 RED | Unter MSVC bleiben FB2/MOBI/TXT/Office an → HTML-Engine → `fz_lookup_hyphenator` → `hyph-all.zip` (tex-hyphen, 48 Sprachen: überwiegend MIT, aber LPPL für ca/hr/is/ru/sv/th/tr, LGPL für hy/lv/hu, **ro ohne Lizenz**), ohne Hinweis ausgeliefert. Doku behauptete `FZ_ENABLE_HYPHEN=0`. | behoben: `.cargo/config.toml` `_CL_ = /DFZ_ENABLE_HYPHEN#0`; Linkmap schlägt fehl, falls Muster gelinkt sind – **auf Windows bestätigen** |
+| M2 | 🟡 YELLOW | gumbo-parser und HarfBuzz werden gelinkt (gumbo war als „deaktiviert“ geführt); MIT-Hinweis von Microsoft für `harfbuzz/src/ms-use` fehlte. | behoben: NOTICES, `mupdf-harfbuzz-ms-use-COPYING.txt` |
+| M3 | 🟡 YELLOW | Fremdteile im MuPDF-Kern ohne Hinweis: Adobe CMaps/Glyph List (BSD-3), Unicode-Daten und Bidi-Referenzcode, UCDN (ISC), Grisu (MIT), Open Iconic (MIT), Arcfour. | behoben: `THIRD-PARTY-LICENSES/mupdf-core-NOTICES.txt`, NOTICES-Tabelle |
+| M4 | 🟡 YELLOW | `scripts/linkmap.mjs` erwartete bin2coff-Objekte als `<Datei>.obj` statt `<Datei>_<endung>.obj` und ordnete die Silbentrennung „mupdf“ zu – M1 wäre unentdeckt geblieben. | behoben |
+| M5 | 🟡 YELLOW | `mupdf-sys` enthält nur einen Auszug von MuPDF 1.27.2 und patcht beim Build `font.c`, `store.c`, `geometry.c`, `libresources.vcxproj`. | behoben: `SOURCE.md` nennt MuPDF upstream, mupdf-rs-Commit und die Patches |
+| M6 | 🟡 YELLOW | Doku: FTL-Begründung, fehlende Formate in Feature-Liste und `Cargo.toml`-Kommentar. | behoben |
+| G1 | 🟡 YELLOW | `LICENSE-ADDITIONAL-PERMISSION.md` wurde nicht ausgeliefert und im Über-Dialog nicht genannt. | behoben: `licenses.mjs`, LIESMICH, Über-Dialog + Test |
+| N1 | 🟡 YELLOW | Tailwind (devDependency) steckt im ausgelieferten CSS; Copyright und Lizenztext fehlten (Vites Lizenzliste erfasst nur JS). | behoben: `tailwindcss-LICENSE.txt` |
+| N2–N4 | 🟡 YELLOW | `@tauri-apps/plugin-dialog` nur mit `LICENSE.spdx`; Rechteinhaber von `@tauri-apps/api` und MathJax fehlen in `npm-bundle.md`. | in NOTICES ergänzt |
+| RY1–RY5 | 🟡 YELLOW | cargo-about gibt für `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys` nur Mustertexte ohne Rechteinhaber aus; `regex-syntax` `LICENSE-UNICODE` fehlt (über ICU4X gedeckt). | offen: `clarify`-Einträge in `src-tauri/about.toml` |
+| G4 | 🟡 YELLOW | Dependabot-PRs werden automatisch gemergt; für npm gibt es keine Lizenz-Positivliste (Rust: `about.toml`). | offen |
+| G6 | 🟡 YELLOW | `bundle.copyright` fehlt in `tauri.conf.json`; NSIS verlangt „Annehmen“ der AGPL (§9: nicht nötig); Spike-`Cargo.toml` ohne `license`. | offen (kosmetisch) |
+| G | 🟢 GREEN | Lizenzfeld = Lizenzdatei bei allen Paketen; gelinktes Copyleft nur MuPDF/jbig2dec (AGPL) und `option-ext` (MPL-2.0); `cssparser`/`selectors`/`dtoa-short` nur Compile-Zeit. `cargo about`/`cargo deny` ok für Windows und macOS. `vendor/mupdf` = Crate + `PATCH.md`. tessdata bitidentisch mit tessdata_fast 4.1.0. Eigener Code ohne Fremdcode; `LICENSE` unverändert; einziger menschlicher Rechteinhaber felix-d-git. | – |
+
+**Nach dem Ändern von `.cargo/config.toml`** lokal einmal `cargo clean -p mupdf-sys --release` (der Build-Script von `mupdf-sys` merkt Umgebungsänderungen nicht); im CI erzwingt der neue `prefix-key` von `rust-cache` einen frischen Build.
+
 ## Anhang – vollständige Listen
 
 ### A. Rust-Crates (ausgeliefert, Ziel `x86_64-pc-windows-msvc`, nur normale Abhängigkeiten)
 
-Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Cargo.lock` – 222 Crates. Proc-Macro-Crates (z. B. `serde_derive`, `*-derive`, `*-macros`) laufen nur beim Kompilieren, sind aber zur Vorsicht mit aufgeführt.
+Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Cargo.lock` – 219 Crates (Stand 2026-11-03). Proc-Macro-Crates (z. B. `serde_derive`, `*-derive`, `*-macros`) laufen nur beim Kompilieren, sind aber zur Vorsicht mit aufgeführt.
 
 | Crate | Version | Lizenz (SPDX laut Cargo.toml) | Typ |
 |---|---|---|---|
@@ -394,7 +416,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `regex` | 1.13.1 | MIT OR Apache-2.0 | Permissiv |
 | `regex-automata` | 0.4.18 | MIT OR Apache-2.0 | Permissiv |
 | `regex-syntax` | 0.8.11 | MIT OR Apache-2.0 | Permissiv |
-| `rfd` | 0.16.0 | MIT | Permissiv |
+| `rfd` | 0.17.2 | MIT | Permissiv |
 | `rustc-hash` | 2.1.3 | Apache-2.0 OR MIT | Permissiv |
 | `same-file` | 1.0.6 | Unlicense/MIT | Permissiv |
 | `schemars` | 0.8.22 | MIT | Permissiv |
@@ -431,9 +453,9 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `tauri` | 2.12.3 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-codegen` | 2.7.2 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-macros` | 2.7.2 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-plugin-dialog` | 2.8.3 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-plugin-dialog` | 2.8.4 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-plugin-single-instance` | 2.5.4 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-plugin-single-instance` | 2.5.5 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-runtime` | 2.12.1 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-runtime-wry` | 2.12.1 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-utils` | 2.10.1 | Apache-2.0 OR MIT | Permissiv |
@@ -478,12 +500,9 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `windows-numerics` | 0.3.1 | MIT OR Apache-2.0 | Permissiv |
 | `windows-result` | 0.4.1 | MIT OR Apache-2.0 | Permissiv |
 | `windows-strings` | 0.5.1 | MIT OR Apache-2.0 | Permissiv |
-| `windows-sys` | 0.60.2 | MIT OR Apache-2.0 | Permissiv |
 | `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Permissiv |
-| `windows-targets` | 0.53.5 | MIT OR Apache-2.0 | Permissiv |
 | `windows-threading` | 0.2.1 | MIT OR Apache-2.0 | Permissiv |
 | `windows-version` | 0.1.7 | MIT OR Apache-2.0 | Permissiv |
-| `windows_x86_64_msvc` | 0.53.1 | MIT OR Apache-2.0 | Permissiv |
 | `winnow` | 1.0.4 | MIT | Permissiv |
 | `writeable` | 0.6.4 | Unicode-3.0 | Permissiv |
 | `wry` | 0.57.0 | Apache-2.0 OR MIT | Permissiv |
@@ -532,30 +551,30 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 |---|---|---|---|
 | `@fontsource-variable/manrope` | 5.3.0 | OFL-1.1 | ja |
 | `@fontsource/ibm-plex-mono` | 5.3.0 | OFL-1.1 | ja |
-| `@tauri-apps/api` | 2.12.3 | Apache-2.0 OR MIT | ja |
-| `@tauri-apps/plugin-dialog` | 2.8.2 | MIT OR Apache-2.0 | ja |
+| `@tauri-apps/api` | 2.12.4 | Apache-2.0 OR MIT | ja |
+| `@tauri-apps/plugin-dialog` | 2.8.4 | MIT OR Apache-2.0 | ja |
 | `@types/react` | 19.3.0 | MIT | nein (nur Typen) |
-| `@xmldom/xmldom` | 0.9.10 | MIT | nein |
+| `@xmldom/xmldom` | 0.9.12 | MIT | nein |
 | `commander` | 13.1.0 | MIT | nein |
 | `csstype` | 3.2.3 | MIT | nein (nur Typen) |
 | `esm` | 3.2.25 | MIT | nein |
-| `lucide-react` | 1.59.0 | ISC | ja |
+| `lucide-react` | 1.64.0 | ISC | ja |
 | `mathjax-full` | 3.2.2 | Apache-2.0 | ja |
 | `mhchemparser` | 4.2.1 | Apache-2.0 | nein |
 | `mj-context-menu` | 0.6.1 | Apache-2.0 | nein |
 | `perfect-freehand` | 1.2.3 | MIT | ja |
-| `react-dom` | 19.3.0 | MIT | ja |
-| `react` | 19.3.0 | MIT | ja |
+| `react-dom` | 19.3.1 | MIT | ja |
+| `react` | 19.3.1 | MIT | ja |
 | `scheduler` | 0.28.0 | MIT | ja |
-| `speech-rule-engine` | 4.1.4 | Apache-2.0 | nein |
+| `speech-rule-engine` | 4.1.5 | Apache-2.0 | nein |
 | `wicked-good-xpath` | 1.3.0 | MIT | nein |
 | `zod` | 4.6.7 | MIT | ja |
 
-### D. npm-Entwicklungsabhängigkeiten (nicht ausgeliefert) – 276 Einträge
+### D. npm-Entwicklungsabhängigkeiten (nicht ausgeliefert) – 282 Einträge
 
 | Lizenz | Anzahl |
 |---|---|
-| MIT | 192 |
+| MIT | 197 |
 | MPL-2.0 | 24 |
 | Apache-2.0 | 17 |
 | Apache-2.0 OR MIT | 12 |
@@ -566,3 +585,4 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | MIT-0 | 2 |
 | CC-BY-4.0 | 1 |
 | CC0-1.0 | 1 |
+| 0BSD | 1 |

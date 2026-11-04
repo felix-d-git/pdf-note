@@ -12,13 +12,19 @@ This folder is regenerated on every build and holds the license texts and copyri
 components shipped with PDF Note.
 
 PDF-Note-LICENSE-AGPL-3.0.txt  Lizenz von PDF Note / license of PDF Note
+PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md  zusätzliche Erlaubnis nach AGPL-3.0 §7 (Microsoft WebView2 Loader)
+                               additional permission under AGPL-3.0 section 7 (Microsoft WebView2 Loader)
 SOURCE.md                      Quellcode-Angebot (AGPL-3.0 §6) / offer of Corresponding Source
 rust-crates.html               alle Rust-Crates der Windows-Binary (cargo-about) / all Rust crates
 npm-bundle.md                  gebündelte npm-Pakete: React, Zod, MathJax, lucide-react, perfect-freehand, Tauri-API …
 font-*-OFL.txt                 Schriften Manrope, IBM Plex Mono (SIL Open Font License 1.1)
+tailwindcss-LICENSE.txt        Tailwind CSS (MIT, Tailwind Labs) – im ausgelieferten CSS enthalten / contained in the shipped CSS
 mupdf-COPYING.txt              MuPDF (Artifex, AGPL-3.0)
 mupdf-<bibliothek>-*           mitgebaute MuPDF-Drittbibliotheken (thirdparty/ in mupdf-sys)
                                MuPDF third-party libraries built into the binary
+mupdf-harfbuzz-ms-use-COPYING.txt  Microsoft-USE-Tabellen in HarfBuzz (MIT, Microsoft) / Microsoft USE tables in HarfBuzz
+mupdf-core-NOTICES.txt         Fremdteile im MuPDF-Kern: Adobe-CMaps und Glyph List, UCDN, Grisu, Open Iconic,
+                               Unicode-Daten, Arcfour / third-party parts inside MuPDF itself
 leptonica-LICENSE.txt          Leptonica 1.85 (BSD-2-Clause) – fehlt in mupdf-sys, von github.com/DanBloomberg/leptonica
 libjpeg-IJG-README.txt         libjpeg 9f (IJG-Lizenz, Abschnitt LEGAL ISSUES) – fehlt in mupdf-sys,
                                von github.com/ArtifexSoftware/thirdparty-libjpeg (Tag v9f).
@@ -36,5 +42,6 @@ URW-Base35-AGPL-Font-Exception.txt  dieselben Schriften alternativ: AGPL-3.0 mit
 Die Tesseract-Sprachdaten (Apache-2.0) haben ihre Lizenz im Ordner tessdata.
 The Tesseract language data (Apache-2.0) carries its license in the tessdata folder.
 
-Eingecheckt sind nur LIESMICH.txt, leptonica-*, libjpeg-*, freetype-*, webview2-* und URW-* (keine Quelle im Build).
+Eingecheckt sind nur LIESMICH.txt, leptonica-*, libjpeg-*, freetype-*, webview2-*, URW-* und mupdf-core-*
+(keine Quelle im Build).
 Bei einem Versionssprung dieser Bibliotheken die Texte am Upstream-Tag prüfen.

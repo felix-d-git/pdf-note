@@ -1,12 +1,12 @@
 # Issue #10: welche MuPDF-Drittbibliotheken landen unter MSVC wirklich in pdf-note.exe? Release-Build mit Linker-Map,
-# Auswertung je Bibliothek in der Job-Zusammenfassung, Map als Artefakt. Läuft nur bei Änderungen an vendor/mupdf oder
-# an der Auswertung selbst, sonst von Hand (langer Release-Build; Dependabot-PRs bleiben unberührt).
+# Auswertung je Bibliothek in der Job-Zusammenfassung, Map als Artefakt. Scheitert, wenn Silbentrennungsmuster gelinkt
+# sind (#20, M1). Läuft nur bei Änderungen an vendor/mupdf, .cargo/config.toml oder an der Auswertung selbst, sonst von Hand (langer Release-Build; Dependabot-PRs bleiben unberührt).
 name: MuPDF-Linkmap
 
 on:
   workflow_dispatch:
   pull_request:
-    paths: [".github/workflows/linkmap.yml", "scripts/linkmap.mjs", "vendor/mupdf/**"]
+    paths: [".github/workflows/linkmap.yml", "scripts/linkmap.mjs", "vendor/mupdf/**", ".cargo/config.toml"]
 
 permissions:
   contents: read
@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> ../target
+          # neuer Schlüssel, sobald sich die MuPDF-Defines in .cargo/config.toml ändern (mupdf-sys merkt das nicht selbst)
+          prefix-key: v1-rust-hyphen0
       - run: npm ci
       # dist/ braucht tauri-build (frontendDist)
       - run: npm run build
