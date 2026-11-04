@@ -41,6 +41,12 @@ run("cargo", ["about", "generate", "--locked", "--manifest-path", "src-tauri/Car
 const npm = "dist/.vite/license.md";
 if (!existsSync(npm)) fail(`${npm} fehlt – erst vite build (build.license in vite.config.ts)`);
 copyFileSync(npm, join(OUT, "npm-bundle.md"));
+// Positivliste wie about.toml für Rust: Dependabot merged automatisch, eine neue Lizenz soll den Build stoppen (#21, G4)
+const NPM_OK = new Set(["MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD"]);
+for (const [, name, expr] of readFileSync(npm, "utf8").matchAll(/^## (.+) - \S+ \((.+)\)$/gm)) {
+  const bad = expr.split(/\s+(?:OR|AND)\s+|[()]/).filter((l) => l && !NPM_OK.has(l));
+  if (bad.length) fail(`npm-Paket ${name}: Lizenz ${bad.join(", ")} nicht freigegeben (NPM_OK in scripts/licenses.mjs)`);
+}
 
 // Schriften: Vites Lizenzliste erfasst nur JS, die Fontsource-Pakete kommen über CSS
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));

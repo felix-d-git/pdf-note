@@ -31,6 +31,7 @@
     "targets": ["nsis"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "publisher": "felix-d-git",
+    "copyright": "Copyright (C) 2026 felix-d-git",
     "licenseFile": "../LICENSE",
     "resources": { "resources/tessdata/*": "tessdata/", "../THIRD-PARTY-LICENSES/*": "licenses/" },
     "fileAssociations": [
