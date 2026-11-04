@@ -44,13 +44,15 @@ test("Hilfe-Suche findet Kapitel", () => {
   unmount();
 });
 
-test("Hilfe: Über/Lizenzen nach AGPL §5(d) – Copyright, keine Gewährleistung, Lizenz, Quellcode, Lizenzordner, kein Link", () => {
+test("Hilfe: Über/Lizenzen nach AGPL §5(d) – Copyright, keine Gewährleistung, Lizenz, §7-Erlaubnis, Quellcode, Lizenzordner, kein Link", () => {
   const { div, unmount } = mount(<Help onClose={() => {}} onTour={() => {}} />);
   const about = div.querySelector("#help-about");
   const text = about?.textContent ?? "";
   expect(text).toContain(`PDF Note ${version} – Copyright (C) 2026 felix-d-git`);
   expect(text).toMatch(/Gewährleistung|warranty/);
   expect(text).toContain("GNU Affero General Public License v3.0");
+  expect(text).toMatch(/AGPL-3.0 (§7|section 7)/);
+  expect(text).toContain("WebView2 Loader");
   expect(text).toContain(`https://github.com/felix-d-git/pdf-note/tree/v${version}`);
   expect(text).toContain("licenses");
   // offline: nur Text, nichts zum Anklicken

@@ -1,14 +1,15 @@
 // Lizenzsammlung für den Installer (Issue #7) → THIRD-PARTY-LICENSES/, per bundle.resources nach <Installationsordner>\licenses.
 // Läuft in beforeBuildCommand nach `vite build` und wird bei jedem Build neu erzeugt (Dependabot ändert die Liste laufend):
-// Rust-Crates (cargo-about), gebündelte npm-Pakete (Vite build.license), Schriften (OFL), MuPDF mit thirdparty-Lizenzen
-// aus mupdf-sys, Lizenz von PDF Note, SOURCE.md. Texte ohne Quelle im Build (STATIC) liegen eingecheckt im selben Ordner.
+// Rust-Crates (cargo-about), gebündelte npm-Pakete (Vite build.license), Schriften (OFL), Tailwind (CSS), MuPDF mit
+// thirdparty-Lizenzen aus mupdf-sys, Lizenz von PDF Note samt §7-Erlaubnis, SOURCE.md. Texte ohne Quelle im Build (STATIC)
+// liegen eingecheckt im selben Ordner.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const OUT = "THIRD-PARTY-LICENSES";
 /** eingecheckt (siehe .gitignore und LIESMICH.txt), alles andere in OUT ist erzeugt */
-const STATIC = /^(LIESMICH\.txt|leptonica-|libjpeg-|freetype-|webview2-|URW-)/;
+const STATIC = /^(LIESMICH\.txt|leptonica-|libjpeg-|freetype-|webview2-|URW-|mupdf-core-)/;
 /** MuPDF-thirdparty, die libmupdf unter MSVC nicht referenziert (nur Viewer mupdf-gl / Netzwerk) */
 const MUPDF_SKIP = new Set(["curl", "freeglut"]);
 const LICENSE_FILE = /^(COPYING|LICEN[CS]E|NOTICE)/i;
@@ -45,6 +46,8 @@ copyFileSync(npm, join(OUT, "npm-bundle.md"));
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 for (const name of Object.keys(pkg.dependencies).filter((d) => d.startsWith("@fontsource")))
   copyFileSync(join("node_modules", name, "LICENSE"), join(OUT, `font-${name.split("/")[1]}-OFL.txt`));
+// Tailwind: devDependency, aber Preflight/Utilities stehen im ausgelieferten CSS – ebenfalls an Vites Liste vorbei (#20, N1)
+copyFileSync(join("node_modules", "tailwindcss", "LICENSE"), join(OUT, "tailwindcss-LICENSE.txt"));
 
 // MuPDF: COPYING + thirdparty/*/{COPYING,LICENSE*,NOTICE*} aus dem mupdf-sys-Quellpaket
 const meta = JSON.parse(run("cargo", ["metadata", "--format-version", "1", "--locked", "--manifest-path", "src-tauri/Cargo.toml",
@@ -59,14 +62,23 @@ for (const lib of readdirSync(join(mupdf, "thirdparty"))) {
   for (const f of readdirSync(dir).filter((f) => LICENSE_FILE.test(f)))
     copyFileSync(join(dir, f), join(OUT, `mupdf-${lib}-${f}${f.includes(".") ? "" : ".txt"}`));
 }
+// Lizenzen in Unterordnern der thirdparty-Bibliotheken, deren Code gelinkt wird (#20, M2)
+for (const [lib, sub] of [["harfbuzz", "src/ms-use"]]) {
+  const f = join(mupdf, "thirdparty", lib, sub, "COPYING");
+  if (!existsSync(f)) fail(`${f} fehlt – mupdf-sys-Version geändert?`);
+  copyFileSync(f, join(OUT, `mupdf-${lib}-${sub.split("/").pop()}-COPYING.txt`));
+}
 
 // eigenes Werk + Quellcode-Angebot (Issue #8) mit Version aus package.json bzw. Cargo.lock
 copyFileSync("LICENSE", join(OUT, "PDF-Note-LICENSE-AGPL-3.0.txt"));
+// zusätzliche Erlaubnis nach AGPL §7 (WebView2 Loader) muss mit der Binary reisen, sonst kennt sie kein Empfänger (#20, G1)
+copyFileSync("LICENSE-ADDITIONAL-PERMISSION.md", join(OUT, "PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md"));
 writeFileSync(join(OUT, "SOURCE.md"), readFileSync("SOURCE.md", "utf8").replaceAll("<Version>", pkg.version).replaceAll("<mupdf-sys>", sys.version));
 
 // Selbstprüfung: jede erwartete Datei da und nicht leer
-const want = ["rust-crates.html", "npm-bundle.md", "mupdf-COPYING.txt", "PDF-Note-LICENSE-AGPL-3.0.txt", "SOURCE.md",
-  "leptonica-LICENSE.txt", "libjpeg-IJG-README.txt", "freetype-GPLv2.TXT", "webview2-sdk-LICENSE.txt",
+const want = ["rust-crates.html", "npm-bundle.md", "mupdf-COPYING.txt", "PDF-Note-LICENSE-AGPL-3.0.txt",
+  "PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md", "tailwindcss-LICENSE.txt", "SOURCE.md",
+  "mupdf-core-NOTICES.txt", "mupdf-harfbuzz-ms-use-COPYING.txt", "leptonica-LICENSE.txt", "libjpeg-IJG-README.txt", "freetype-GPLv2.TXT", "webview2-sdk-LICENSE.txt",
   "URW-Base35-OFL-1.1.txt", "URW-Base35-AGPL-Font-Exception.txt"];
 const files = readdirSync(OUT);
 for (const f of want) if (!files.includes(f) || !statSync(join(OUT, f)).size) fail(`${f} fehlt oder ist leer`);

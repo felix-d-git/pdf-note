@@ -2,6 +2,11 @@
 [env]
 # bindgen (mupdf-sys) braucht libclang; LLVM per winget, nicht im PATH
 LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
+# MuPDF ohne Silbentrennung (Lizenz-Audit #20, M1): mupdf-sys schaltet unter MSVC nur HTML/EPUB ab, FB2/MOBI/TXT/Office
+# bleiben an und damit die HTML-Engine samt resources/hyphen/hyph-all.zip (tex-hyphen: u. a. LPPL/LGPL, ein Muster ohne
+# Lizenz). cl.exe hängt _CL_ an CL (dort stehen die Defines von mupdf-sys) an; ohne Wirkung auf Linux/macOS (make).
+# Der Build-Script von mupdf-sys merkt Änderungen hier nicht: danach einmal `cargo clean -p mupdf-sys --release`.
+_CL_ = '/DFZ_ENABLE_HYPHEN#0'
 
 [build]
 # Build-Artefakte (GB) nie in den Projektordner; CI überschreibt per CARGO_TARGET_DIR

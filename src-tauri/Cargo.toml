@@ -15,7 +15,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-# ohne Default-Features: kein JavaScript in PDFs, keine XPS/EPUB/HTML-Formate.
+# ohne Default-Features: kein JavaScript in PDFs, keine XPS/SVG/CBZ/IMG/EPUB/HTML-Formate. Unter MSVC baut mupdf-sys
+# trotzdem alles und lässt FB2/MOBI/TXT/Office an (damit HTML-Engine samt gumbo); Silbentrennung aus per
+# .cargo/config.toml (_CL_).
 # base14-fonts: Standardschriften (Helvetica …) für Textfelder und PDFs ohne eingebettete Schriften
 # tesseract: OCR (Tesseract + Leptonica aus MuPDF-thirdparty; unter MSVC ohnehin in libmupdf gebaut)
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts", "tesseract"] }

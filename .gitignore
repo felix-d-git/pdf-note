@@ -16,6 +16,7 @@ src-tauri/gen/
 !/THIRD-PARTY-LICENSES/freetype-*
 !/THIRD-PARTY-LICENSES/webview2-*
 !/THIRD-PARTY-LICENSES/URW-*
+!/THIRD-PARTY-LICENSES/mupdf-core-*
 
 # Persönliche Tool-Konfiguration (Claude Code), bleibt lokal
 CLAUDE.md

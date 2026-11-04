@@ -25,7 +25,13 @@ const meta = JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "
   "--filter-platform", "x86_64-pc-windows-msvc"], { encoding: "utf8", maxBuffer: 1 << 28 }));
 const mupdf = join(dirname(meta.packages.find((p) => p.name === "mupdf-sys").manifest_path), "mupdf");
 const win32 = join(mupdf, "platform", "win32");
-const component = (path) => path.match(/thirdparty\\([^\\]+)/)?.[1] ?? (/resources\\fonts\\urw/.test(path) ? "urw-fonts" : "mupdf");
+const component = (path) => path.match(/thirdparty\\([^\\]+)/)?.[1]
+  ?? (/resources\\fonts\\urw/.test(path) ? "urw-fonts" : /resources\\hyphen/.test(path) ? "hyphen" : "mupdf");
+/** Objekt-Basisname wie im Build: bin2coff (bin2coff.props) schreibt <Datei>_<Endung>.obj, z. B. hyph-all_zip.obj */
+const objName = (kind, path) => {
+  const base = basename(path.replaceAll("\\", "/"), extname(path));
+  return kind.startsWith("bin2coff") ? `${base}_${extname(path).slice(1)}` : base;
+};
 /** Projekt → Basisname → Komponenten, rekursiv über ProjectReference */
 const index = (proj, seen = new Set()) => {
   const owner = new Map();
@@ -36,7 +42,7 @@ const index = (proj, seen = new Set()) => {
     if (kind === "ProjectReference") {
       for (const [b, c] of index(path, seen)) for (const x of c) (owner.get(b) ?? owner.set(b, new Set()).get(b)).add(x);
     } else if (!["ProjectConfiguration", "ClInclude", "None", "Text", "Image", "ResourceCompile"].includes(kind) && path.startsWith("..\\")) {
-      const base = basename(path.replaceAll("\\", "/"), extname(path));
+      const base = objName(kind, path);
       (owner.get(base) ?? owner.set(base, new Set()).get(base)).add(component(path));
     }
   }
@@ -69,4 +75,8 @@ const linked = (t) => comps.has(t) || comps.has(`${t} (mehrdeutig)`);
 const none = [...built].filter((t) => !linked(t)).sort();
 out.push("", `**Gebaut, aber nicht gelinkt:** ${none.join(", ") || "–"}`);
 out.push(`**Nicht gebaut:** ${thirdparty.filter((t) => !built.has(t)).join(", ") || "–"}`);
+// Silbentrennungsmuster (tex-hyphen, u. a. LPPL/LGPL) dürfen nicht in der Binary landen: .cargo/config.toml (_CL_)
+const hyphen = linked("hyphen");
+if (hyphen) out.push("", "**Fehler:** Silbentrennungsmuster (`resources/hyphen`) sind gelinkt – `FZ_ENABLE_HYPHEN=0` greift nicht (Lizenz-Audit #20, M1).");
 console.log(out.join("\n"));
+if (hyphen) process.exit(1);

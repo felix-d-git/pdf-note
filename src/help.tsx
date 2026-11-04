@@ -199,19 +199,22 @@ const EN: Chapter[] = [
 const KEYS_ID = "keys";
 const SOURCE = "https://github.com/felix-d-git/pdf-note";
 /**
- * „Über / Lizenzen“ = Appropriate Legal Notices nach AGPL-3.0 §5(d): Copyright, keine Gewährleistung, Lizenz, Quellcode,
- * Lizenztexte (Ordner `licenses` aus scripts/licenses.mjs). Adresse nur als Text – die App öffnet keine Netzwerkverbindung.
+ * „Über / Lizenzen“ = Appropriate Legal Notices nach AGPL-3.0 §5(d): Copyright, keine Gewährleistung, Lizenz samt
+ * §7-Erlaubnis (LICENSE-ADDITIONAL-PERMISSION.md), Quellcode, Lizenztexte (Ordner `licenses` aus scripts/licenses.mjs).
+ * Adresse nur als Text – die App öffnet keine Netzwerkverbindung.
  */
 const about = (dir: string | undefined): Chapter => T === STRINGS.de
   ? { id: "about", icon: Scale, title: "Über / Lizenzen", lines: [
     `PDF Note ${version} – Copyright (C) 2026 felix-d-git`,
     "Ohne jede Gewährleistung. PDF Note ist freie Software: Du darfst es unter den Bedingungen der GNU Affero General Public License v3.0 (nur diese Version) weitergeben und ändern.",
+    "Zusätzliche Erlaubnis nach AGPL-3.0 §7: PDF Note darf zusammen mit dem Microsoft WebView2 Loader weitergegeben werden, ohne dessen Quellcode beizulegen (Text im Lizenzordner).",
     `Quellcode: ${SOURCE}/tree/v${version}`,
     `Lizenztexte von PDF Note und aller verwendeten Komponenten (MuPDF, Tauri, React, Schriften …): ${dir ?? "Ordner „licenses“ im Installationsordner"}`,
   ] }
   : { id: "about", icon: Scale, title: "About / licenses", lines: [
     `PDF Note ${version} – Copyright (C) 2026 felix-d-git`,
     "Without any warranty. PDF Note is free software: you may redistribute and modify it under the terms of the GNU Affero General Public License v3.0 (only this version).",
+    "Additional permission under AGPL-3.0 section 7: PDF Note may be conveyed together with the Microsoft WebView2 Loader without its source code (text in the licenses folder).",
     `Source code: ${SOURCE}/tree/v${version}`,
     `License texts of PDF Note and all components it uses (MuPDF, Tauri, React, fonts …): ${dir ?? "folder “licenses” in the installation folder"}`,
   ] };
