@@ -156,6 +156,17 @@ test("xyz-Gitter: ohne planes y-z-Rückwand (alt), xz und alle Ebenen; JSON abw�
   const old = ItemData.parse({ ...toData(a), planes: undefined });
   expect(fromData(old).planes).toBeUndefined();
   expect(fromData(ItemData.parse(toData({ ...a, planes: "all", dash: "dot" })))).toMatchObject({ planes: "all", dash: "dot" });
+  // neue Wände: alt `xz` = linke Wand (Y-Z), alt `all` = alle drei; walls schlägt planes
+  const w = (walls: ("xy" | "xz" | "yz")[]) => axesLines({ ...a, walls, planes: "xz" }).grid;
+  expect(w(["yz"])).toEqual(xz);
+  expect(w(["xy"])).toEqual(yz);
+  expect(w(["xy", "xz", "yz"])).toEqual(all);
+  expect(w([])).toEqual([]);
+  // Boden unter der x-Achse, linke Wand links der y-Achse
+  const o = axesLines(a).axes[0]?.[0] ?? [0, 0];
+  expect(w(["xz"]).flat().every(([, y]) => y >= o[1] - 1e-6)).toBe(true);
+  expect(w(["yz"]).flat().every(([x]) => x <= o[0] + 1e-6)).toBe(true);
+  expect(fromData(ItemData.parse(toData({ ...a, walls: ["xz"] })))).toMatchObject({ walls: ["xz"] });
   // xy-System ignoriert planes
   expect(axesLines({ ...a, xyz: false, planes: "xz" }).grid).toEqual(axesLines({ ...a, xyz: false }).grid);
 });
@@ -165,8 +176,10 @@ test("Optionen: Quadrat/Kreis/Würfel erzwingen gleiche Seiten, Optionen landen 
   expect(constrain("rect", o, [10, 10, 0.5], [40, -10, 0.5])).toEqual([40, -20, 0.5]);
   expect(constrain("ellipse", o, [0, 0, 0.5], [40, 10, 0.5])).toEqual([40, 10, 0.5]);
   expect(constrain("solid", { ...SHAPE_OPTS, solid: "cube" }, [0, 0, 0.5], [-5, 30, 0.5])).toEqual([-30, 30, 0.5]);
-  expect(shapeProps("axes", { ...SHAPE_OPTS, xyz: true, grid: "xz" })).toEqual({ xyz: true, grid: true, planes: "xz" });
-  expect(shapeProps("axes", { ...SHAPE_OPTS, grid: "all" })).toEqual({ xyz: false, grid: true });
+  expect(shapeProps("axes", { ...SHAPE_OPTS, xyz: true, walls: ["yz", "xy"] })).toEqual({ xyz: true, grid: true, walls: ["xy", "yz"] });
+  expect(shapeProps("axes", { ...SHAPE_OPTS, xyz: true })).toEqual({ xyz: true, grid: false });
+  expect(shapeProps("axes", { ...SHAPE_OPTS, grid: true })).toEqual({ xyz: false, grid: true });
+  expect(constrain("solid", { ...SHAPE_OPTS, solid: "sphere" }, [0, 0, 0.5], [-5, 30, 0.5])).toEqual([-30, 30, 0.5]);
   expect(shapeProps("rect", { ...SHAPE_OPTS, fill: [1, 0, 0], dash: "dash" })).toEqual({ dash: "dash", fill: [1, 0, 0] });
   expect(shapeProps("line", { ...SHAPE_OPTS, fill: [1, 0, 0] })).toEqual({});
   expect(dashPattern("dash", 2)).toEqual([6, 4]);

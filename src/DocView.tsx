@@ -17,7 +17,7 @@ import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
 import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast } from "./ui";
 import { T, tip } from "./i18n";
-import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
+import { BAR_TOOLS, comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
 import { LOCK_EVENT, lockedLayers, setLayerLocked } from "./layers";
 import { OPT_TOOLS, ShapeOptions } from "./ShapeOptions";
 import * as ol from "./outline";
@@ -1035,7 +1035,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         {sep}
         {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
         {/* Rechtsklick auf ein Werkzeug mit Optionen: wählt es und öffnet die Optionen */}
-        {TOOL_LABELS.map(([t, icon, label, key]) => (
+        {BAR_TOOLS.map(([t, icon, label, key]) => (
           <span key={t} className="relative inline-flex">
           <IconBtn
             icon={icon}

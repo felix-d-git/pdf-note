@@ -57,6 +57,9 @@ export const TOOL_LABELS: [Tool, LucideIcon, string, string][] = ([
   ["rect", Square], ["ellipse", Circle], ["axes", Axis3d], ["solid", Box], ["form", ClipboardPen], ["link", Link],
 ] as const).map(([t, icon]) => [t, icon, T[t], KEYS[t]]);
 
+/** Werkzeuge der Leiste: Stift/Marker erscheinen nur als farbige Vorlagen (PenBar), Kürzel bleiben */
+export const BAR_TOOLS = TOOL_LABELS.filter(([t]) => t !== "pen" && t !== "marker");
+
 /** Stift-Kürzel: Art, n-ter Stift dieser Art in `Palettes.pens`, Name, Kürzel */
 export const QUICK: ["pen" | "marker", number, string, string][] = [
   ["pen", 0, T.pen1, KEYS.pen1], ["pen", 1, T.pen2, KEYS.pen2], ["pen", 2, T.pen3, KEYS.pen3],

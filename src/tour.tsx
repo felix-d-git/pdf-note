@@ -3,7 +3,7 @@ import {
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { T } from "./i18n";
-import { LAYERS, TOOL_LABELS } from "./keys";
+import { BAR_TOOLS, LAYERS } from "./keys";
 import { BTN, IconBtn, on } from "./ui";
 
 const KEY = "pdfnote.tour";
@@ -83,7 +83,7 @@ export function Tour({ onEnd }: { onEnd: () => void }) {
         <div className="flex items-center gap-1 border-b border-line p-1">
           <div data-tour="1" className="flex items-center gap-0.5">
             <span className={BTN + on(true)}><ArrowLeftRight size={18} /></span>
-            {TOOL_LABELS.map(([t, I]) => <span key={t} className={BTN + on(t === "lasso")}><I size={18} /></span>)}
+            {BAR_TOOLS.map(([t, I]) => <span key={t} className={BTN + on(t === "lasso")}><I size={18} /></span>)}
           </div>
           <div data-tour="2" className="ml-2 flex items-center gap-0.5 border-l border-line pl-2">
             {LAYERS.map(([l, I]) => <span key={l} className={BTN + on(l === 3)}><I size={18} /></span>)}

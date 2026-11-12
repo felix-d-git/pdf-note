@@ -10,24 +10,26 @@ import { BTN as btn, Dialog, IconBtn, on } from "./ui";
 const rgb = (c: Rgb) => `rgb(${c.map((v) => v * 255).join(",")})`;
 const max = (k: Pen["kind"]) => (k === "marker" ? 40 : 20);
 
-/** Stift: schmaler Schaft mit spitzer Mine. Schaft in Leistenfarbe, nur die Mine in `--tip` (Stiftfarbe). */
+/** Stift: schmaler Schaft mit spitzer Mine; großer Farbklecks in `--tip` (Stiftfarbe) hinter der Spitze, Stift liegt obenauf. */
 function PenGlyph({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" aria-hidden>
+      <circle cx="6.5" cy="17.5" r="5.5" fill="var(--tip)" stroke="currentColor" strokeOpacity={0.25} strokeWidth={1} />
       <g transform="rotate(45 12 12)">
-        <path d="M9.5 15V4a2.5 2.5 0 0 1 5 0v11" />
+        <path d="M9.5 15V4a2.5 2.5 0 0 1 5 0v11" fill="var(--surface)" />
         <path d="M9.5 15h5L12 22z" fill="var(--tip)" strokeWidth={1.5} />
       </g>
     </svg>
   );
 }
 
-/** Marker: breiter Schaft, Kragen, schräge Keilspitze in `--tip`. */
+/** Marker: breiter Schaft, Kragen, schräge Keilspitze; Farbklecks wie beim Stift. */
 function MarkerGlyph({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" aria-hidden>
+      <circle cx="6.5" cy="17.5" r="5.5" fill="var(--tip)" stroke="currentColor" strokeOpacity={0.25} strokeWidth={1} />
       <g transform="rotate(45 12 12)">
-        <path d="M7 11V3h10v8zM7 11l2 4h6l2-4" />
+        <path d="M7 11V3h10v8zM7 11l2 4h6l2-4" fill="var(--surface)" />
         <path d="M9 15h6v3l-6 3z" fill="var(--tip)" strokeWidth={1.5} />
       </g>
     </svg>
