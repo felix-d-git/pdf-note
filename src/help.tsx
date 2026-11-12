@@ -55,6 +55,7 @@ const DE: Chapter[] = [
   { id: "axes", icon: Grid3x3, title: "Koordinatensysteme", lines: [
     "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Rechtsklick aufs Werkzeug (oder Stil-Menü): xy oder xyz (Schrägbild), Karo-Gitter aus / nur x-z-Ebene / alle drei Ebenen.",
     "Formen: Rechtsklick auf Rechteck, Ellipse, Linie, Pfeil oder 3D-Körper → Quadrat bzw. Kreis erzwingen, Füllung, Strichart (durchgezogen/gestrichelt/gepunktet).",
+    "Radierer (D): Rechtsklick aufs Werkzeug → „ganzer Strich“ (Standard) oder „nur überfahrener Teil“: dann teilt der Radierer Stift-/Marker-Striche; Formen und Text verschwinden weiter ganz.",
     "3D-Körper (B): Quader, Würfel oder Zylinder als Schrägbild aufziehen; verdeckte Kanten gestrichelt.",
   ] },
   { id: "marker", icon: Palette, title: "Stifte, Textmarker, Farbe, Breite", lines: [
@@ -149,6 +150,7 @@ const EN: Chapter[] = [
   { id: "axes", icon: Grid3x3, title: "Coordinate systems", lines: [
     "Coordinate system tool (X): drag a rectangle → axes. Right-click the tool (or the style menu): xy or xyz (oblique), square grid off / x-z plane only / all three planes.",
     "Shapes: right-click rectangle, ellipse, line, arrow or 3D solid → force square or circle, fill, line style (solid/dashed/dotted).",
+    "Eraser (D): right-click the tool → “whole stroke” (default) or “only the part touched”: the eraser then splits pen/highlighter strokes; shapes and text still disappear whole.",
     "3D solid (B): drag a cuboid, cube or cylinder in oblique projection; hidden edges dashed.",
   ] },
   { id: "marker", icon: Palette, title: "Pens, highlighter, colour, width", lines: [

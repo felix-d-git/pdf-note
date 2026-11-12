@@ -4,7 +4,7 @@ import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
-  constrain, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts,
+  constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
@@ -84,7 +84,8 @@ type Gesture =
   /** `shape`: beim Halten erkannte Form (`base` = ihre Punkte vor dem Weiterziehen), `raw` = Freihand-Strich davor (Strg+Z kehrt dorthin zurück) */
   | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; shape: ShapeKind | null; raw: Item | null; base: InkPoint[] | null } | null }
   | { t: "shape"; item: Item }
-  | { t: "erase"; ids: Set<number>; l: Layer }
+  /** `cut` (Teil-Radierer): Original-id → Restteile ([] = ganz weg); `at` = letzte Radierer-Position */
+  | { t: "erase"; ids: Set<number>; l: Layer; cut: Map<number, Item[]> | null; at: [number, number] }
   /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
   | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean; add: number[] | null; l: Layer }
   | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean; fresh: boolean }
@@ -178,6 +179,8 @@ export interface PageProps {
   /** Tippen bei ausgewähltem Textfeld: DocView ruft je Seite `(id, Zeichen)` */
   typers: Map<number, (id: number, ch: string) => void>;
   onRemove: (ids: number[]) => void;
+  /** Teil-Radierer: Objekt-id → Ersatzteile an derselben Stelle der Reihenfolge ([] = entfernen), ein Undo-Schritt */
+  onCut: (parts: Map<number, Item[]>) => void;
   onReplace: (items: Item[]) => void;
   /** Bild zuschneiden (Doppelklick → Zuschnitt-Modus → ✓/Enter) */
   onCrop: (id: number, f: Crop) => void;
@@ -416,7 +419,8 @@ export function PageView(p: PageProps) {
   const shown = () => {
     const c = g.current;
     const out = items
-      .filter((it) => !(c?.t === "erase" && c.ids.has(it.id)) && it.id !== edit?.item.id)
+      .flatMap((it) => (c?.t !== "erase" ? [it] : c.ids.has(it.id) ? [] : c.cut?.get(it.id) ?? [it]))
+      .filter((it) => it.id !== edit?.item.id)
       .map(transform)
       .map((it) => (prev && selected.includes(it.id) ? { ...it, ...prev } : it));
     return c?.t === "shape" || c?.t === "hl" ? [...out, c.item] : out;
@@ -486,7 +490,33 @@ export function PageView(p: PageProps) {
   const eraseAt = (x: number, y: number) => {
     const c = g.current;
     if (c?.t !== "erase") return;
-    for (const it of items) if (layerOf(it) === c.l && hitTest(it, x, y, ERASER_PX / zoom)) c.ids.add(it.id);
+    const r = ERASER_PX / zoom;
+    // Zwischenpositionen alle r/2: schnelle Bewegung lässt sonst Lücken (Teil-Radierer: stehengebliebene Strichstücke)
+    const [x0, y0] = c.at, n = Math.max(1, Math.ceil(Math.hypot(x - x0, y - y0) / (r / 2)));
+    c.at = [x, y];
+    for (let k = 1; k <= n; k++) {
+      const ex = x0 + ((x - x0) * k) / n, ey = y0 + ((y - y0) * k) / n;
+      for (const it of items) {
+        if (layerOf(it) !== c.l || c.ids.has(it.id)) continue;
+        const cut = c.cut;
+        if (!cut || (it.kind !== "ink" && it.kind !== "marker")) {
+          // ganzer Strich bzw. Form/Text; im Teil-Modus als leere Restliste → ein Undo-Schritt mit den Teilstücken
+          if (cut?.get(it.id) || !hitTest(it, ex, ey, r)) continue;
+          if (cut) cut.set(it.id, []);
+          else c.ids.add(it.id);
+          continue;
+        }
+        const parts = cut.get(it.id) ?? [it];
+        let hit = false;
+        const next = parts.flatMap((s) => {
+          const f = cutStroke(s.points, ex, ey, r + s.size / 2);
+          if (!f) return [s];
+          hit = true;
+          return f.map((points) => ({ ...s, id: newId(), points }));
+        });
+        if (hit) cut.set(it.id, next);
+      }
+    }
   };
 
   const make = (kind: Item["kind"], pr: Preset, q: InkPoint, simulated: boolean): Item => ({
@@ -670,7 +700,7 @@ export function PageView(p: PageProps) {
       g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null, base: null } };
       armHold(x, y);
     } else if (t === "eraser") {
-      g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L };
+      g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L, cut: p.opts.partial ? new Map() : null, at: [x, y] };
       eraseAt(x, y);
       redraw();
     } else if (t === "lasso") {
@@ -812,7 +842,8 @@ export function PageView(p: PageProps) {
         break;
       }
       case "erase":
-        if (c.ids.size) p.onRemove([...c.ids]);
+        if (c.cut?.size) p.onCut(c.cut);
+        else if (c.ids.size) p.onRemove([...c.ids]);
         break;
       case "lasso": {
         const [x0, y0] = c.poly[0] ?? [0, 0];

@@ -1362,6 +1362,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setTools(afterShape);
                 }}
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
+                onCut={(parts) => edit((all) => all.flatMap((it) => parts.get(it.id) ?? [it]))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
                 onCrop={(cid, f) => {
                   const img = items.find((it) => it.id === cid);

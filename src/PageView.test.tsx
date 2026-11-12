@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset } from "./ink";
+import { box, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset, type ShapeOpts } from "./ink";
 import { PageView, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
@@ -48,9 +48,10 @@ const crops: [number, number[]][] = [];
 let replaces = 0;
 const spaces: [number, number][] = [];
 const removed: number[][] = [];
+const cuts: Map<number, Item[]>[] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
-function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, settings = DEFAULT_SETTINGS, locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; settings?: Settings; locked?: (l: Layer) => boolean }) {
+function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, settings = DEFAULT_SETTINGS, locked, opts = SHAPE_OPTS }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; settings?: Settings; locked?: (l: Layer) => boolean; opts?: ShapeOpts }) {
   const [items, setItems] = useState<Item[]>(init);
   const [layer, setLayer] = useState<Layer>(layer0);
   const [tool, st] = useState(start);
@@ -62,6 +63,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       preset={preset} marker={DEFAULT_PRESET} textSize={14} settings={settings}
       onAdd={(it, raw) => (lastAdd.push(it), raws.push(raw), setItems((xs) => [...xs, it]))}
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={(ids) => void removed.push(ids)}
+      onCut={(parts) => (cuts.push(parts), setItems((xs) => xs.flatMap((x) => parts.get(x.id) ?? [x])))}
       onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
@@ -71,7 +73,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
         const moved = makeSpace(items, 0, y, dy);
         setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x));
       }}
-      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} opts={SHAPE_OPTS}
+      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} opts={opts}
     />
   );
 }
@@ -91,6 +93,7 @@ beforeEach(() => {
   draws.length = 0;
   origs.length = 0;
   removed.length = 0;
+  cuts.length = 0;
   backend.reply = () => new Promise(() => {});
   host = document.createElement("div");
   document.body.append(host);
@@ -102,7 +105,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset; settings?: Settings } = {}) => {
+const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset; settings?: Settings; opts?: ShapeOpts } = {}) => {
   root = createRoot(host);
   act(() => root.render(<Page start={tool} layer={layer} init={init} {...more} />));
   return host.querySelector("[data-page]") as HTMLDivElement;
@@ -673,4 +676,25 @@ test("Canvas-Inhalt verworfen (contextlost) → nach contextrestored wird die Ha
   const cv = page.querySelector("canvas[style*='multiply']") as HTMLCanvasElement;
   act(() => void cv.dispatchEvent(new Event("contextrestored")));
   expect(draws.at(-1)).toHaveLength(1);
+});
+
+test("B1 Teil-Radierer: teilt den Strich, Form daneben ganz weg – ein onCut; Standard bleibt ganzer Strich", () => {
+  const init = [obj(1, "ink", 100, 100, 300, 100), obj(2, "rect", 190, 140, 210, 160)];
+  const page = mount("eraser", 3, init, { opts: { ...SHAPE_OPTS, partial: true } });
+  fire(page, "pointerdown", 200, 80);
+  fire(page, "pointermove", 200, 120); // überquert den Strich (Zwischenpositionen, kein Ereignis direkt auf y = 100)
+  fire(page, "pointerup", 200, 120, 0);
+  expect(cuts).toHaveLength(1);
+  const parts = cuts[0]?.get(1) ?? [];
+  expect(parts.map((it) => [it.points[0]?.[0], it.points.at(-1)?.[0]].map((v) => Math.round(v ?? NaN)))).toEqual([[100, 191], [209, 300]]); // r = 8 + Breite/2
+  expect(parts.every((it) => it.id !== 1 && it.kind === "ink")).toBe(true);
+  expect(ui.added.map((it) => it.id)).toEqual([...parts.map((it) => it.id), 2]); // Reihenfolge bleibt, Rechteck auf Ebene 2 unberührt
+  expect(removed).toEqual([]);
+  act(() => root.unmount());
+  const whole = mount("eraser", 3, init);
+  fire(whole, "pointerdown", 200, 80);
+  fire(whole, "pointermove", 200, 120);
+  fire(whole, "pointerup", 200, 120, 0);
+  expect(removed).toEqual([[1]]);
+  expect(cuts).toHaveLength(1);
 });

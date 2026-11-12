@@ -276,8 +276,47 @@ export interface ShapeOpts {
   fill?: Rgb;
   dash?: Dash;
   solid: Solid;
+  /** Radierer: nur den überfahrenen Teil von Stift-/Marker-Strichen entfernen statt ganzer Striche */
+  partial: boolean;
 }
-export const SHAPE_OPTS: ShapeOpts = { xyz: false, grid: "off", square: false, circle: false, solid: "cuboid" };
+export const SHAPE_OPTS: ShapeOpts = { xyz: false, grid: "off", square: false, circle: false, solid: "cuboid", partial: false };
+
+/**
+ * Teil-Radierer: Punktfolge ohne den Kreis (cx, cy, r) → Restteile (je ≥ 2 Punkte, Schnittpunkte exakt auf dem Kreisrand,
+ * Druck interpoliert). `null` = Kreis berührt den Strich nicht; `[]` = ganz entfernt.
+ */
+export function cutStroke(pts: InkPoint[], cx: number, cy: number, r: number): InkPoint[][] | null {
+  const out = (p: InkPoint) => (p[0] - cx) ** 2 + (p[1] - cy) ** 2 > r * r;
+  const [first] = pts;
+  if (!first) return null;
+  if (pts.length === 1) return out(first) ? null : [];
+  const parts: InkPoint[][] = [];
+  let cur: InkPoint[] = out(first) ? [first] : [];
+  let hit = !out(first);
+  const at = (a: InkPoint, b: InkPoint, t: number): InkPoint => [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
+  const end = () => {
+    if (cur.length > 1) parts.push(cur);
+    cur = [];
+  };
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1] ?? first, b = pts[i] ?? first;
+    const dx = b[0] - a[0], dy = b[1] - a[1], fx = a[0] - cx, fy = a[1] - cy;
+    const A = dx * dx + dy * dy, B = 2 * (fx * dx + fy * dy), C = fx * fx + fy * fy - r * r;
+    const disc = B * B - 4 * A * C;
+    const t0 = A && disc > 0 ? (-B - Math.sqrt(disc)) / (2 * A) : 2, t1 = A && disc > 0 ? (-B + Math.sqrt(disc)) / (2 * A) : 2;
+    if (t1 < 0 || t0 > 1) {
+      // Segment ganz außerhalb (bzw. Länge 0 außerhalb)
+      if (out(b)) cur.push(b);
+      continue;
+    }
+    hit = true;
+    if (t0 > 0) cur.push(at(a, b, t0));
+    end();
+    if (t1 < 1) cur.push(at(a, b, t1), b);
+  }
+  end();
+  return hit ? parts : null;
+}
 
 /** Optionen → Felder eines neuen Elements dieser Art */
 export function shapeProps(kind: Kind, o: ShapeOpts): Partial<Item> {
