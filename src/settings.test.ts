@@ -3,7 +3,7 @@ import { expect, test, vi } from "vitest";
 import { DEFAULT_PENS, type Pen } from "./ink";
 import {
   afterShape, applyTheme, captureBinding, DEFAULT_PALETTES, deviceTools, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, movePen, nthPen, pickTool,
-  storePalettes, storeSettings, toolFor, pickColor,
+  storePalettes, storeSettings, toolFor, pickColor, addRecent, toggleFav, loadRecent,
 } from "./settings";
 
 test("Gerät bestimmt das Werkzeug", () => {
@@ -134,4 +134,18 @@ test("§3 zuletzt genutzter Stift überlebt den Neustart", () => {
   storePalettes({ ...DEFAULT_PALETTES, last });
   expect(loadPalettes().last).toEqual(last);
   vi.unstubAllGlobals();
+});
+
+test("Zuletzt geöffnet: neueste zuerst, ohne Doppelte (Groß-/Schrägstrich egal), höchstens 10; Favorit umschalten", () => {
+  let r = { recent: [], fav: [] } as { recent: string[]; fav: string[] };
+  for (let i = 0; i < 12; i++) r = addRecent(r, `C:/d/${i}.pdf`);
+  expect(r.recent).toHaveLength(10);
+  expect(r.recent[0]).toBe("C:/d/11.pdf");
+  r = addRecent(r, "c:\\D\\5.PDF");
+  expect(r.recent[0]).toBe("c:\\D\\5.PDF");
+  expect(r.recent.filter((p) => p.toLowerCase().includes("5.pdf"))).toHaveLength(1);
+  r = toggleFav(r, "C:/d/1.pdf");
+  expect(r.fav).toEqual(["C:/d/1.pdf"]);
+  expect(toggleFav(r, "c:\\d\\1.pdf").fav).toEqual([]);
+  expect(loadRecent()).toEqual({ recent: [], fav: [] });
 });

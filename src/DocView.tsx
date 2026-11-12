@@ -6,12 +6,12 @@ import {
   ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Box, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
-  Rows3, Save, ScanText, Signature, Slash, Square, SquareX, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+  Rows3, Save, ScanText, Signature, Slash, Square, SquareX, Tags, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
   afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  isPara, layerOf, makeSpace, moveItem, newId, PARA0, constrain, SHAPE_OPTS, shapeProps, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset, type ShapeOpts,
+  isPara, layerOf, makeSpace, moveItem, newId, PARA0, constrain, SHAPE_OPTS, shapeProps, TAG_COLOR, TAGS, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset, type ShapeOpts, type Tag,
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
@@ -22,7 +22,7 @@ import { LOCK_EVENT, lockedLayers, setLayerLocked } from "./layers";
 import { OPT_TOOLS, ShapeOptions } from "./ShapeOptions";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
-import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
+import { PageView, TAG_ICON, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, deviceTools, initTools, loadPalettes, loadSign, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, storeSign, type Settings, type Sign, type Tool } from "./settings";
 import { SignPad } from "./SignPad";
 import { PenBar } from "./PenBar";
@@ -187,7 +187,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   // Werkzeugwechsel bricht einen angefangenen Link ab
   if (linkFrom && tool !== "link") setLinkFrom(undefined);
   const [drop, setDrop] = useState<{ from: number; to: number }>();
-  const [side, setSide] = useState<"pages" | "marks">("pages");
+  const [side, setSide] = useState<"pages" | "marks" | "tags">("pages");
+  /** Tag-Übersicht: Filter (leer = alle) */
+  const [tagFilter, setTagFilter] = useState<Tag[]>([]);
   const [marks, setMarks] = useState<ol.Mark[]>([]);
   const [markSel, setMarkSel] = useState(-1);
   const [renaming, setRenaming] = useState(-1);
@@ -601,7 +603,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   }
 
   /** ohne `at` mittig in der Ansicht, mit `at` linke obere Ecke dort */
-  function insertText(text: string, at?: [page: number, x: number, y: number]) {
+  function insertText(text: string, at?: [page: number, x: number, y: number], extra?: Pick<Item, "tag" | "color">) {
     const c = viewCenter();
     const ctx = document.createElement("canvas").getContext("2d");
     if (!c || !ctx) return;
@@ -610,9 +612,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const points = textRect(ctx, t, pal.text, 0, 0);
     const [, [bw, bh] = [0, 0]] = points;
     place([moveItem({
-      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t,
+      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t, ...extra,
     }, at ? x : x - bw / 2, at ? y : y - bh / 2)]);
   }
+
+  /** Tag = Text mit fester Farbe und Wort (andere Viewer sehen das Wort als FreeText); Text bleibt editierbar */
+  const insertTag = (tag: Tag, at?: [number, number, number]) => insertText(T.tag[tag], at, { tag, color: TAG_COLOR[tag] });
 
   function insertShape(kind: Item["kind"]) {
     const c = viewCenter();
@@ -744,6 +749,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       case "space": return chooseTool("space");
       case "redact": return chooseTool("redact");
       case "notes": return switchLayer(3);
+      default: return insertTag(c, where);
     }
   }
 
@@ -1077,6 +1083,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           <MenuItem icon={Signature} label={T.sign} onClick={() => startSign("sign")} />
           <MenuItem icon={Type} label={T.initials} onClick={() => startSign("initials")} />
           <MenuItem icon={FilePenLine} label={T.signEdit} onClick={() => setSignPad({ kind: "sign", place: false })} />
+          {TAGS.map((t) => <MenuItem key={t} icon={TAG_ICON[t]} label={T.tagSet(T.tag[t])} onClick={() => insertTag(t)} />)}
         </Menu>
         {sep}
         {/* nur Stifte + Marker: Rahmen = Maus, Punkt = Stift */}
@@ -1186,8 +1193,42 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         <div className="flex gap-1 border-b border-line p-1">
           <IconBtn icon={Files} label={T.pages} className={btn + on(side === "pages") + " flex-1 justify-center"} onClick={() => setSide("pages")} />
           <IconBtn icon={Bookmark} label={T.marks} className={btn + on(side === "marks") + " flex-1 justify-center"} onClick={() => setSide("marks")} />
+          <IconBtn icon={Tags} label={T.tags} className={btn + on(side === "tags") + " flex-1 justify-center"} onClick={() => setSide("tags")} />
         </div>
-        {side === "marks" ? (
+        {side === "tags" ? (
+          <div className="flex min-h-0 w-56 flex-1 flex-col">
+            <div className="flex gap-0.5 border-b border-line p-1" role="group" aria-label={T.tagFilter}>
+              {TAGS.map((t) => (
+                <IconBtn key={t} icon={TAG_ICON[t]} label={T.tag[t]} aria-pressed={tagFilter.includes(t)} className={btn + on(tagFilter.includes(t))}
+                  onClick={() => setTagFilter((f) => (f.includes(t) ? f.filter((x) => x !== t) : [...f, t]))} />
+              ))}
+            </div>
+            <ul data-scroll className="flex-1 overflow-y-auto py-1 text-sm">
+              {(() => {
+                const list = items.filter((it) => it.tag && (!tagFilter.length || tagFilter.includes(it.tag)))
+                  .sort((a, b) => a.page - b.page || (a.points[0]?.[1] ?? 0) - (b.points[0]?.[1] ?? 0));
+                if (!list.length) return <li className="px-3 py-2 text-ink-2">{T.noTags}</li>;
+                return list.map((it) => {
+                  const Icon = TAG_ICON[it.tag ?? "important"];
+                  return (
+                    <li key={it.id} className={`px-2 ${selection.ids.includes(it.id) ? "bg-accent-soft" : ""}`}>
+                      <button className="flex w-full items-center gap-1.5 py-0.5 text-left text-ink-2 hover:text-ink" title={`${it.text} – ${T.page} ${it.page + 1}`}
+                        onClick={() => {
+                          switchLayer(layerOf(it));
+                          goTo(it.page, it.points[0]?.[1]);
+                          setSelection({ page: it.page, ids: [it.id] });
+                        }}>
+                        <Icon size={14} className="shrink-0" style={{ color: `rgb(${it.color.map((v) => Math.round(v * 255)).join(",")})` }} />
+                        <span className="min-w-0 flex-1 truncate">{it.text.split("\n")[0] || "–"}</span>
+                        <span className="font-mono text-xs text-ink-3">{it.page + 1}</span>
+                      </button>
+                    </li>
+                  );
+                });
+              })()}
+            </ul>
+          </div>
+        ) : side === "marks" ? (
           <div className="flex min-h-0 w-56 flex-1 flex-col">
             <div className="flex flex-wrap gap-0.5 border-b border-line p-1">
               <IconBtn

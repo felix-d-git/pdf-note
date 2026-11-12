@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_PENS, TEXT_SIZE, type Pen, type Preset } from "./ink";
+import { samePath } from "./tabs";
 
 /** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus); `space` = Platz einfügen (waagrechte Linie ziehen) */
 export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "solid", "form", "link", "space", "redact", "sign", "initials"] as const;
@@ -126,6 +127,28 @@ export function storeSign(s: Sign) {
     /* nur Komfort */
   }
 }
+
+/** Zuletzt geöffnet (neueste zuerst, höchstens 10) + Favoriten, gerätelokal; fehlende Dateien blendet die Liste nur aus */
+const RKEY = "pdfnote.recent";
+const Recent = z.object({ recent: z.array(z.string()).default([]), fav: z.array(z.string()).default([]) });
+export type Recent = z.infer<typeof Recent>;
+export function loadRecent(): Recent {
+  try {
+    return Recent.parse(JSON.parse(localStorage.getItem(RKEY) ?? "{}"));
+  } catch {
+    return { recent: [], fav: [] };
+  }
+}
+export function storeRecent(r: Recent) {
+  try {
+    localStorage.setItem(RKEY, JSON.stringify(r));
+  } catch {
+    /* nur Komfort */
+  }
+}
+export const addRecent = (r: Recent, p: string): Recent => ({ ...r, recent: [p, ...r.recent.filter((x) => !samePath(x, p))].slice(0, 10) });
+export const toggleFav = (r: Recent, p: string): Recent =>
+  ({ ...r, fav: r.fav.some((x) => samePath(x, p)) ? r.fav.filter((x) => !samePath(x, p)) : [...r.fav, p] });
 
 const matches = (b: Binding, e: { pointerType: string; buttons: number }) =>
   e.pointerType === b.pointerType && (e.buttons & b.buttons) === b.buttons;
