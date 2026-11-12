@@ -102,6 +102,7 @@ const DE: Chapter[] = [
   ] },
   { id: "pen", icon: Hand, title: "Stifttasten und Handballen", lines: [
     "Stifttasten: obere = Auswahl, untere/Radierer-Ende = Radierer; in den Einstellungen neu lernen.",
+    "Form-Erkennung: Stift am Ende des Strichs 0,5 s ruhen lassen → Linie, gerader Pfeil, Wurzelzeichen, Dreieck, Rechteck oder Kreis. Weiterziehen ohne Abheben macht die Form größer/kleiner, Abheben schließt ab; Strg+Z holt die Freihand-Linie zurück. Kurven (Parabel, e-Funktion …) 1,5 s ruhen lassen → nur geglättet, Verlauf bleibt.",
     "Handballen: Finger zählt nicht, solange der Stift aufliegt und 0,5 s danach, oder wenn die Berührung breiter als 40 px ist.",
     [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
   ] },
@@ -195,6 +196,7 @@ const EN: Chapter[] = [
   ] },
   { id: "pen", icon: Hand, title: "Pen buttons and palm rejection", lines: [
     "Pen buttons: upper = select, lower/eraser end = eraser; re-learn them in the settings.",
+    "Shape recognition: rest the pen 0.5 s at the end of a stroke → line, straight arrow, root sign, triangle, rectangle or circle. Keep moving without lifting to resize it, lifting finishes; Ctrl+Z brings back the freehand stroke. Curves (parabola, exponential …): rest 1.5 s → smoothed only, the course stays.",
     "Palm: a finger is ignored while the pen is down and 0.5 s after, or if the touch is wider than 40 px.",
     [Wrench, "Settings: view light/dark/system, pen buttons, smoothing (off = exactly as drawn) – applies to all pens."],
   ] },
