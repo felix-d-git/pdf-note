@@ -634,15 +634,11 @@ export const afterRotate = (items: Item[], k: number, h: number) =>
   items.map((it) => (it.page === k ? mapItem(it, (x, y) => [h - y, x]) : it));
 
 /**
- * Platz einfügen: Objekte der Seite, die bei `y` oder tiefer beginnen, um `dy` verschieben (negativ = Platz entfernen).
- * Begrenzt auf die Seite (0…h), nichts rutscht über den Rand. Liefert nur die verschobenen Objekte.
+ * Platz einfügen: die Seite wird bei `y` zerschnitten und um `dy` verlängert (Backend); eigene Objekte, die bei `y`
+ * oder tiefer beginnen, rücken um `dy` mit. Liefert nur die verschobenen Objekte.
  */
-export function makeSpace(items: Item[], page: number, y: number, dy: number, h: number): Item[] {
-  const below = items.filter((it) => it.page === page && box(it).y0 >= y);
-  if (!below.length) return [];
-  const top = Math.min(...below.map((it) => box(it).y0)), bottom = Math.max(...below.map((it) => box(it).y1));
-  const d = dy > 0 ? Math.min(dy, Math.max(0, h - bottom)) : Math.max(dy, Math.min(0, -top));
-  return d ? below.map((it) => moveItem(it, 0, d)) : [];
+export function makeSpace(items: Item[], page: number, y: number, dy: number): Item[] {
+  return dy > 0 ? items.filter((it) => it.page === page && box(it).y0 >= y).map((it) => moveItem(it, 0, dy)) : [];
 }
 
 export type ShapeKind = "line" | "arrow" | "root" | "rect" | "triangle" | "ellipse" | "curve";

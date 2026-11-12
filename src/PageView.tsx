@@ -71,6 +71,8 @@ const straighten = (s: Item, x: number, y: number) => {
 };
 const HOLD_TOL = 2; // pt Bewegung, die das Ruhen nicht unterbricht
 const ERASER_PX = 8; // Radierer-Radius in Bildschirmpixeln
+const SPACE_EDGE_PX = 16; // Stift so nah am linken/rechten Seitenrand → Platz einfügen
+const MAX_PAGE_H = 14_400; // PDF-Grenze (Backend prüft gleich)
 const css = (c: [number, number, number]) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
 const hex = (c: [number, number, number]) => `#${c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`;
 const rgb = (v: string) => [1, 3, 5].map((k) => parseInt(v.slice(k, k + 2), 16) / 255) as [number, number, number];
@@ -199,7 +201,8 @@ export interface PageProps {
   /** Mini-Leiste/Rechtsklick-Menü; `at` = Stelle in pt (Einfügen/Bild hier) */
   onCmd: (cmd: Cmd, at?: [number, number]) => void;
   /** Platz einfügen fertig: verschobene Objekte (leer = nichts verschoben), ein Schritt */
-  onSpace: (moved: Item[]) => void;
+  /** Seite bei `y` zerschneiden, `dy` weiße Fläche einfügen (`dy` = 0: abgebrochen) */
+  onSpace: (y: number, dy: number) => void;
 }
 
 /** PDF-Absätze (Indizes wie `text_paragraphs`) um dx/dy verschieben bzw. löschen – gemeinsam mit Original-Objekten ein Schritt */
@@ -401,7 +404,7 @@ export function PageView(p: PageProps) {
     setGear(false);
     setPrev(undefined);
   }
-  const spaced = gs?.t === "space" ? makeSpace(items, index, gs.y, gs.dy, size[1]) : [];
+  const spaced = gs?.t === "space" ? makeSpace(items, index, gs.y, gs.dy) : [];
   const transform = (it: Item) =>
     spaced.find((s) => s.id === it.id) ?? (gs?.t === "tmove" && gs.id === it.id ? moveItem(it, gs.dx, gs.dy)
     : gs?.t === "twidth" && gs.id === it.id ? (({ x0, y0, y1 }) => ({ ...it, points: [[x0, y0, 0.5], [x0 + gs.w, y1, 0.5]] as InkPoint[] }))(box(it))
@@ -556,7 +559,10 @@ export function PageView(p: PageProps) {
     }
     const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
-    const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
+    const t0 = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
+    // Stift am linken/rechten Seitenrand ansetzen und nach unten ziehen: Platz einfügen
+    const px = e.pointerType === "pen" ? pt(e)[0] : NaN;
+    const t = t0 && (px < SPACE_EDGE_PX / zoom || px > size[0] - SPACE_EDGE_PX / zoom) ? "space" : t0;
     if (!t || g.current) return;
     // Stift zeichnet, markiert, radiert und wählt nur auf Ebene 3 – unabhängig von der gewählten Ebene
     const pen3 = e.pointerType === "pen" && (t === "pen" || t === "marker" || t === "eraser" || t === "lasso");
@@ -604,7 +610,8 @@ export function PageView(p: PageProps) {
     // Maus mit Strg/Umschalt: Auswahl erweitern/verkleinern (bleibt in der Ebene)
     const mouse = e.pointerType !== "pen";
     const add = mouse && (e.ctrlKey || e.shiftKey) && t === "lasso" && !tgt.closest("[data-handle]");
-    if (sl.length && !add) {
+    // Platz einfügen schneidet die Seite – ein Zug innerhalb der Auswahl verschiebt sie nicht
+    if (sl.length && !add && t !== "space") {
       const b = unionBox(sl);
       const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
       // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
@@ -754,7 +761,7 @@ export function PageView(p: PageProps) {
         c.w = Math.max(20, c.w0 + x - c.x);
         break;
       case "space":
-        c.dy = y - c.y;
+        c.dy = Math.min(Math.max(0, y - c.y), MAX_PAGE_H - size[1]);
         break;
       case "fsel": {
         const { x0, y0, x1 } = box(c.it);
@@ -892,7 +899,8 @@ export function PageView(p: PageProps) {
         if (c.item.points.length) p.onAdd(c.item);
         break;
       case "space":
-        p.onSpace(e.type === "pointercancel" ? [] : makeSpace(items, index, c.y, c.dy, size[1]));
+        if (e.type !== "pointercancel" && c.dy >= 1) p.onSpace(c.y, c.dy);
+        else p.onSpace(0, 0);
         break;
     }
     rerender();
@@ -1171,6 +1179,7 @@ export function PageView(p: PageProps) {
       )}
       {gs?.t === "space" && (
         <svg className="pointer-events-none absolute inset-0" width={w} height={h}>
+          <rect x={0} width={w} y={gs.y * zoom} height={gs.dy * zoom} fill="var(--accent)" fillOpacity={0.12} />
           <line x1={0} x2={w} y1={gs.y * zoom} y2={gs.y * zoom} stroke="var(--accent)" strokeDasharray="4 3" />
           <line x1={0} x2={w} y1={(gs.y + gs.dy) * zoom} y2={(gs.y + gs.dy) * zoom} stroke="var(--accent)" />
         </svg>

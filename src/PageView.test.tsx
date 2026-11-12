@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset } from "./ink";
+import { box, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset } from "./ink";
 import { PageView, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
@@ -46,6 +46,7 @@ const opened: string[] = [];
 const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 let replaces = 0;
+const spaces: [number, number][] = [];
 const removed: number[][] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
@@ -65,7 +66,11 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
-      onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
+      onCmd={() => {}} onSpace={(y, dy) => {
+        spaces.push([y, dy]);
+        const moved = makeSpace(items, 0, y, dy);
+        setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x));
+      }}
       layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} opts={SHAPE_OPTS}
     />
   );
@@ -265,23 +270,43 @@ test("Doppelklick auf Bild: Zuschneiden, Enter übernimmt, Esc bricht ab", () =>
   expect(host.querySelector('[data-handle="se"]')).not.toBeNull();
 });
 
-test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seitenrand", () => {
-  const page = mount("space", 3, [obj(1, "rect", 10, 10, 100, 80), obj(2, "image", 10, 200, 100, 300), obj(3, "ink", 200, 150, 260, 400)]);
+test("Platz einfügen schneidet die Seite: Objekte darunter rücken ohne Randbegrenzung mit, auch durch eine Auswahl hindurch", () => {
+  spaces.length = 0;
+  const page = mount("space", 3, [obj(1, "rect", 10, 10, 100, 80), obj(2, "image", 10, 200, 100, 300), obj(3, "ink", 200, 150, 260, 400), obj(4, "rect", 300, 500, 400, 600)], { sel: [2] });
   const tops = () => ui.added.map((it) => Math.round(box(it).y0));
-  const drag = (y0: number, y1: number) => {
-    fire(page, "pointerdown", 50, y0);
-    fire(page, "pointermove", 50, y1);
-    fire(page, "pointerup", 50, y1, 0);
+  const drag = (y0: number, y1: number, x = 50, type = "mouse") => {
+    fire(page, "pointerdown", x, y0, 1, type);
+    fire(page, "pointermove", x, y1, 1, type);
+    fire(page, "pointerup", x, y1, 0, type);
   };
-  drag(100, 150);
-  expect(tops()).toEqual([9, 250, 199]);
-  // weit nach unten: unterstes Objekt stößt an den Rand, Abstände bleiben
+  // Zug startet in der Auswahl (Bild 2) → trotzdem Platz statt Verschieben; nur Rechteck 4 liegt darunter
+  drag(250, 300);
+  expect(spaces).toEqual([[250, 50]]);
+  expect(tops()).toEqual([9, 200, 149, 549]);
+  // weit nach unten: kein Anschlag am alten Seitenrand
   drag(100, 2000);
-  expect(Math.max(...ui.added.map((it) => box(it).y1))).toBeCloseTo(800);
-  expect(tops()).toEqual([9, 599, 548]);
-  // weit nach oben: Platz entfernen, nie über den oberen Rand
-  drag(300, -1000);
-  expect(tops()).toEqual([9, 51, 0]);
+  expect(spaces[1]).toEqual([100, 1900]);
+  expect(tops()).toEqual([9, 2100, 2049, 2449]);
+  // nach oben gezogen: nichts (Platz entfernen gibt es nicht)
+  drag(300, 100);
+  expect(spaces[2]).toEqual([0, 0]);
+});
+
+test("Stift am Seitenrand ansetzen → Platz einfügen statt Zeichnen", () => {
+  spaces.length = 0;
+  lastAdd.length = 0;
+  const page = mount("pen", 3, []);
+  fire(page, "pointerdown", 5, 300, 1, "pen");
+  fire(page, "pointermove", 5, 360, 1, "pen");
+  fire(page, "pointerup", 5, 360, 0, "pen");
+  expect(spaces).toEqual([[300, 60]]);
+  expect(lastAdd).toEqual([]);
+  // in der Seite: normal zeichnen
+  fire(page, "pointerdown", 300, 300, 1, "pen");
+  fire(page, "pointermove", 320, 310, 1, "pen");
+  fire(page, "pointerup", 320, 310, 0, "pen");
+  expect(spaces).toHaveLength(1);
+  expect(lastAdd).toHaveLength(1);
 });
 
 test("Stift mit wechselndem Druck → konstante Breite (B6)", () => {

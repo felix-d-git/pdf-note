@@ -45,7 +45,7 @@ const DE: Chapter[] = [
     "Pfeiltasten schieben die Auswahl um 1 pt, mit Umschalt um 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Platz einfügen", lines: [
-    [BetweenHorizontalStart, "Platz einfügen: Linie aufziehen – alles darunter rückt nach unten (oder nach rechts). Verschoben werden nur eigene Objekte (Ebene 2/3), der PDF-Inhalt bleibt."],
+    [BetweenHorizontalStart, "Platz einfügen: an der gewünschten Stelle ansetzen und nach unten ziehen – die Seite wird dort zerschnitten und um eine weiße Fläche verlängert; PDF-Inhalt, Anmerkungen und eigene Objekte darunter rücken mit. Mit dem Stift geht das auch ohne Werkzeugwechsel: am linken oder rechten Seitenrand ansetzen. Nach oben ziehen bricht ab. Danach ist Ebene 1 dieser Seite ein Block (einzelne Absätze nicht mehr verschiebbar)."],
   ] },
   { id: "images", icon: ImagePlus, title: "Bilder", lines: [
     [ImagePlus, "Bild einfügen (Taste I), aus der Zwischenablage (Strg+V) oder per Ziehen aus dem Explorer an die Drop-Stelle."],
@@ -139,7 +139,7 @@ const EN: Chapter[] = [
     "Arrow keys move the selection by 1 pt, with Shift by 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Insert space", lines: [
-    [BetweenHorizontalStart, "Insert space: drag a line – everything below moves down (or right). Only your own objects (layer 2/3) move, the PDF content stays."],
+    [BetweenHorizontalStart, "Insert space: start at the desired spot and drag down – the page is cut there and extended by a white area; PDF content, annotations and your own objects below move along. With the pen this works without switching tools: start at the left or right page edge. Dragging up cancels. Afterwards layer 1 of that page is one block (single paragraphs can no longer be moved)."],
   ] },
   { id: "images", icon: ImagePlus, title: "Images", lines: [
     [ImagePlus, "Insert image (key I), paste from the clipboard (Ctrl+V) or drop it from Explorer at the drop point."],

@@ -20,6 +20,9 @@ function load(): Record<string, Layer[]> {
 export const lockedLayers = (docKey: string): Layer[] => load()[docKey] ?? [];
 export const isLayerLocked = (docKey: string, layer: Layer) => lockedLayers(docKey).includes(layer);
 
+/** Ereignis nach jeder Änderung: alle Ansichten (Split) lesen die Sperren sofort neu */
+export const LOCK_EVENT = "pdfnote-locks";
+
 export function setLayerLocked(docKey: string, layer: Layer, locked: boolean) {
   const all = { ...load(), [docKey]: [] as Layer[] };
   const rest = lockedLayers(docKey).filter((l) => l !== layer);
@@ -30,6 +33,7 @@ export function setLayerLocked(docKey: string, layer: Layer, locked: boolean) {
   } catch {
     /* nur Komfort */
   }
+  window.dispatchEvent(new Event(LOCK_EVENT));
 }
 
 /** Ebene, die ein Werkzeug bei aktiver Ebene `layer` berührt (`null` = keine, z. B. Platz einfügen); dort greift die Sperre. */

@@ -89,7 +89,7 @@ fn recognize(doc: &PdfDocument, index: i32) -> Result<Vec<Word>, String> {
 
 /// Seite hat schon Text → kein OCR (sonst doppelt).
 fn has_text(doc: &PdfDocument, index: i32) -> Result<bool, Error> {
-    let t = doc.load_page(index)?.to_text_page(TextPageFlags::empty())?;
+    let t = doc.load_page(index)?.to_text_page(TextPageFlags::CLIP)?;
     Ok(t.blocks().any(|b| b.lines().any(|l| l.chars().any(|c| c.char().is_some_and(|ch| !ch.is_whitespace())))))
 }
 
