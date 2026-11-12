@@ -52,8 +52,14 @@ export function useOutside(open: boolean, inside: (t: Element) => boolean, close
       swallow(e);
       cb.current.close();
       addEventListener("click", swallow, { capture: true, once: true });
-      // kein Klick gefolgt (gezogen): Sperre nach dem Loslassen lösen
-      addEventListener("pointerup", () => setTimeout(() => removeEventListener("click", swallow, true)), { capture: true, once: true });
+      // kein Klick gefolgt (gezogen/abgebrochen): Sperre nach dem Loslassen lösen
+      const release = () => {
+        removeEventListener("pointerup", release, true);
+        removeEventListener("pointercancel", release, true);
+        setTimeout(() => removeEventListener("click", swallow, true));
+      };
+      addEventListener("pointerup", release, true);
+      addEventListener("pointercancel", release, true);
     };
     addEventListener("pointerdown", down, true);
     return () => removeEventListener("pointerdown", down, true);
