@@ -549,9 +549,25 @@ test("Auswahl bleibt in einer Ebene: Rechteck auf Ebene 2 trifft keine Ebene-3-O
   expect(ui.selected).toEqual([1]);
 });
 
+test("Klick wählt nur bei direktem Treffer; Klick ins Leere wählt ab", () => {
+  const page = mount("lasso", 2, [obj(1, "line", 100, 100, 300, 100)]);
+  // 4 pt neben der Linie (halbe Breite 1): kein Treffer mehr
+  fire(page, "pointerdown", 200, 104);
+  fire(page, "pointerup", 200, 104, 0);
+  expect(ui.selected).toEqual([]);
+  fire(page, "pointerdown", 200, 101);
+  fire(page, "pointerup", 200, 101, 0);
+  expect(ui.selected).toEqual([1]);
+  fire(page, "pointerdown", 200, 300);
+  fire(page, "pointerup", 200, 300, 0);
+  expect(ui.selected).toEqual([]);
+});
+
 test("Rechteck über Absätze markiert alle berührten; gemeinsam verschieben = ein Aufruf mit Vorschau", async () => {
   const para = (y: number) => ({ bbox: [50, y, 250, y + 30], text: "Absatz", font: "Helvetica", size: 12, color: [0, 0, 0] });
-  backend.reply = (c) => Promise.resolve(c === "text_paragraphs" ? [para(100), para(200), para(400)] : []);
+  // Zeichen nur in Absatz 2: Klick trifft einen Absatz nur auf seinem Text, nicht im Leerraum dazwischen
+  const chars = [{ text: "Absatz", boxes: [[50, 400, 250, 430]] }];
+  backend.reply = (c) => Promise.resolve(c === "text_paragraphs" ? [para(100), para(200), para(400)] : c === "text_chars" ? chars : []);
   root = createRoot(host);
   act(() => root.render(<Page start="lasso" layer={1} />));
   await tick();
@@ -567,6 +583,10 @@ test("Rechteck über Absätze markiert alle berührten; gemeinsam verschieben = 
   expect(ui.selected).toEqual([PARA0, PARA0 - 1, PARA0 - 2]);
   fire(page, "pointerdown", 100, 410, 1, "mouse", true);
   fire(page, "pointerup", 100, 410, 0, "mouse", true);
+  expect(ui.selected).toEqual([PARA0, PARA0 - 1]);
+  // Umschalt-Klick in Absatz 1 ohne Text darunter (Leerraum) entfernt ihn nicht
+  fire(page, "pointerdown", 100, 215, 1, "mouse", true);
+  fire(page, "pointerup", 100, 215, 0, "mouse", true);
   expect(ui.selected).toEqual([PARA0, PARA0 - 1]);
   // gemeinsam ziehen: ein Aufruf mit beiden Absätzen
   fire(page, "pointerdown", 100, 125);

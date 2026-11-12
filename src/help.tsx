@@ -65,14 +65,14 @@ const DE: Chapter[] = [
     [RotateCw, "Drehen mit dem runden Griff (Umschalt = 15°-Schritte); die Drehung wird gespeichert."],
   ] },
   { id: "axes", icon: Grid3x3, title: "Koordinatensysteme", lines: [
-    "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Rechtsklick aufs Werkzeug (oder Stil-Menü): xy oder xyz (Schrägbild), Karo-Gitter aus / nur x-z-Ebene / alle drei Ebenen.",
+    "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Rechtsklick aufs Werkzeug (oder Stil-Menü): xy oder xyz (Schrägbild: x rechts, y oben, z vorne links unter 45°, halb verkürzt). Karo-Gitter beim xyz-System je Wand einzeln an/aus: X-Y = Rückwand, X-Z = Boden, Y-Z = linke Seitenwand.",
     "Formen: Rechtsklick auf Rechteck, Ellipse, Linie, Pfeil oder 3D-Körper → Quadrat bzw. Kreis erzwingen, Füllung, Strichart (durchgezogen/gestrichelt/gepunktet).",
     "Radierer (D): Rechtsklick aufs Werkzeug → „ganzer Strich“ (Standard) oder „nur überfahrener Teil“: dann teilt der Radierer Stift-/Marker-Striche; Formen und Text verschwinden weiter ganz.",
-    "3D-Körper (B): Quader, Würfel oder Zylinder als Schrägbild aufziehen; verdeckte Kanten gestrichelt.",
+    "3D-Körper (B): Quader, Würfel, Zylinder oder Kugel (Umriss + Äquator) als Schrägbild aufziehen; verdeckte Kanten gestrichelt.",
   ] },
   { id: "marker", icon: Palette, title: "Stifte, Textmarker, Farbe, Breite", lines: [
     "Beginnt ein Textmarker-Strich auf PDF-Text, rastet er auf die Textzeilen ein.",
-    [Palette, "Leiste: Stifte und Marker. Rechtsklick → Farbe, Breite, Entfernen; „+“ → neuer Stift; Ziehen ordnet um. Q W E = erste drei Stifte, Umschalt+Q W E = erste drei Marker."],
+    [Palette, "Leiste: nur deine farbigen Stifte und Marker (Farbklecks = Farbe, kein allgemeines Stift-/Marker-Symbol mehr). Rechtsklick → Farbe, Breite, Entfernen; kleines „+“ am Ende → neuer Stift oder Marker; Ziehen ordnet um. Q W E = erste drei Stifte, Umschalt+Q W E = erste drei Marker."],
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs und Split View", lines: [
     "Tabs per Ziehen umsortieren; Strg+Tab wechselt.",
@@ -172,14 +172,14 @@ const EN: Chapter[] = [
     [RotateCw, "Rotate with the round handle (Shift = 15° steps); the rotation is saved."],
   ] },
   { id: "axes", icon: Grid3x3, title: "Coordinate systems", lines: [
-    "Coordinate system tool (X): drag a rectangle → axes. Right-click the tool (or the style menu): xy or xyz (oblique), square grid off / x-z plane only / all three planes.",
+    "Coordinate system tool (X): drag a rectangle → axes. Right-click the tool (or the style menu): xy or xyz (oblique: x right, y up, z front-left at 45°, half length). With xyz the square grid is toggled per wall: X-Y = back wall, X-Z = floor, Y-Z = left side wall.",
     "Shapes: right-click rectangle, ellipse, line, arrow or 3D solid → force square or circle, fill, line style (solid/dashed/dotted).",
     "Eraser (D): right-click the tool → “whole stroke” (default) or “only the part touched”: the eraser then splits pen/highlighter strokes; shapes and text still disappear whole.",
-    "3D solid (B): drag a cuboid, cube or cylinder in oblique projection; hidden edges dashed.",
+    "3D solid (B): drag a cuboid, cube, cylinder or sphere (outline + equator) in oblique projection; hidden edges dashed.",
   ] },
   { id: "marker", icon: Palette, title: "Pens, highlighter, colour, width", lines: [
     "A highlighter stroke that starts on PDF text snaps to the text lines.",
-    [Palette, "Bar: pens and highlighters. Right-click → colour, width, remove; “+” → new pen; drag to reorder. Q W E = first three pens, Shift+Q W E = first three highlighters."],
+    [Palette, "Bar: only your coloured pens and highlighters (colour blob = colour, no generic pen/highlighter icon). Right-click → colour, width, remove; small “+” at the end → new pen or highlighter; drag to reorder. Q W E = first three pens, Shift+Q W E = first three highlighters."],
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs and Split View", lines: [
     "Drag tabs to reorder; Ctrl+Tab switches.",

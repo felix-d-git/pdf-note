@@ -54,12 +54,12 @@ export function Thumb({ doc, index, size, active, selected, dropMark, onPointerD
       className={`flex flex-col items-center gap-1 border-y-2 border-transparent py-1 text-xs text-ink-3 ${mark}`}
     >
       <span
-        className={`block rounded-xs bg-white ring-2 ${selected ? "ring-accent" : active ? "ring-accent/50" : "ring-transparent"}`}
+        className={`block rounded-xs bg-white ${active ? "ring-4 ring-accent" : selected ? "ring-2 ring-accent/60" : "ring-2 ring-transparent"}`}
         style={{ width: w, height: (w * size[1]) / size[0] }}
       >
         {url && <img src={url} alt="" draggable={false} className="h-full w-full rounded-xs" />}
       </span>
-      {index + 1}
+      <span className={active ? "font-semibold text-accent" : ""}>{index + 1}</span>
     </button>
   );
 }
@@ -69,6 +69,8 @@ const HOLD_LONG_MS = 1500; // Kurve (Funktionsgraph) glätten: deutlich länger 
 const straighten = (s: Item, x: number, y: number) => {
   s.points = s.points.slice(0, 1).flatMap((a) => [a, [x, y, a[2]] as InkPoint]);
 };
+/** Auswahl nur bei direktem Treffer: 1 Bildschirmpixel über die halbe Strichbreite hinaus (Kantenglättung), keine Nähe-Toleranz */
+const HIT = 1;
 const HOLD_TOL = 2; // pt Bewegung, die das Ruhen nicht unterbricht
 const ERASER_PX = 8; // Radierer-Radius in Bildschirmpixeln
 const SPACE_EDGE_PX = 16; // Stift so nah am linken/rechten Seitenrand → Platz einfügen
@@ -671,8 +673,8 @@ export function PageView(p: PageProps) {
     // Maus-Klick wählt die Ebene selbst; der Stift fasst Text nie an und behält die Ebene
     let L: Layer = pen3 ? 3 : p.layer;
     if (t === "lasso" && mouse && !add && fresh) {
-      const onPdf = !!posAt(clist, x, y) || paraAt(x, y) >= 0 || !!smallestAt(origs, x, y);
-      const auto = autoLayerFor(items, x, y, 4 / zoom + 1, onPdf, (l) => !p.locked?.(l));
+      const onPdf = !!posAt(clist, x, y) || !!smallestAt(origs, x, y);
+      const auto = autoLayerFor(items, x, y, HIT / zoom, onPdf, (l) => !p.locked?.(l));
       if (auto && auto !== L) {
         L = auto;
         p.onLayer(auto);
@@ -864,7 +866,7 @@ export function PageView(p: PageProps) {
         const cand = c.l === 1 ? [...origs, ...pitems] : items.filter((it) => layerOf(it) === c.l);
         const ids = far
           ? cand.filter((it) => c.l === 1 ? touches(box(it), c.poly, c.rect) : inPolygon((box(it).x0 + box(it).x1) / 2, (box(it).y0 + box(it).y1) / 2, c.poly)).map((it) => it.id)
-          : (c.l === 1 ? smallestAt(cand, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id) ?? [];
+          : (c.l === 1 ? smallestAt(posAt(clist, x0, y0) ? cand : origs, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, HIT / zoom))?.id) ?? [];
         const hit = Array.isArray(ids) ? ids : [ids];
         const base = c.add ?? [];
         p.onSelect(index, !c.add ? hit : far ? [...new Set([...base, ...hit])] : hit.some((i) => base.includes(i)) ? base.filter((i) => !hit.includes(i)) : [...base, ...hit]);
@@ -1106,7 +1108,7 @@ export function PageView(p: PageProps) {
         const [x, y] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
         if (tsRects.some(([x0, y0, x1, y1]) => inBox({ x0, y0, x1, y1 }, x, y))) return setMenu({ x, y, on: "text" });
         if (sel.length && (!e.isTrusted || inBox(unionBox(sel), x, y))) return setMenu({ x, y, on: "sel" });
-        const hit = p.layer === 1 ? smallestAt([...origs, ...pitems], x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, 4 / zoom + 1));
+        const hit = p.layer === 1 ? smallestAt(posAt(clist, x, y) ? [...origs, ...pitems] : origs, x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, HIT / zoom));
         if (hit) p.onSelect(index, [hit.id]);
         setMenu({ x, y, on: hit ? "sel" : "empty" });
       }}

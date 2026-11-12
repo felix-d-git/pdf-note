@@ -142,12 +142,21 @@ pub enum Kind {
     Solid,
 }
 
-/// xyz-Gitter: Ebenen (fehlt → nur y-z-Rückwand wie bis v1.2)
+/// xyz-Gitter bis v1.3 (fehlt → nur Rückwand wie bis v1.2; `xz` = linke Wand, `all` = alle drei); neu: `walls`
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Planes {
     Xz,
     All,
+}
+
+/// xyz-Gitter ab v1.4 (x rechts, y oben, z vorne links): X-Y = Rückwand, X-Z = Boden, Y-Z = linke Seitenwand
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Wall {
+    Xy,
+    Xz,
+    Yz,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
@@ -163,6 +172,7 @@ pub enum Solid {
     Cuboid,
     Cube,
     Cylinder,
+    Sphere,
 }
 
 /// Tag eines Textes (Tag-Übersicht); in der PDF eine normale FreeText-Anmerkung mit dem Wort
@@ -226,6 +236,9 @@ pub struct Item {
     pub grid: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planes: Option<Planes>,
+    /// xyz-Gitter: gewählte Wände; vorrangig vor `planes`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walls: Option<Vec<Wall>>,
     /// Linie/Pfeil/Rechteck/Ellipse/Körper: Strichart; fehlt → durchgezogen
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dash: Option<Dash>,
@@ -252,7 +265,7 @@ fn is_false(v: &bool) -> bool {
 pub const KARO: f32 = 72.0 / 25.4 * 5.0;
 
 /// Linien eines Koordinatensystems (wie `axesLines` im Frontend): (Achsen samt Pfeilspitzen, Gitter), je Polylinie.
-/// xy: Ursprung unten links. xyz (Schrägbild): y rechts, z oben, x schräg nach vorn-links (45°, Verkürzung über `d`).
+/// xy: Ursprung unten links. xyz (Schrägbild): x rechts, y oben, z schräg nach vorn-links (45°, halb verkürzt).
 pub fn axes_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
     let (a, b) = (it.points[0], it.points[1]);
     let (x0, x1, y0, y1) = (a[0].min(b[0]), a[0].max(b[0]), a[1].min(b[1]), a[1].max(b[1]));
@@ -292,18 +305,29 @@ pub fn axes_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
                 grid.push(vec![at(q, k, p, 0), at(q, k, p, np)]);
             }
         };
-        let planes = if it.xyz { it.planes } else { None };
-        if planes != Some(Planes::Xz) {
-            plane(r, nr, u, nu); // xy-System, y-z-Rückwand
+        let ws = walls(it);
+        if ws.contains(&Wall::Xy) {
+            plane(r, nr, u, nu); // xy-System, Rückwand
         }
-        if planes.is_some() {
-            plane(f, nf, u, nu); // x-z
+        if ws.contains(&Wall::Yz) {
+            plane(f, nf, u, nu); // linke Seitenwand
         }
-        if planes == Some(Planes::All) {
-            plane(f, nf, r, nr); // x-y-Boden
+        if ws.contains(&Wall::Xz) {
+            plane(f, nf, r, nr); // Boden
         }
     }
     (axes, grid)
+}
+
+/// Gitter-Wände (wie `wallsOf` im Frontend); alte Dateien über `planes`
+pub fn walls(it: &Item) -> Vec<Wall> {
+    match (it.xyz, &it.walls, it.planes) {
+        (false, _, _) => vec![Wall::Xy],
+        (_, Some(w), _) => w.clone(),
+        (_, None, None) => vec![Wall::Xy],
+        (_, None, Some(Planes::Xz)) => vec![Wall::Yz],
+        (_, None, Some(Planes::All)) => vec![Wall::Xy, Wall::Xz, Wall::Yz],
+    }
 }
 
 /// Körper als Schrägbild (wie `solidLines` im Frontend): (sichtbare, verdeckte Kanten), je Polylinie.
@@ -324,6 +348,18 @@ pub fn solid_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
         };
         let ring = [arc(top, 0.0), arc(top, pi)[1..].to_vec()].concat();
         return (vec![ring, arc(bot, 0.0), vec![[x0, top], [x0, bot]], vec![[x1, top], [x1, bot]]], vec![arc(bot, pi)]);
+    }
+    if it.solid == Some(Solid::Sphere) {
+        // Umriss-Kreis + Äquator-Ellipse: vordere (untere) Hälfte sichtbar, hintere verdeckt
+        let pi = std::f32::consts::PI;
+        let (r, cx, cy) = (w.min(h) / 2.0, x0 + w / 2.0, y0 + h / 2.0);
+        let arc = |ry: f32, t0: f32, n: usize| -> Vec<[f32; 2]> {
+            (0..=n).map(|i| {
+                let t = t0 + i as f32 * pi / 24.0;
+                [cx + r * t.cos(), cy + ry * t.sin()]
+            }).collect()
+        };
+        return (vec![arc(r, 0.0, 48), arc(r * 0.35, 0.0, 24)], vec![arc(r * 0.35, pi, 24)]);
     }
     let (m, q) = (w.min(h), std::f32::consts::SQRT_2 / 4.0);
     let k = if it.solid == Some(Solid::Cube) { m / (1.0 + q) * q } else { m * 0.25 };
@@ -1140,7 +1176,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, planes: None, dash: None, solid: None, fill: None, tag: None }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, planes: None, walls: None, dash: None, solid: None, fill: None, tag: None }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -1158,6 +1194,7 @@ mod tests {
             Item { dash: Some(Dash::Dot), ..item(Kind::Rect, two.clone()) },
             Item { solid: Some(Solid::Cube), dash: Some(Dash::Dash), ..item(Kind::Solid, two.clone()) },
             Item { solid: Some(Solid::Cylinder), ..item(Kind::Solid, two.clone()) },
+            Item { solid: Some(Solid::Sphere), ..item(Kind::Solid, two.clone()) },
             Item { size: 14.0, text: "Grüße €".into(), ..item(Kind::Text, vec![[300.0, 400.0, 0.5], [450.0, 430.0, 0.5]]) },
             Item { size: 14.0, text: "Frage".into(), tag: Some(Tag::Question), ..item(Kind::Text, vec![[300.0, 500.0, 0.5], [360.0, 520.0, 0.5]]) },
         ]
@@ -1181,7 +1218,7 @@ mod tests {
         let types: Vec<_> = annotations(&back, 0).unwrap().into_iter().map(|(t, own)| (t, own.is_some())).collect();
         assert_eq!(types, vec![
             (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true),
-            (T::Ink, true), (T::Ink, true), (T::Ink, true), (T::Square, true), (T::Ink, true), (T::Ink, true), (T::FreeText, true), (T::FreeText, true),
+            (T::Ink, true), (T::Ink, true), (T::Ink, true), (T::Square, true), (T::Ink, true), (T::Ink, true), (T::Ink, true), (T::FreeText, true), (T::FreeText, true),
         ]);
         let taken = take_own(&back, 0..1).unwrap();
         assert_eq!(taken, items, "Objekte gehen beim Zurücklesen nicht verloren");
@@ -1252,8 +1289,16 @@ mod tests {
         let yz = axes_lines(&it).1;
         assert!(!yz.is_empty() && yz.iter().flatten().all(|p| p[0] >= 100.0 + 45.0 - 0.01), "nur Rückwand rechts vom Ursprung");
         let all = axes_lines(&Item { planes: Some(Planes::All), ..it.clone() }).1;
-        let xz = axes_lines(&Item { planes: Some(Planes::Xz), ..it }).1;
+        let xz = axes_lines(&Item { planes: Some(Planes::Xz), ..it.clone() }).1;
         assert!(all.len() > xz.len() && xz.len() > 0 && all.len() > yz.len());
+        // neue Wände: alt `xz` = linke Wand, alt `all` = alle drei
+        let w = |v: Vec<Wall>| axes_lines(&Item { walls: Some(v), ..it.clone() }).1;
+        assert_eq!(w(vec![Wall::Yz]), xz);
+        assert_eq!(w(vec![Wall::Xy]), yz);
+        assert_eq!(w(vec![Wall::Xy, Wall::Xz, Wall::Yz]), all);
+        let floor = w(vec![Wall::Xz]);
+        assert!(!floor.is_empty() && floor.iter().flatten().all(|p| p[1] >= 650.0 - 45.0 - 0.01), "Boden unter der x-Achse");
+        assert!(w(vec![]).is_empty());
     }
 
     /// 3×2-PNG mit Teiltransparenz.

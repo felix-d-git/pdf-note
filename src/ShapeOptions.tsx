@@ -1,6 +1,6 @@
 import { ColorButton } from "./ColorPicker";
 import { T } from "./i18n";
-import { SOLIDS, type Dash, type ShapeOpts } from "./ink";
+import { SOLIDS, WALLS, type Dash, type ShapeOpts } from "./ink";
 import type { Tool } from "./settings";
 import { BTN as btn, on } from "./ui";
 
@@ -40,8 +40,19 @@ export function ShapeOptions({ tool, o, set }: { tool: Tool; o: ShapeOpts; set: 
         <>
           <Pick list={[[false, T.axesXy], [true, T.axesXyz]]} value={o.xyz} set={(xyz) => set({ ...o, xyz })} />
           <span className="text-ink-3">{T.grid}</span>
-          <Pick<ShapeOpts["grid"]> list={o.xyz ? [["off", T.off], ["xz", T.gridXz], ["all", T.gridAll]] : [["off", T.off], ["all", T.grid]]}
-            value={!o.xyz && o.grid === "xz" ? "all" : o.grid} set={(grid) => set({ ...o, grid })} />
+          {o.xyz ? (
+            <div className="flex flex-wrap gap-1">
+              {WALLS.map((w) => {
+                const act = o.walls.includes(w);
+                return (
+                  <button key={w} type="button" aria-pressed={act} title={T[`wall_${w}`]} className={btn + " ring-1 ring-inset ring-line" + on(act)}
+                    onClick={() => set({ ...o, walls: act ? o.walls.filter((v) => v !== w) : [...o.walls, w] })}>
+                    {w.toUpperCase().split("").join("-")}
+                  </button>
+                );
+              })}
+            </div>
+          ) : <Pick list={[[false, T.off], [true, T.grid]]} value={o.grid} set={(grid) => set({ ...o, grid })} />}
         </>
       )}
       {tool === "solid" && <Pick list={SOLIDS.map((s) => [s, T[s]])} value={o.solid} set={(solid) => set({ ...o, solid })} />}

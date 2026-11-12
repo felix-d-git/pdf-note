@@ -5,7 +5,10 @@ export type InkPoint = [x: number, y: number, p: number];
 export type Rgb = [number, number, number];
 
 export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight", "axes", "solid"] as const;
-export const SOLIDS = ["cuboid", "cube", "cylinder"] as const;
+export const SOLIDS = ["cuboid", "cube", "cylinder", "sphere"] as const;
+/** xyz-Gitter: X-Y = Rückwand, X-Z = Boden, Y-Z = linke Seitenwand */
+export const WALLS = ["xy", "xz", "yz"] as const;
+export type Wall = (typeof WALLS)[number];
 export type Solid = (typeof SOLIDS)[number];
 export type Dash = "dash" | "dot";
 export type Kind = (typeof KINDS)[number];
@@ -37,8 +40,10 @@ export interface Item {
   xyz?: boolean;
   /** Koordinatensystem: Karo-Gitter im Achsenbereich */
   grid?: boolean;
-  /** xyz-Gitter: Ebenen; fehlt bei `grid` → nur y-z-Rückwand (Dateien bis v1.2) */
+  /** xyz-Gitter bis v1.3: fehlt → Rückwand (bis v1.2), `xz` = linke Wand, `all` = alle drei; neu: `walls` */
   planes?: "xz" | "all";
+  /** xyz-Gitter ab v1.4: gewählte Wände, vorrangig vor `planes` */
+  walls?: Wall[];
   /** Linie/Pfeil/Rechteck/Ellipse/Körper: Strichart; fehlt → durchgezogen */
   dash?: Dash;
   /** Körper (kind "solid") als Schrägbild; fehlt → Quader */
@@ -83,6 +88,7 @@ export const ItemData = z.object({
   xyz: z.boolean().optional(),
   grid: z.boolean().optional(),
   planes: z.enum(["xz", "all"]).optional(),
+  walls: z.array(z.enum(WALLS)).optional(),
   dash: z.enum(["dash", "dot"]).optional(),
   solid: z.enum(SOLIDS).optional(),
   fill: z.tuple([num, num, num]).optional(),
@@ -96,8 +102,8 @@ export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   ...(d.fill ? { fill: d.fill } : {}), ...opt(d),
 });
 /** Optionale Aufzählungs-Felder, nur wenn gesetzt */
-const opt = (d: Pick<Item, "planes" | "dash" | "solid" | "tag">) => ({
-  ...(d.planes ? { planes: d.planes } : {}), ...(d.dash ? { dash: d.dash } : {}), ...(d.solid ? { solid: d.solid } : {}),
+const opt = (d: Pick<Item, "planes" | "walls" | "dash" | "solid" | "tag">) => ({
+  ...(d.planes ? { planes: d.planes } : {}), ...(d.walls ? { walls: d.walls } : {}), ...(d.dash ? { dash: d.dash } : {}), ...(d.solid ? { solid: d.solid } : {}),
   ...(d.tag ? { tag: d.tag } : {}),
 });
 
@@ -216,7 +222,7 @@ export const gridWidth = (w: number) => Math.max(w * 0.3, 0.3);
 
 /**
  * Linien eines Koordinatensystems je Polylinie (wie `axes_lines` in Rust – beide gleich halten).
- * xy: Ursprung unten links. xyz (Schrägbild): y rechts, z oben, x schräg nach vorn-links (45°).
+ * xy: Ursprung unten links. xyz (Schrägbild): x rechts, y oben, z schräg nach vorn-links (45°, halb verkürzt).
  */
 export function axesLines(it: Item): { axes: Pt[][]; grid: Pt[][] } {
   const [a = ORIGIN, b = a] = it.points;
@@ -242,12 +248,19 @@ export function axesLines(it: Item): { axes: Pt[][]; grid: Pt[][] } {
       for (let k = 1; k <= np; k++) grid.push([at(p, k, q, 0), at(p, k, q, nq)]);
       for (let k = 1; k <= nq; k++) grid.push([at(q, k, p, 0), at(q, k, p, np)]);
     };
-    const planes = it.xyz ? it.planes : undefined;
-    if (planes !== "xz") plane(r, nr, u, nu); // xy-System, y-z-Rückwand
-    if (planes) plane(f, nf, u, nu); // x-z
-    if (planes === "all") plane(f, nf, r, nr); // x-y-Boden
+    const ws = wallsOf(it);
+    if (ws.includes("xy")) plane(r, nr, u, nu); // xy-System, Rückwand
+    if (ws.includes("yz")) plane(f, nf, u, nu); // linke Seitenwand
+    if (ws.includes("xz")) plane(f, nf, r, nr); // Boden
   }
   return { axes, grid };
+}
+
+/** Gitter-Wände (wie `walls` in Rust); alte Dateien über `planes` */
+export function wallsOf(it: Pick<Item, "xyz" | "walls" | "planes">): Wall[] {
+  if (!it.xyz) return ["xy"];
+  if (it.walls) return it.walls;
+  return it.planes === "xz" ? ["yz"] : it.planes === "all" ? [...WALLS] : ["xy"];
 }
 
 /** Strichmuster wie in der PDF (`/D`, stumpfe Enden); leer = durchgezogen */
@@ -261,6 +274,13 @@ export function solidLines(it: Item): { vis: Pt[][]; hid: Pt[][] } {
   const [a = ORIGIN, b = a] = it.points;
   const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
   const [w, h] = [x1 - x0, y1 - y0];
+  if (it.solid === "sphere") {
+    // Umriss-Kreis + Äquator-Ellipse: vordere (untere) Hälfte sichtbar, hintere verdeckt
+    const r = Math.min(w, h) / 2, cx = x0 + w / 2, cy = y0 + h / 2;
+    const arc = (ry: number, t0: number, n: number) =>
+      Array.from({ length: n + 1 }, (_, i): Pt => [cx + r * Math.cos(t0 + (i * Math.PI) / 24), cy + ry * Math.sin(t0 + (i * Math.PI) / 24)]);
+    return { vis: [arc(r, 0, 48), arc(r * 0.35, 0, 24)], hid: [arc(r * 0.35, Math.PI, 24)] };
+  }
   if (it.solid === "cylinder") {
     const rx = w / 2, ry = Math.min(rx * 0.35, h / 4), cx = x0 + rx, [top, bot] = [y0 + ry, y1 - ry];
     // halbe Ellipse ab Winkel t0 (0 = vordere/untere Hälfte, π = hintere)
@@ -278,8 +298,10 @@ export function solidLines(it: Item): { vis: Pt[][]; hid: Pt[][] } {
 /** Werkzeug-Optionen (Zahnrad/Rechtsklick), gelten fürs nächste Aufziehen; Sitzungszustand */
 export interface ShapeOpts {
   xyz: boolean;
-  /** xy: aus/an ("all"); xyz: aus / x-z-Ebene / alle drei Ebenen */
-  grid: "off" | "xz" | "all";
+  /** xy: Karo-Gitter an/aus */
+  grid: boolean;
+  /** xyz: Karo-Gitter auf diesen Wänden (leer = aus) */
+  walls: Wall[];
   square: boolean;
   circle: boolean;
   fill?: Rgb;
@@ -288,7 +310,7 @@ export interface ShapeOpts {
   /** Radierer: nur den überfahrenen Teil von Stift-/Marker-Strichen entfernen statt ganzer Striche */
   partial: boolean;
 }
-export const SHAPE_OPTS: ShapeOpts = { xyz: false, grid: "off", square: false, circle: false, solid: "cuboid", partial: false };
+export const SHAPE_OPTS: ShapeOpts = { xyz: false, grid: false, walls: [], square: false, circle: false, solid: "cuboid", partial: false };
 
 /**
  * Teil-Radierer: Punktfolge ohne den Kreis (cx, cy, r) → Restteile (je ≥ 2 Punkte, Schnittpunkte exakt auf dem Kreisrand,
@@ -330,7 +352,10 @@ export function cutStroke(pts: InkPoint[], cx: number, cy: number, r: number): I
 /** Optionen → Felder eines neuen Elements dieser Art */
 export function shapeProps(kind: Kind, o: ShapeOpts): Partial<Item> {
   const dash = o.dash && { dash: o.dash };
-  if (kind === "axes") return { xyz: o.xyz, grid: o.grid !== "off", ...(o.xyz && o.grid !== "off" && { planes: o.grid }) };
+  if (kind === "axes") {
+    if (!o.xyz) return { xyz: false, grid: o.grid };
+    return { xyz: true, grid: o.walls.length > 0, ...(o.walls.length && { walls: WALLS.filter((w) => o.walls.includes(w)) }) };
+  }
   if (kind === "solid") return { solid: o.solid, ...dash };
   if (kind === "rect" || kind === "ellipse") return { ...dash, ...(o.fill && { fill: o.fill }) };
   if (kind === "line" || kind === "arrow") return { ...dash };
@@ -339,7 +364,7 @@ export function shapeProps(kind: Kind, o: ShapeOpts): Partial<Item> {
 
 /** Quadrat/Kreis/Würfel: Endpunkt auf gleiche Breite und Höhe (größere gewinnt), Richtung bleibt */
 export function constrain(kind: Kind, o: ShapeOpts, a: InkPoint, b: InkPoint): InkPoint {
-  const eq = (kind === "rect" && o.square) || (kind === "ellipse" && o.circle) || (kind === "solid" && o.solid === "cube");
+  const eq = (kind === "rect" && o.square) || (kind === "ellipse" && o.circle) || (kind === "solid" && (o.solid === "cube" || o.solid === "sphere"));
   if (!eq) return b;
   const dx = b[0] - a[0], dy = b[1] - a[1], m = Math.max(Math.abs(dx), Math.abs(dy));
   return [a[0] + (dx < 0 ? -m : m), a[1] + (dy < 0 ? -m : m), b[2]];
