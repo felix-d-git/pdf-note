@@ -134,7 +134,7 @@ Vollständige Listen: Anhang A–D.
 | windows, windows-sys, webview2-com | 0.62 / 0.61 / 0.39 | MIT OR Apache-2.0 / MIT | Permissiv | crates.io | 🔴 R1 |
 | ICU4X (`icu_*`, `zerovec`, …) | 2.3 | Unicode-3.0 | Permissiv | crates.io (über `url`/`idna`) | 🔴 R1 |
 | `cssparser`, `selectors`, `dtoa-short`, `option-ext` | 0.37 / 0.38 / 0.3 / 0.2 | MPL-2.0 | Weak Copyleft | crates.io (Tauri-Utils, `dirs`) | 🟡 Y3 (PR) + R1 |
-| `serde`, `serde_json`, `base64` | 1.0 / 1.0 / 0.22 | MIT OR Apache-2.0 | Permissiv | crates.io | 🔴 R1 |
+| `serde`, `serde_json`, `base64` | 1.0 / 1.0 / 0.23 | MIT OR Apache-2.0 | Permissiv | crates.io | 🔴 R1 |
 | `rfd` | 0.17 | MIT | Permissiv | crates.io | 🔴 R1 |
 | React, React DOM, scheduler | 19.3 / 0.28 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | Zod | 4.6.7 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |

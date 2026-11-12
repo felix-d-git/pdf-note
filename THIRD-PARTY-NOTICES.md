@@ -11,7 +11,7 @@
 | Tauri Single-Instance-Plugin (`tauri-plugin-single-instance`) | 2.5 | MIT OR Apache-2.0 | eine Instanz: zweiter Start reicht den PDF-Pfad lokal an die laufende App |
 | serde | 1.0 | MIT OR Apache-2.0 | Objekte vom Frontend deserialisieren |
 | serde_json | 1.0 | MIT OR Apache-2.0 | eigene Objekte als JSON in der Annotation (`/PDFNote`) |
-| base64 | 0.22 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
+| base64 | 0.23 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
 | perfect-freehand (Stephen Ruiz Ltd) | 1.2.3 | MIT | Ink-Glättung + Druckbreite |
 | React, React DOM | 19.3 | MIT | UI |
 | lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.64 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
