@@ -1,7 +1,7 @@
 import {
   ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FilePenLine, FileOutput, FilePlus, Files, Flame,
   FolderOpen, Grid3x3, Hand, History, ImagePlus, Keyboard, Layers, Lock, MousePointer2, NotebookPen, Palette, PenTool, Redo2, RotateCw,
-  Save, Scale, ScanText, Search, SquareX, Type, Undo2, Wrench, X, type LucideIcon,
+  Save, Scale, ScanText, Search, Signature, SquareX, Type, Undo2, Wrench, X, type LucideIcon,
 } from "lucide-react";
 import { resourceDir } from "@tauri-apps/api/path";
 import { useEffect, useRef, useState } from "react";
@@ -49,6 +49,10 @@ const DE: Chapter[] = [
   ] },
   { id: "redact", icon: SquareX, title: "Schwärzen", lines: [
     [SquareX, "Schwärzen (Plus-Menü oder Rechtsklick): Rechteck über den Bereich ziehen und bestätigen – Text, Bilder und Grafik darunter werden echt aus der PDF entfernt (nicht nur überdeckt) und durch einen schwarzen Kasten ersetzt; eigene Objekte im Bereich werden gelöscht. Strg+Z geht nur bis zum Speichern, danach ist der Inhalt endgültig weg."],
+  ] },
+  { id: "sign", icon: Signature, title: "Unterschrift/Initialen", lines: [
+    [Signature, "Unterschrift bzw. Initialen (Plus-Menü): beim ersten Mal ins Feld zeichnen und speichern – sie bleibt in den Einstellungen dieses Geräts (keine Datei neben der PDF). Danach auf die Seite klicken: sie wird dort als Bild eingefügt und lässt sich wie jedes Objekt verschieben und mit den Griffen vergrößern/verkleinern."],
+    "„Unterschrift/Initialen zeichnen …“ im Plus-Menü ersetzt die gespeicherte; leer speichern löscht sie.",
   ] },
   { id: "images", icon: ImagePlus, title: "Bilder", lines: [
     [ImagePlus, "Bild einfügen (Taste I), aus der Zwischenablage (Strg+V) oder per Ziehen aus dem Explorer an die Drop-Stelle."],
@@ -148,6 +152,10 @@ const EN: Chapter[] = [
   { id: "redact", icon: SquareX, title: "Redact", lines: [
     [SquareX, "Redact (plus menu or right-click): drag a rectangle over the area and confirm – text, images and graphics underneath are really removed from the PDF (not just covered) and replaced by a black box; your own objects in the area are deleted. Ctrl+Z works only until you save, afterwards the content is gone for good."],
   ] },
+  { id: "sign", icon: Signature, title: "Signature/initials", lines: [
+    [Signature, "Signature or initials (plus menu): the first time, draw into the box and save – it is kept in this device's settings (no file next to the PDF). Then click on the page: it is inserted there as an image and can be moved and resized with the handles like any object."],
+    "“Draw signature/initials …” in the plus menu replaces the stored one; saving it empty deletes it.",
+  ] },
   { id: "images", icon: ImagePlus, title: "Images", lines: [
     [ImagePlus, "Insert image (key I), paste from the clipboard (Ctrl+V) or drop it from Explorer at the drop point."],
     [Crop, "Crop: double-click the image, drag the edges; ✓ or Enter applies, Esc cancels. Cropping is permanent."],
@@ -235,7 +243,7 @@ const about = (dir: string | undefined): Chapter => T === STRINGS.de
 /** Zeilen der Werkzeug-Tabelle (aus derselben Liste wie die Werkzeugleiste) */
 const toolRows = (): [LucideIcon, string, string][] => [
   ...TOOL_LABELS.map(([, icon, name, key]): [LucideIcon, string, string] => [icon, name, keyText(key)]),
-  [BetweenHorizontalStart, T.space, ""], [SquareX, T.redact, ""], [ImagePlus, T.image, keyText(KEYS.image)],
+  [BetweenHorizontalStart, T.space, ""], [SquareX, T.redact, ""], [Signature, T.sign, ""], [Signature, T.initials, ""], [ImagePlus, T.image, keyText(KEYS.image)],
 ];
 /** Kürzel-Tabelle: jeder Eintrag aus `KEYS` */
 const keyRows = (): [string, string][] => Object.entries(KEYS).map(([k, v]) => [T[k as keyof typeof KEYS], keyText(v)]);

@@ -60,7 +60,7 @@ export const pwProblem = (pw: string, repeat = pw) =>
   !pw || pw.includes("\0") || new TextEncoder().encode(pw).length > 127 ? T.pwRule : pw !== repeat ? T.pwMismatch : undefined;
 
 /** Modaler Dialog: Enter = `onOk`, Esc = `onCancel`; Tasten erreichen die Fenster-Kürzel nicht (kein Strg+W darunter). */
-export function Dialog({ title, ok, onOk, onCancel, children }: { title: string; ok: string; onOk: () => void; onCancel: () => void; children: ReactNode }) {
+export function Dialog({ title, ok, onOk, onCancel, children, wide }: { title: string; ok: string; onOk: () => void; onCancel: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLFormElement>(null);
   // Fokus in den Dialog, sonst wirken Esc/Enter nicht und Tasten landen bei den Fenster-Kürzeln
   useEffect(() => {
@@ -74,7 +74,7 @@ export function Dialog({ title, ok, onOk, onCancel, children }: { title: string;
         role="dialog"
         aria-modal
         aria-label={title}
-        className="flex w-80 flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm text-ink shadow-raised outline-none"
+        className={`flex ${wide ? "w-[37rem]" : "w-80"} flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm text-ink shadow-raised outline-none`}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") onCancel();

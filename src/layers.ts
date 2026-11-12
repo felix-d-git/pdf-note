@@ -40,6 +40,7 @@ export function setLayerLocked(docKey: string, layer: Layer, locked: boolean) {
 export function targetLayer(tool: Tool, layer: Layer): Layer | null {
   if (tool === "space" || tool === "redact") return null;
   if (tool === "lasso" || tool === "form" || tool === "link") return layer;
+  if (tool === "sign" || tool === "initials") return 2; // Bild-Objekt
   if (tool === "pen" || tool === "marker") return 3; // Striche landen immer auf Ebene 3 (onAdd)
   return layer === 1 ? (tool === "eraser" ? 3 : 2) : layer; // wie onAdd/Radierer
 }

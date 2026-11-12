@@ -48,6 +48,7 @@ const crops: [number, number[]][] = [];
 let replaces = 0;
 const spaces: [number, number][] = [];
 const redacts: ([number, number, number, number] | null)[] = [];
+const signs: [string, number, number][] = [];
 const removed: number[][] = [];
 const cuts: Map<number, Item[]>[] = [];
 
@@ -69,7 +70,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
-      onCmd={() => {}} onRedact={(r) => void redacts.push(r)} onSpace={(y, dy) => {
+      onCmd={() => {}} onRedact={(r) => void redacts.push(r)} onSign={(k, x, y) => void signs.push([k, x, y])} onSpace={(y, dy) => {
         spaces.push([y, dy]);
         const moved = makeSpace(items, 0, y, dy);
         setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x));
@@ -308,6 +309,15 @@ test("Schwärzen: Rechteck ziehen meldet den Bereich, auch über eine Auswahl; K
   drag(50, 50, 51, 51);
   expect(redacts).toEqual([[20, 30, 90, 70], null]);
   // Auswahl wurde nicht verschoben
+  expect(ui.added.map((it) => Math.round(box(it).y0))).toEqual([9]);
+});
+
+test("Unterschrift: Klick meldet die Stelle, auch in einer Auswahl (die bleibt stehen)", () => {
+  signs.length = 0;
+  const page = mount("sign", 2, [obj(1, "rect", 10, 10, 100, 80)], { sel: [1] });
+  fire(page, "pointerdown", 50, 40, 1, "mouse");
+  fire(page, "pointerup", 50, 40, 0, "mouse");
+  expect(signs).toEqual([["sign", 50, 40]]);
   expect(ui.added.map((it) => Math.round(box(it).y0))).toEqual([9]);
 });
 
