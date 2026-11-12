@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure, outlinePoints,
+  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
   recognize, rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -17,13 +17,6 @@ test("gespeicherte Breite folgt dem mittleren Druck", () => {
   expect(savedWidth(s(0))).toBeCloseTo(1);
   expect(savedWidth(s(0, true))).toBe(2);
   expect(savedWidth({ ...s(1), kind: "rect" })).toBe(2);
-});
-
-test("Druck wird auf Stift-Maximum normiert und begrenzt", () => {
-  expect(normPressure(0.75)).toBe(1);
-  expect(normPressure(0.9)).toBe(1);
-  expect(normPressure(0)).toBe(0.05);
-  expect(normPressure(0.25, 0.5)).toBe(0.5);
 });
 
 test("Treffer je Objektart", () => {
@@ -180,19 +173,56 @@ const segDist = ([x = 0, y = 0]: number[], [ax = 0, ay = 0]: number[], [bx = 0, 
 const toEdge = (q: number[], poly: number[][]) => Math.min(...poly.map((a, i) => segDist(q, a, poly[(i + 1) % poly.length] ?? a)));
 const hausdorff = (a: number[][], b: number[][]) => Math.max(...a.map((q) => toEdge(q, b)), ...b.map((q) => toEdge(q, a)));
 
-test("Handschrift: Umriss läuft um die echten Punkte (Ecken/Schleifen nicht verzogen), gleich nach Speichern + Neu-Öffnen", () => {
-  for (const points of [loop, N, dot]) {
+// Gerenderte Kurve (quadratische Bézier durch die Mittelpunkte) als Polygon, 8 Schritte je Segment
+const flatten = (pts: InkPoint[]) => {
+  const { start, segs } = curve(pts), out: number[][] = [start];
+  let a = start;
+  for (const [c, e] of segs) {
+    for (let k = 1; k <= 8; k++) {
+      const t = k / 8, u = 1 - t;
+      out.push([u * u * a[0] + 2 * u * t * c[0] + t * t * e[0], u * u * a[1] + 2 * u * t * c[1] + t * t * e[1]]);
+    }
+    a = e;
+  }
+  return out;
+};
+const openDist = (q: number[], poly: number[][]) => Math.min(...poly.slice(1).map((b, i) => segDist(q, poly[i] ?? b, b)));
+const turns = (p: number[][]) => p.slice(2).flatMap(([cx = 0, cy = 0], i) => {
+  const [[ax = 0, ay = 0] = [], [bx = 0, by = 0] = []] = [p[i], p[i + 1]];
+  if (Math.hypot(cx - bx, cy - by) < 1e-9 || Math.hypot(bx - ax, by - ay) < 1e-9) return [];
+  const d = Math.abs(Math.atan2(cy - by, cx - bx) - Math.atan2(by - ay, bx - ax));
+  return [(Math.min(d, 2 * Math.PI - d) * 180) / Math.PI];
+});
+// Kreis r = 6 pt, Stiftabstand ~0,15 pt, Digitizer-Rauschen ±0,03 pt (wie gemessen)
+const rnd = (() => { let v = 1; return () => ((v = (v * 16807) % 2147483647) / 2147483647) - 0.5; })();
+const circle = Array.from({ length: 251 }, (_, i): InkPoint => {
+  const a = (i / 250) * 2 * Math.PI;
+  return [20 + 6 * Math.cos(a) + rnd() * 0.06, 20 + 6 * Math.sin(a) + rnd() * 0.06, 0.5];
+});
+
+test("Handschrift: Kreisbogen ohne Knicke (Richtungswechsel je Teilstück < 10°)", () => {
+  const t = turns(flatten(circle));
+  // Polygonzug der Eingabe knickt bis 42°, der alte perfect-freehand-Umriss bis 180°
+  expect(Math.max(...t)).toBeLessThan(10);
+});
+
+test("Handschrift: kurzer Strich (< 5 mm) und Ecken liegen ≤ 0,5 pt an den Eingabepunkten, Breite konstant", () => {
+  const short = track([[0, 0], [3, 4], [8, 1], [11, 6]]); // < 14 pt
+  for (const points of [short, loop, N, dot]) {
+    const f = flatten(points);
+    expect(Math.max(...points.map((q) => openDist(q, f)))).toBeLessThanOrEqual(0.5);
+    expect(Math.max(...f.map((q) => openDist(q, points)))).toBeLessThanOrEqual(0.5);
+  }
+  expect(savedWidth({ ...s(0.5), points: short })).toBe(2);
+});
+
+test("Handschrift: Speichern (Rust rundet auf 0,01) → Neu-Öffnen erhält die Form", () => {
+  for (const points of [circle, loop, N, dot]) {
     const st: Item = { ...s(0.5), size: 2.2, points };
-    const o = outlinePoints(st);
-    // Rand des Umrisses liegt je Punkt im Abstand Radius = size·(0,5 − 0,5·(0,5 − p)) (Abweichung < 0,5 pt);
-    // ausgenommen: Kreuzungen (dort liegt der Rand des anderen Strichteils näher) und die letzten 3 pt
-    // (perfect-freehand verbindet sie gerade mit der Endkappe – live genauso, springt also nicht)
-    const alone = (q: InkPoint, i: number) => i < points.length - 3 && points.every((r, j) => Math.abs(i - j) < 8 || Math.hypot(r[0] - q[0], r[1] - q[1]) > 2 * st.size);
-    const off = points.flatMap((q, i) => (alone(q, i) ? [Math.abs(toEdge(q, o) - st.size * (0.5 - 0.5 * (0.5 - q[2])))] : []));
-    if (points.length > 2) expect(Math.max(...off)).toBeLessThan(0.5);
-    // Speichern (Rust rundet auf 0,01) → Neu-Öffnen → derselbe Umriss
     const saved = JSON.parse(JSON.stringify(toData(st)), (_, v: unknown) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
-    expect(hausdorff(outlinePoints(fromData(ItemData.parse(saved))), o)).toBeLessThan(0.5);
+    const back = fromData(ItemData.parse(saved));
+    expect(hausdorff(flatten(back.points), flatten(points))).toBeLessThan(0.05);
+    expect(savedWidth(back)).toBeCloseTo(savedWidth(st), 2);
   }
 });
 

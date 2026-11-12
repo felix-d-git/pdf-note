@@ -101,7 +101,7 @@ const DE: Chapter[] = [
   { id: "pen", icon: Hand, title: "Stifttasten und Handballen", lines: [
     "Stifttasten: obere = Auswahl, untere/Radierer-Ende = Radierer; in den Einstellungen neu lernen.",
     "Handballen: Finger zählt nicht, solange der Stift aufliegt und 0,5 s danach, oder wenn die Berührung breiter als 40 px ist.",
-    [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Druck an/aus, Druck-Maximum, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
+    [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
   ] },
 ];
 
@@ -192,7 +192,7 @@ const EN: Chapter[] = [
   { id: "pen", icon: Hand, title: "Pen buttons and palm rejection", lines: [
     "Pen buttons: upper = select, lower/eraser end = eraser; re-learn them in the settings.",
     "Palm: a finger is ignored while the pen is down and 0.5 s after, or if the touch is wider than 40 px.",
-    [Wrench, "Settings: view light/dark/system, pen buttons, pressure on/off, pressure maximum, smoothing (off = exactly as drawn) – applies to all pens."],
+    [Wrench, "Settings: view light/dark/system, pen buttons, smoothing (off = exactly as drawn) – applies to all pens."],
   ] },
 ];
 

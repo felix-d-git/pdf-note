@@ -284,10 +284,10 @@ test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seite
   expect(tops()).toEqual([9, 51, 0]);
 });
 
-test("Druck aus (global): Stift mit wechselndem Druck → alle Punkte gleiche Breite; Druck an: Werte bleiben", () => {
-  for (const [pressure, flat] of [[false, true], [true, false]] as const) {
+test("Stift mit wechselndem Druck → konstante Breite (B6)", () => {
+  {
     lastAdd.length = 0;
-    const page = mount("pen", 3, [], { settings: { ...DEFAULT_SETTINGS, pressure } });
+    const page = mount("pen", 3, []);
     [0.1, 0.9, 0.3, 0.7].forEach((pr, i) => {
       const e = new MouseEvent(i ? "pointermove" : "pointerdown", { bubbles: true, cancelable: true, clientX: 100 + 10 * i, clientY: 100, buttons: 1 });
       Object.assign(e, { pointerId: 1, pointerType: "pen", pressure: pr });
@@ -295,10 +295,9 @@ test("Druck aus (global): Stift mit wechselndem Druck → alle Punkte gleiche Br
     });
     fire(page, "pointerup", 130, 100, 0, "pen");
     const it = lastAdd[0];
-    expect(new Set(it?.points.map((q) => q[2])).size === 1).toBe(flat);
+    expect(new Set(it?.points.map((q) => q[2]))).toEqual(new Set([0.5]));
     expect(it?.simulated).toBe(false);
-    if (flat) expect(savedWidth(it as Item)).toBe(DEFAULT_PRESET.size);
-    if (flat) act(() => root.unmount());
+    expect(savedWidth(it as Item)).toBe(DEFAULT_PRESET.size);
   }
 });
 

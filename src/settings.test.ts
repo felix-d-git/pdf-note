@@ -92,7 +92,7 @@ test("Stiftleiste: Ziehen ordnet um, Q W E = n-ter Stift bzw. Marker in Leistenr
   expect(nthPen(movePen(DEFAULT_PENS, 0, 2), "pen", 0)).toBe(DEFAULT_PENS[1]);
 });
 
-test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Preset → globaler Druck aus; Müll → Standard", () => {
+test("Migration: alte Paletten (quick + eigene) → eine Leiste; Müll → Standard", () => {
   const mem = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) });
   const old = (name: string, c: number, size: number, pressure?: boolean) => ({ name, color: [c, 0, 0], size, ...(pressure === undefined ? {} : { pressure }) });
@@ -104,8 +104,6 @@ test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Prese
   const p = loadPalettes();
   expect(p.text).toBe(16);
   expect(p.pens.map((x) => [x.kind, x.color[0], x.size])).toEqual([["pen", 0.5, 2.2], ["pen", 0.2, 3], ["marker", 0.6, 12], ["marker", 0.4, 20]]);
-  expect(loadSettings().pressure).toBe(false);
-  expect(JSON.parse(mem.get("pdfnote.settings") ?? "{}").pressure).toBe(false); // sofort gespeichert
   mem.set("pdfnote.presets", '{"pens":[{"kind":"pinsel"}]}');
   expect(loadPalettes()).toEqual(DEFAULT_PALETTES);
   mem.set("pdfnote.settings", JSON.stringify({ pressure: "ja", smooth: 5 }));
@@ -115,8 +113,8 @@ test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Prese
   expect(loadPalettes().pens).toEqual(DEFAULT_PALETTES.pens);
   // kaputtes Presets-JSON verwirft die übrigen Einstellungen nicht
   mem.set("pdfnote.presets", "{kaputt");
-  mem.set("pdfnote.settings", JSON.stringify({ lasso: S.lasso, eraser: S.eraser, pressureMax: 0.5 }));
-  expect(loadSettings().pressureMax).toBe(0.5);
+  mem.set("pdfnote.settings", JSON.stringify({ lasso: S.lasso, eraser: S.eraser, smooth: 0.5 }));
+  expect(loadSettings().smooth).toBe(0.5);
   vi.unstubAllGlobals();
 });
 

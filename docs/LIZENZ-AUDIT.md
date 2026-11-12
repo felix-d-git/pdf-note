@@ -68,7 +68,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 
 | Kategorie | Komponenten |
 |---|---|
-| Permissiv | ~210 Rust-Crates (MIT, Apache-2.0, MIT OR Apache-2.0, BSD-2/3, ISC, Zlib, 0BSD, CC0/MIT-0, Unlicense OR MIT, Unicode-3.0); npm: React, React DOM, scheduler, Zod, perfect-freehand, lucide-react, @tauri-apps/*, mathjax-full; C: HarfBuzz, lcms2, libjpeg (IJG), OpenJPEG, zlib, brotli, gumbo, MuJS, zxing-cpp, zint, Tesseract, Leptonica; Tesseract-Modelle; NSIS-Installer-Stub (zlib/libpng-Lizenz) |
+| Permissiv | ~210 Rust-Crates (MIT, Apache-2.0, MIT OR Apache-2.0, BSD-2/3, ISC, Zlib, 0BSD, CC0/MIT-0, Unlicense OR MIT, Unicode-3.0); npm: React, React DOM, scheduler, Zod, lucide-react, @tauri-apps/*, mathjax-full; C: HarfBuzz, lcms2, libjpeg (IJG), OpenJPEG, zlib, brotli, gumbo, MuJS, zxing-cpp, zint, Tesseract, Leptonica; Tesseract-Modelle; NSIS-Installer-Stub (zlib/libpng-Lizenz) |
 | Weak Copyleft | MPL-2.0: `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` (keine „Incompatible With Secondary Licenses“-Markierung → mit AGPL kombinierbar) |
 | Strong Copyleft | AGPL-3.0-or-later: MuPDF-C-Code, jbig2dec; AGPL-3.0 (Altkennung bzw. nur Lizenztext): `mupdf`, `mupdf-sys`, extract; FreeType (gewählt: GPL-2.0-or-later) |
 | Schrift | OFL-1.1: Manrope, IBM Plex Mono, URW-Base-14 (wahlweise AGPL-3.0 mit PS/PDF-Font-Ausnahme) |
@@ -138,7 +138,7 @@ Vollständige Listen: Anhang A–D.
 | `rfd` | 0.17 | MIT | Permissiv | crates.io | 🔴 R1 |
 | React, React DOM, scheduler | 19.3 / 0.28 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | Zod | 4.6.7 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
-| perfect-freehand | 1.2.3 | MIT | Permissiv | npm, im Bundle; inline in Spike | 🔴 R1, Spike Y7 (PR) |
+| perfect-freehand | 1.2.3 | MIT | Permissiv | seit v1.3.0 nicht mehr im Bundle (B6), nur inline in Spike | 🔴 R1, Spike Y7 (PR) |
 | lucide-react | 1.64 | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
 | mathjax-full | 3.2.2 | Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | @tauri-apps/api, plugin-dialog | 2.12 / 2.8 | MIT OR Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
@@ -565,7 +565,6 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `mathjax-full` | 3.2.2 | Apache-2.0 | ja |
 | `mhchemparser` | 4.2.1 | Apache-2.0 | nein |
 | `mj-context-menu` | 0.6.1 | Apache-2.0 | nein |
-| `perfect-freehand` | 1.2.3 | MIT | ja |
 | `react-dom` | 19.3.1 | MIT | ja |
 | `react` | 19.3.1 | MIT | ja |
 | `scheduler` | 0.28.0 | MIT | ja |
