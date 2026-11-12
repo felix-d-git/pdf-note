@@ -3,7 +3,7 @@
 # (Schranke gegen inkompatible Lizenzen nach Dependabot-Updates) – dann erst prüfen, dann ergänzen.
 accepted = [
     "AGPL-3.0-only",
-    "AGPL-3.0", # veraltete SPDX-Kennung, so in mupdf/mupdf-sys 0.8.0
+    "AGPL-3.0", # veraltete SPDX-Kennung, so in mupdf/mupdf-sys 0.8.0; deren C-Code (MuPDF, jbig2dec) ist AGPL-3.0-or-later (#25)
     "MPL-2.0",
     "Apache-2.0",
     "MIT",
