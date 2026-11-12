@@ -68,6 +68,7 @@ export const toSnap = (r: z.infer<typeof PageState>): Snap => ({ items: r.items.
 const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
+const STROKES: readonly Item["kind"][] = ["ink", "marker", "highlight"];
 const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
 const LAYER_EDGE: Record<Layer, string> = { 1: "var(--ink-3)", 2: "var(--accent-deep)", 3: "var(--accent)" };
 const SHAPES: [Item["kind"], LucideIcon, string][] = [
@@ -223,7 +224,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const penNow = pt === "pen" || pt === "marker" ? pt : undefined;
   const lastPen = penNow && { kind: penNow, ...(penNow === "pen" ? preset : marker) };
   if (lastPen && !(pal.last && pal.last.kind === lastPen.kind && same(pal.last, lastPen))) setPal({ ...pal, last: lastPen });
-  /** Gerätewechsel: Stift → Ebene 3 + letzter Stift/Marker, Maus → Ebene 2 + Auswahl (Hovern genügt) */
+  /** Gerätewechsel: Stift → Ebene 3 + letzter Stift/Marker, Maus → eigenes Werkzeug (Standard Auswahl) + dessen Ebene, sonst 2 (Hovern genügt) */
   const device = useRef<"pen" | "mouse">("mouse");
   const deviceEvent = (e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
@@ -231,7 +232,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if (d === device.current) return;
     device.current = d;
     if (settings.auto) setTools((s) => deviceTools(s, d, pal.last?.kind ?? "pen"));
-    switchLayer(d === "pen" ? 3 : 2);
+    switchLayer(d === "pen" ? 3 : (settings.auto && TOOL_LAYER[tool]) || 2);
   };
   const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
     setTools((s) => pickTool(s, t, dev, settings.auto));
@@ -1318,11 +1319,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setTextSel(t && { ...t, page: i, v: version });
                 }}
                 onAdd={(it, raw) => {
-                  const add = (x: Item) => ({ ...x, layer: x.layer ?? (layer === 1 ? kindLayer(x.kind) : layer) });
+                  // Stift-/Marker-Striche immer Ebene 3, egal mit welchem Gerät und auf welcher Ebene gezeichnet
+                  const add = (x: Item) => ({ ...x, layer: x.layer ?? (STROKES.includes(x.kind) ? 3 : layer === 1 ? kindLayer(x.kind) : layer) });
                   if (!raw) return edit((all) => [...all, add(it)]);
-                  // erkannte Form ersetzt den Freihand-Strich in einem zweiten Schritt → Strg+Z holt ihn zurück
+                  // erkannte Form ersetzt den Freihand-Strich in einem zweiten Schritt → Strg+Z holt ihn zurück; sie bleibt auf dessen Ebene
                   edit((all) => [...all, add(raw)]);
-                  edit((all) => all.map((x) => (x.id === raw.id ? add(it) : x)));
+                  edit((all) => all.map((x) => (x.id === raw.id ? { ...it, layer: add(raw).layer } : x)));
                 }}
                 onShape={(it) => {
                   edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }]);

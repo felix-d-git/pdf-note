@@ -23,11 +23,11 @@ const DE: Chapter[] = [
   ] },
   { id: "layers", icon: Layers, title: "Ebenen 1/2/3", lines: [
     ...LAYERS.map(([l, icon, name]): Line => [icon, `${name} – Taste ${l}`]),
-    "Ebene 1: Text und Inhalt der Original-PDF. Ebene 2: Bilder, Linien, Pfeile, Rechtecke, Kreise, Koordinatensysteme. Ebene 3: Handschrift und Textfelder.",
+    "Ebene 1: Text und Inhalt der Original-PDF. Ebene 2: Bilder, Linien, Pfeile, Rechtecke, Kreise, Koordinatensysteme. Ebene 3: Handschrift und Textfelder – Stift- und Marker-Striche landen immer hier, auch mit der Maus gezeichnet.",
     "Werkzeuge wechseln die Ebene selbst; ein Klick allein ändert sie nicht. Auswählen und Radieren wirken nur auf der aktuellen Ebene.",
   ] },
   { id: "auto", icon: ArrowLeftRight, title: "Gerät bestimmt Werkzeug", lines: [
-    [ArrowLeftRight, "An: Stift und Maus haben je ein eigenes Werkzeug (Stift = Stift, Maus = Auswahl/Text). Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug."],
+    [ArrowLeftRight, "An: Stift und Maus haben je ein eigenes Werkzeug. Stift schreibt mit dem zuletzt benutzten Stift/Marker; Maus wählt aus, bis du ein Werkzeug anklickst – das bleibt bis zum nächsten Wechsel. Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug."],
     "Aus: alle Geräte nutzen dasselbe Werkzeug.",
   ] },
   { id: "tools", icon: PenTool, title: "Werkzeuge", lines: [
