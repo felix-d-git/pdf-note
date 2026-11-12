@@ -7,6 +7,13 @@ tag=$1
 repo=${GITHUB_REPOSITORY:?}
 link="https://github.com/$repo/tree/$tag"
 
+# Issue #24: Tag = App-Version, sonst verlinkt die mitgelieferte licenses/SOURCE.md (aus package.json) einen anderen Quellstand
+for v in "$(sed -n 's/^  "version": "\(.*\)",$/\1/p' package.json)" \
+         "$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -1)" \
+         "$(awk '/^name = "pdf-note"$/ {getline; print $3; exit}' src-tauri/Cargo.lock | tr -d '"')"; do
+  [ "$v" = "${tag#v}" ] || { echo "Version $v (package.json/Cargo.toml/Cargo.lock) passt nicht zu Tag $tag"; exit 1; }
+done
+
 # Version + Prüfsumme von mupdf-sys aus Cargo.lock dieses Tags
 read -r ver sum < <(awk '/^name = "mupdf-sys"$/ {f=1} f && /^version/ {v=$3} f && /^checksum/ {print v, $3; exit}' src-tauri/Cargo.lock | tr -d '"')
 [ -n "${sum:-}" ] || { echo "mupdf-sys nicht in Cargo.lock"; exit 1; }
