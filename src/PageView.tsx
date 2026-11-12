@@ -208,6 +208,8 @@ export interface PageProps {
   onSpace: (y: number, dy: number) => void;
   /** Schwärzen: Rechteck in App-Koordinaten, `null` = abgebrochen */
   onRedact: (r: [number, number, number, number] | null) => void;
+  /** Unterschrift/Initialen per Klick an (x, y) platzieren */
+  onSign: (kind: "sign" | "initials", x: number, y: number) => void;
 }
 
 /** PDF-Absätze (Indizes wie `text_paragraphs`) um dx/dy verschieben bzw. löschen – gemeinsam mit Original-Objekten ein Schritt */
@@ -643,7 +645,8 @@ export function PageView(p: PageProps) {
     const mouse = e.pointerType !== "pen";
     const add = mouse && (e.ctrlKey || e.shiftKey) && t === "lasso" && !tgt.closest("[data-handle]");
     // Platz einfügen schneidet die Seite – ein Zug innerhalb der Auswahl verschiebt sie nicht
-    if (sl.length && !add && t !== "space" && t !== "redact") {
+    const sign = t === "sign" || t === "initials";
+    if (sl.length && !add && t !== "space" && t !== "redact" && !sign) {
       const b = unionBox(sl);
       const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
       // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
@@ -681,6 +684,7 @@ export function PageView(p: PageProps) {
       ta.current?.blur();
       return openText(e, hitT, x, y);
     }
+    if (sign) return p.onSign(t, x, y);
     e.currentTarget.setPointerCapture(e.pointerId);
     if (t === "form") {
       setNewf(undefined);

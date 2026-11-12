@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DEFAULT_PENS, TEXT_SIZE, type Pen, type Preset } from "./ink";
 
 /** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus); `space` = Platz einfügen (waagrechte Linie ziehen) */
-export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "solid", "form", "link", "space", "redact"] as const;
+export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "solid", "form", "link", "space", "redact", "sign", "initials"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Stifttaste: Zeigerart + Bitmaske aus PointerEvent.buttons (2 = Seitentaste, 32 = Radierer-Ende). */
@@ -108,6 +108,25 @@ export function storePalettes(p: Palettes) {
   }
 }
 
+/** Unterschrift/Initialen als PNG (Base64, transparent, auf die Tinte zugeschnitten), gerätelokal */
+const SKEY = "pdfnote.sign";
+const Sign = z.object({ sign: z.string().optional(), initials: z.string().optional() });
+export type Sign = z.infer<typeof Sign>;
+export function loadSign(): Sign {
+  try {
+    return Sign.parse(JSON.parse(localStorage.getItem(SKEY) ?? "{}"));
+  } catch {
+    return {};
+  }
+}
+export function storeSign(s: Sign) {
+  try {
+    localStorage.setItem(SKEY, JSON.stringify(s));
+  } catch {
+    /* nur Komfort */
+  }
+}
+
 const matches = (b: Binding, e: { pointerType: string; buttons: number }) =>
   e.pointerType === b.pointerType && (e.buttons & b.buttons) === b.buttons;
 
@@ -124,7 +143,7 @@ export function toolFor(e: { pointerType: string; buttons: number }, tool: Tool,
  */
 export interface Tools { mouse: Tool; pen: Tool; prev: { mouse: Tool; pen: Tool }; locked: boolean }
 /** Einmal-Werkzeuge: danach zurück zum vorherigen (Platz einfügen wie eine Form) */
-export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "solid", "space", "redact"];
+export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "solid", "space", "redact", "sign", "initials"];
 export const initTools = (auto: boolean): Tools => ({ mouse: auto ? "lasso" : "pen", pen: "pen", prev: { mouse: "lasso", pen: "pen" }, locked: false });
 
 /** Werkzeug wählen; `dev` = womit. Bei `auto` setzt der Stift nur seins, die Maus ihres – Zeichenwerkzeuge gelten auch für den Stift. */

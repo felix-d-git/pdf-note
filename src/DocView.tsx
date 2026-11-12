@@ -6,7 +6,7 @@ import {
   ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Box, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
-  Rows3, Save, ScanText, Slash, Square, SquareX, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+  Rows3, Save, ScanText, Signature, Slash, Square, SquareX, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
@@ -23,7 +23,8 @@ import { OPT_TOOLS, ShapeOptions } from "./ShapeOptions";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
-import { afterShape, deviceTools, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { afterShape, deviceTools, initTools, loadPalettes, loadSign, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, storeSign, type Settings, type Sign, type Tool } from "./settings";
+import { SignPad } from "./SignPad";
 import { PenBar } from "./PenBar";
 import { anchorShift, wheelFactor } from "./zoom";
 import { formulas, type Formula } from "./math";
@@ -71,7 +72,7 @@ const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
 const STROKES: readonly Item["kind"][] = ["ink", "marker", "highlight"];
-const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, solid: 2, form: 1 };
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, solid: 2, form: 1, sign: 2, initials: 2 };
 const LAYER_EDGE: Record<Layer, string> = { 1: "var(--ink-3)", 2: "var(--accent-deep)", 3: "var(--accent)" };
 const SHAPES: [Item["kind"], LucideIcon, string][] = [
   ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes], ["solid", Box, T.solid],
@@ -203,6 +204,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
   /** markierte Miniaturen; gelten nur für den Seitenstand `v` (Seitenoperation/Undo hebt die Markierung auf) */
   const [thumbSel, setThumbSel] = useState<{ v: number; sel: number[]; anchor: number }>({ v: -1, sel: [], anchor: 0 });
+  /** Zeichenfeld für Unterschrift/Initialen offen; `place` = danach gleich platzieren */
+  const [signPad, setSignPad] = useState<{ kind: keyof Sign; place: boolean }>();
   const [tmenu, setTmenu] = useState<{ x: number; y: number; md?: string | null }>();
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
@@ -582,6 +585,19 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     await img.decode();
     // 1 px = 0,75 pt (96 dpi); höchstens 80 % der kürzeren Seitenkante
     place([imageItem(page, b64, img.naturalWidth * 0.75, img.naturalHeight * 0.75, x, y, 0.8 * Math.min(w, h))]);
+  }
+
+  /** gespeicherte Unterschrift → Werkzeug (Klick platziert), sonst erst zeichnen */
+  const startSign = (kind: keyof Sign) => (loadSign()[kind] ? chooseTool(kind) : setSignPad({ kind, place: true }));
+
+  /** Unterschrift/Initialen mittig um (x, y): höchstens 150 bzw. 50 pt breit, Bild-Objekt (verschieb-/skalierbar) */
+  async function placeSign(kind: keyof Sign, page: number, x: number, y: number) {
+    const b64 = loadSign()[kind];
+    if (!b64) return;
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    place([imageItem(page, b64, img.naturalWidth, img.naturalHeight, x, y, kind === "sign" ? 150 : 50)]);
   }
 
   /** ohne `at` mittig in der Ansicht, mit `at` linke obere Ecke dort */
@@ -1058,6 +1074,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
           <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
           <MenuItem icon={SquareX} label={T.redact} onClick={() => chooseTool("redact")} />
+          <MenuItem icon={Signature} label={T.sign} onClick={() => startSign("sign")} />
+          <MenuItem icon={Type} label={T.initials} onClick={() => startSign("initials")} />
+          <MenuItem icon={FilePenLine} label={T.signEdit} onClick={() => setSignPad({ kind: "sign", place: false })} />
         </Menu>
         {sep}
         {/* nur Stifte + Marker: Rahmen = Maus, Punkt = Stift */}
@@ -1401,6 +1420,10 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                     return its.map((it) => moved.find((n) => n.id === it.id) ?? it);
                   });
                 }}
+                onSign={(k, x, y) => {
+                  setTools(afterShape);
+                  void placeSign(k, i, x, y);
+                }}
                 onRedact={async (r) => {
                   setTools(afterShape);
                   if (!r) return;
@@ -1419,6 +1442,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           </div>
         </main>
         <Toast msg={error} onClose={closeError} />
+        {signPad && (
+          <SignPad kind={signPad.kind} onCancel={() => setSignPad(undefined)} onSave={(k, b64) => {
+            storeSign({ ...loadSign(), [k]: b64 });
+            setSignPad(undefined);
+            if (b64 && signPad.place) chooseTool(k);
+          }} />
+        )}
       </div>
     </div>
   );
