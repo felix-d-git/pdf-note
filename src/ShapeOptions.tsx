@@ -5,7 +5,7 @@ import type { Tool } from "./settings";
 import { BTN as btn, on } from "./ui";
 
 /** Werkzeuge mit Optionen (Zahnrad und Rechtsklick aufs Werkzeug) */
-export const OPT_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "solid"];
+export const OPT_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "solid", "eraser"];
 
 const DASHES: [Dash | undefined, string][] = [[undefined, T.solidLine], ["dash", T.dashed], ["dot", T.dotted]];
 
@@ -21,6 +21,13 @@ function Pick<V>({ list, value, set }: { list: [V, string][]; value: V; set: (v:
 /** Optionen des Werkzeugs `tool`; leer, wenn es keine hat */
 export function ShapeOptions({ tool, o, set }: { tool: Tool; o: ShapeOpts; set: (o: ShapeOpts) => void }) {
   if (!OPT_TOOLS.includes(tool)) return null;
+  if (tool === "eraser") {
+    return (
+      <div className="flex flex-col gap-2 border-t border-line pt-2">
+        <Pick list={[[false, T.eraseWhole], [true, T.erasePart]]} value={o.partial} set={(partial) => set({ ...o, partial })} />
+      </div>
+    );
+  }
   const check = (k: "square" | "circle", label: string) => (
     <label className="flex items-center gap-2">
       <input type="checkbox" checked={o[k]} onChange={(e) => set({ ...o, [k]: e.target.checked })} />

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, constrain, cropItem, dashPattern, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
+  afterDelete, afterDeleteMany, afterInsert, axesLines, cutStroke, afterMove, afterRotate, box, cropDrag, constrain, cropItem, dashPattern, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
   recognize, rotateItem, smoothCurve, dragShape, savedWidth, scaleItem, SHAPE_OPTS, shapeProps, solidLines, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
@@ -355,4 +355,18 @@ test("Erkannte Form weiterziehen: skaliert um Mitte bzw. Startpunkt", () => {
   expect(half[0]).toEqual([0, 0, 0.5]);
   expect(half[1]?.[0]).toBeCloseTo(50);
   expect(dragShape("root", arrow, [85, 8], [0, 0])[1]?.[0]).toBeGreaterThan(0); // nie auf null zusammenfallen
+});
+
+test("B1 cutStroke: Mitte raus → zwei Teile mit Schnittpunkten auf dem Kreis; daneben null; ganz drin []; Teile überleben Speichern → Laden", () => {
+  const pts: InkPoint[] = [[0, 0, 0.25], [100, 0, 0.75]]; // Druck linear: 0.25 + x/200
+  expect(cutStroke(pts, 50, 0, 10)).toEqual([[[0, 0, 0.25], [40, 0, 0.45]], [[60, 0, 0.55], [100, 0, 0.75]]]);
+  expect(cutStroke(pts, 50, 20, 10)).toBeNull();
+  expect(cutStroke(pts, 50, 0, 80)).toEqual([]);
+  expect(cutStroke(pts, 0, 0, 10)).toEqual([[[10, 0, 0.3], [100, 0, 0.75]]]); // Anfang weg
+  expect(cutStroke([[5, 5, 0.5]], 5, 6, 2)).toEqual([]); // Punkt
+  // Kreis zwischen zwei Stützpunkten eines mehrteiligen Strichs
+  expect(cutStroke([[0, 0, 0.5], [10, 0, 0.5], [10, 100, 0.5]], 10, 50, 5)?.map((f) => f.map((q) => q.map((v) => +v.toFixed(9))))).toEqual([[[0, 0, 0.5], [10, 0, 0.5], [10, 45, 0.5]], [[10, 55, 0.5], [10, 100, 0.5]]]);
+  const part = { ...s(0.5), points: [[60, 0, 0.44], [100, 0, 0.6]] as InkPoint[] };
+  const back = fromData(ItemData.parse(JSON.parse(JSON.stringify(toData(part)))));
+  expect(back.points).toEqual(part.points);
 });
