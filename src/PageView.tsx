@@ -6,7 +6,7 @@ import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
   constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts,
 } from "./ink";
-import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
+import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, SquareX, Trash, Type, X } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
@@ -101,7 +101,7 @@ type Gesture =
   /** Marker auf PDF-Text: folgt den Zeilen von a bis b */
   | { t: "hl"; a: Pos; b: Pos; item: Item }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
-  | { t: "field" | "link"; x: number; y: number; dx: number; dy: number }
+  | { t: "field" | "link" | "redact"; x: number; y: number; dx: number; dy: number }
   /** Platz einfügen: Linie bei `y`, um `dy` gezogen */
   | { t: "space"; y: number; dy: number };
 
@@ -206,13 +206,15 @@ export interface PageProps {
   /** Platz einfügen fertig: verschobene Objekte (leer = nichts verschoben), ein Schritt */
   /** Seite bei `y` zerschneiden, `dy` weiße Fläche einfügen (`dy` = 0: abgebrochen) */
   onSpace: (y: number, dy: number) => void;
+  /** Schwärzen: Rechteck in App-Koordinaten, `null` = abgebrochen */
+  onRedact: (r: [number, number, number, number] | null) => void;
 }
 
 /** PDF-Absätze (Indizes wie `text_paragraphs`) um dx/dy verschieben bzw. löschen – gemeinsam mit Original-Objekten ein Schritt */
 export interface ParaMove { i: number[]; dx: number; dy: number; del?: boolean }
 export interface OrigEdit { index: number; matrix?: number[] }
 /** Aktionen aus Mini-Leiste/Rechtsklick-Menü, die DocView ausführt; `notes` = auf Ebene 3 wechseln (Textfeld hier auf Ebene 1) */
-export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "notes";
+export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "redact" | "notes";
 
 /** Griffleiste oben (verschieben, Klick wählt als Objekt) + Breitengriff rechts; Attributwert = Id/Absatz */
 const grips = (grip: string, width: string, id: number) => (
@@ -592,7 +594,7 @@ export function PageView(p: PageProps) {
     const t0 = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
     // Stift am linken/rechten Seitenrand ansetzen und nach unten ziehen: Platz einfügen
     const px = e.pointerType === "pen" ? pt(e)[0] : NaN;
-    const t = t0 && (px < SPACE_EDGE_PX / zoom || px > size[0] - SPACE_EDGE_PX / zoom) ? "space" : t0;
+    const t = t0 && t0 !== "redact" && (px < SPACE_EDGE_PX / zoom || px > size[0] - SPACE_EDGE_PX / zoom) ? "space" : t0;
     if (!t || g.current) return;
     // Stift zeichnet, markiert, radiert und wählt nur auf Ebene 3 – unabhängig von der gewählten Ebene
     const pen3 = e.pointerType === "pen" && (t === "pen" || t === "marker" || t === "eraser" || t === "lasso");
@@ -641,7 +643,7 @@ export function PageView(p: PageProps) {
     const mouse = e.pointerType !== "pen";
     const add = mouse && (e.ctrlKey || e.shiftKey) && t === "lasso" && !tgt.closest("[data-handle]");
     // Platz einfügen schneidet die Seite – ein Zug innerhalb der Auswahl verschiebt sie nicht
-    if (sl.length && !add && t !== "space") {
+    if (sl.length && !add && t !== "space" && t !== "redact") {
       const b = unionBox(sl);
       const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
       // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
@@ -683,6 +685,10 @@ export function PageView(p: PageProps) {
     if (t === "form") {
       setNewf(undefined);
       g.current = { t: "field", x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
+    if (t === "redact") {
+      g.current = { t: "redact", x, y, dx: 0, dy: 0 };
       return rerender();
     }
     if (t === "link") {
@@ -784,6 +790,7 @@ export function PageView(p: PageProps) {
       case "tmove":
       case "field":
       case "link":
+      case "redact":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
       case "twidth":
@@ -929,6 +936,10 @@ export function PageView(p: PageProps) {
       case "hl":
         if (c.item.points.length) p.onAdd(c.item);
         break;
+      case "redact":
+        p.onRedact(e.type !== "pointercancel" && Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3
+          ? [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)] : null);
+        break;
       case "space":
         if (e.type !== "pointercancel" && c.dy >= 1) p.onSpace(c.y, c.dy);
         else p.onSpace(0, 0);
@@ -1001,7 +1012,7 @@ export function PageView(p: PageProps) {
     const options = String(d.get("options") ?? "").split("\n").map((o) => o.trim()).filter(Boolean);
     if (newf && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect: newf, options });
   };
-  const fieldBox = gs?.t === "field" || gs?.t === "link" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
+  const fieldBox = gs?.t === "field" || gs?.t === "link" || gs?.t === "redact" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
 
   const sb = sel.length ? unionBox(sel.map(transform)) : null;
   const lasso = gs?.t === "lasso" ? gs.poly : null;
@@ -1205,6 +1216,7 @@ export function PageView(p: PageProps) {
             }} />
             <IconBtn icon={ImagePlus} label={T.imageHere} role="menuitem" className={ICON} onClick={cmd("image", [menu.x, menu.y])} />
             <IconBtn icon={BetweenHorizontalStart} label={T.space} role="menuitem" className={ICON} onClick={cmd("space")} />
+            <IconBtn icon={SquareX} label={T.redact} role="menuitem" className={ICON} onClick={cmd("redact")} />
           </>}
         </div>
       )}
@@ -1350,7 +1362,7 @@ export function PageView(p: PageProps) {
         </div>
       ))}
       {fieldBox && (
-        <div className="pointer-events-none absolute border border-dashed border-accent"
+        <div className={`pointer-events-none absolute border border-dashed ${gs?.t === "redact" ? "border-black bg-black/50" : "border-accent"}`}
           style={fieldBox} />
       )}
       {newf && (

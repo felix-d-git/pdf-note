@@ -47,6 +47,7 @@ const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 let replaces = 0;
 const spaces: [number, number][] = [];
+const redacts: ([number, number, number, number] | null)[] = [];
 const removed: number[][] = [];
 const cuts: Map<number, Item[]>[] = [];
 
@@ -68,7 +69,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       onCrop={(id, f) => void crops.push([id, f])}
       onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
-      onCmd={() => {}} onSpace={(y, dy) => {
+      onCmd={() => {}} onRedact={(r) => void redacts.push(r)} onSpace={(y, dy) => {
         spaces.push([y, dy]);
         const moved = makeSpace(items, 0, y, dy);
         setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x));
@@ -293,6 +294,21 @@ test("Platz einfügen schneidet die Seite: Objekte darunter rücken ohne Randbeg
   // nach oben gezogen: nichts (Platz entfernen gibt es nicht)
   drag(300, 100);
   expect(spaces[2]).toEqual([0, 0]);
+});
+
+test("Schwärzen: Rechteck ziehen meldet den Bereich, auch über eine Auswahl; Klick bricht ab", () => {
+  redacts.length = 0;
+  const page = mount("redact", 3, [obj(1, "rect", 10, 10, 100, 80)], { sel: [1] });
+  const drag = (x0: number, y0: number, x1: number, y1: number) => {
+    fire(page, "pointerdown", x0, y0, 1, "mouse");
+    fire(page, "pointermove", x1, y1, 1, "mouse");
+    fire(page, "pointerup", x1, y1, 0, "mouse");
+  };
+  drag(90, 70, 20, 30);
+  drag(50, 50, 51, 51);
+  expect(redacts).toEqual([[20, 30, 90, 70], null]);
+  // Auswahl wurde nicht verschoben
+  expect(ui.added.map((it) => Math.round(box(it).y0))).toEqual([9]);
 });
 
 test("Stift am Seitenrand ansetzen → Platz einfügen statt Zeichnen", () => {

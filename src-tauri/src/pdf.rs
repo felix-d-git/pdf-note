@@ -885,6 +885,8 @@ pub enum PageOp {
     },
     /// Seite bei App-Höhe `y` zerschneiden und um `dy` weiße Fläche verlängern
     Space { page: i32, y: f32, dy: f32 },
+    /// Bereich schwärzen (Inhalt echt entfernen), `rect` in App-Koordinaten
+    Redact { page: i32, rect: [f32; 4] },
     /// Original-Textabsatz ändern/verschieben
     Text { page: i32, edit: crate::text::TextEdit },
     /// Formularfeld ausfüllen
@@ -1029,13 +1031,14 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         PageOp::Outline { marks } => crate::notebook::set_outline(doc, marks).map(|_| OpResult::default()),
         PageOp::Link { from, rect, to, x, y } => crate::nav::link(doc, *from, *rect, *to, *x, *y).map(|_| OpResult::default()),
         PageOp::Space { page, y, dy } if idx_ok(*page) => crate::orig::space(doc, *page, *y, *dy).map(|_| OpResult::default()),
+        PageOp::Redact { page, rect } if idx_ok(*page) => crate::orig::redact(doc, *page, *rect).map(|_| OpResult::default()),
         PageOp::Ocr => Ok(OpResult { warning: crate::ocr::ocr(doc)?, ..Default::default() }),
         PageOp::Unlink { page, n } if idx_ok(*page) => crate::nav::unlink(doc, *page, *n).map(|_| OpResult::default()),
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
         PageOp::DeleteField { page, xref } if idx_ok(*page) => crate::form::delete(doc, *page, *xref).map(|_| OpResult::default()),
-        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } | PageOp::Space { .. } => Err("ungültige Seite".into()),
+        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } | PageOp::Space { .. } | PageOp::Redact { .. } => Err("ungültige Seite".into()),
     }
 }
 
