@@ -645,7 +645,7 @@ export function makeSpace(items: Item[], page: number, y: number, dy: number, h:
   return d ? below.map((it) => moveItem(it, 0, d)) : [];
 }
 
-export type ShapeKind = "line" | "arrow" | "rect" | "triangle" | "ellipse";
+export type ShapeKind = "line" | "arrow" | "root" | "rect" | "triangle" | "ellipse" | "curve";
 const dist = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 /** Douglas-Peucker: Eckpunkte eines Zugs mit Toleranz `eps` */
 function corners(p: Pt[], eps: number): Pt[] {
@@ -667,10 +667,11 @@ const turn = (a: Pt, b: Pt, c: Pt) => {
 
 /**
  * Form-Erkennung beim Shape-Hold: Freihand-Zug → saubere Form als Punktfolge (bleibt ein Stift-Strich auf Ebene 3).
- * Offen: Linie, oder Pfeil (langer Schaft + kurze Spitze mit Kehrtwende); geschlossen (Ende nah am Anfang):
+ * Offen: Linie, gerader Pfeil (Spitze = vom Start entferntester Punkt, Schaft gerade, Haken zurück) oder Wurzelzeichen;
+ * sonst `null` (Kurve → erst langes Halten glättet, `smoothCurve`). Geschlossen (Ende nah am Anfang):
  * 3 Ecken → Dreieck, 4 → Rechteck (achsnah → achsparallel), sonst Kreis/Ellipse. Druck = Mittelwert.
  */
-export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } {
+export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } | null {
   // ponytail: Ecken-Zählung per Douglas-Peucker statt trainiertem Erkenner; reicht für die fünf Grundformen
   const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1);
   const p = raw.map(([x, y]): Pt => [x, y]);
@@ -682,15 +683,28 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
   const line = out("line", [a, z]);
   if (D < 4) return line;
   if (dist(a, z) > 0.25 * D) {
-    const s = corners(p, 0.08 * D);
-    const [s0, s1, s2] = s;
-    if (s.length < 3 || !s0 || !s1 || !s2) return line;
-    const shaft = dist(s0, s1), rest = s.slice(2).map((q, i) => dist(s[i + 1] ?? q, q));
-    if (turn(s0, s1, s2) < 100 || rest.some((l) => l > 0.6 * shaft) || rest.reduce((t, l) => t + l, 0) > 1.6 * shaft) return out("line", [s0, z]);
-    // Spitze: zwei gleich lange Schenkel ±28° gegen die Schaftrichtung
-    const bl = Math.min(Math.max(...rest), 0.4 * shaft), ang = Math.atan2(s0[1] - s1[1], s0[0] - s1[0]);
-    const barb = (d: number): Pt => [s1[0] + bl * Math.cos(ang + d), s1[1] + bl * Math.sin(ang + d)];
-    return out("arrow", [s0, s1, barb(0.49), s1, barb(-0.49)]);
+    if (corners(p, 0.06 * D).length === 2) return line;
+    // Pfeil: Spitze = erstes Maximum der Entfernung vom Start (Rückweg darf sie knapp überschreiten),
+    // Schaft davor gerade, Haken danach läuft zurück
+    const dm = Math.max(...p.map((q) => dist(q, a)));
+    let k = p.findIndex((q) => dist(q, a) >= 0.95 * dm);
+    while (k + 1 < p.length && dist(p[k + 1] ?? a, a) >= dist(p[k] ?? a, a)) k++;
+    const tip = p[k] ?? z, shaft = dist(a, tip);
+    const head = p.slice(k + 1), far = head.reduce((m, q) => (dist(q, tip) > dist(m, tip) ? q : m), tip), hl = dist(far, tip);
+    if (corners(p.slice(0, k + 1), 0.06 * shaft).length === 2 && hl > 0.08 * shaft && hl < 0.6 * shaft && turn(a, tip, far) > 105) {
+      const bl = Math.min(hl, 0.4 * shaft), ang = Math.atan2(a[1] - tip[1], a[0] - tip[0]);
+      const barb = (d: number): Pt => [tip[0] + bl * Math.cos(ang + d), tip[1] + bl * Math.sin(ang + d)];
+      return out("arrow", [a, tip, barb(0.49), tip, barb(-0.49)]);
+    }
+    // Wurzel: (Anstrich) ↘ kurz, ↗ lang und steil, → waagrecht; Dach wird exakt waagrecht
+    const s = corners(p, 0.06 * D).filter((q, i, v) => i === 0 || dist(q, v[i - 1] ?? q) > 0.05 * D);
+    const [v, t, e] = s.slice(-3), d0 = s.at(-4);
+    if (d0 && v && t && e && s.length <= 5) {
+      const [dx1, dy1, dx2, dy2, dx3, dy3] = [v[0] - d0[0], v[1] - d0[1], t[0] - v[0], t[1] - v[1], e[0] - t[0], e[1] - t[1]];
+      if (dy1 > 0 && dx1 > -0.3 * dy1 && dy2 < 0 && -dy2 > dy1 && -dy2 > 0.5 * Math.abs(dx2) && dx3 > 0.3 * -dy2 && Math.abs(dy3) < 0.3 * dx3)
+        return out("root", [...s.slice(0, -1), [e[0], t[1]]]);
+    }
+    return null;
   }
   // geschlossen: am entferntesten Punkt teilen, Ecken zyklisch, fast gerade Knicke und Doppelpunkte raus
   const k = p.reduce((m, q, i) => (dist(q, a) > dist(p[m] ?? a, a) ? i : m), 0);
@@ -719,4 +733,48 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
   let rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
   if (Math.abs(rx - ry) < 0.15 * Math.max(rx, ry)) rx = ry = (rx + ry) / 2;
   return out("ellipse", Array.from({ length: 49 }, (_, i): Pt => [cx + rx * Math.cos((i / 48) * 2 * Math.PI), cy + ry * Math.sin((i / 48) * 2 * Math.PI)]));
+}
+
+/**
+ * Langes Halten auf einer Kurve (Funktionsgraph): Verlauf bleibt, nur das Zittern geht weg.
+ * Gleichabständig neu abtasten, dann zweimal gleitender Mittelwert (Fenster ≈ 4 % der Länge), Enden fest.
+ */
+export function smoothCurve(raw: InkPoint[]): InkPoint[] {
+  const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1), P = raw.map(([x, y]): Pt => [x, y]);
+  const len = P.slice(1).reduce((s, q, i) => s + dist(P[i] ?? q, q), 0);
+  const n = Math.round(Math.min(200, Math.max(16, len / 2)));
+  const out: Pt[] = [];
+  for (let i = 0, j = 0, acc = 0; i <= n; i++) {
+    const at = (len * i) / n;
+    for (;;) {
+      const q = P[j], r = P[j + 1];
+      if (!q || !r) break;
+      const l = dist(q, r);
+      if (acc + l >= at) { const t = l ? (at - acc) / l : 0; out.push([q[0] + (r[0] - q[0]) * t, q[1] + (r[1] - q[1]) * t]); break; }
+      acc += l;
+      j++;
+    }
+    const z = P.at(-1);
+    if (z && (i === n || out.length <= i)) out[i] = z;
+  }
+  const w = Math.max(2, Math.round(n * 0.04));
+  let p = out;
+  for (let pass = 0; pass < 2; pass++)
+    p = p.map((_, i) => {
+      const k = Math.min(w, i, p.length - 1 - i), win = p.slice(i - k, i + k + 1);
+      return [win.reduce((s, r) => s + r[0], 0) / win.length, win.reduce((s, r) => s + r[1], 0) / win.length];
+    });
+  return p.map(([x, y]): InkPoint => [x, y, pr]);
+}
+
+/**
+ * Nach der Erkennung weiterziehen: Form gleichmäßig skalieren, so dass der Haltepunkt `hold` dem Stift folgt.
+ * Fixpunkt: geschlossene Formen → Mitte, offene → Startpunkt.
+ */
+export function dragShape(kind: ShapeKind, base: InkPoint[], hold: Pt, pen: Pt): InkPoint[] {
+  const xs = base.map((q) => q[0]), ys = base.map((q) => q[1]), b0 = base[0];
+  const o: Pt = kind === "rect" || kind === "triangle" || kind === "ellipse" || !b0
+    ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : [b0[0], b0[1]];
+  const s = Math.max(0.05, dist(o, pen) / Math.max(1, dist(o, hold)));
+  return base.map(([x, y, pr]): InkPoint => [o[0] + (x - o[0]) * s, o[1] + (y - o[1]) * s, pr]);
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, constrain, cropItem, dashPattern, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
-  recognize, rotateItem, savedWidth, scaleItem, SHAPE_OPTS, shapeProps, solidLines, thumbPick, toData, type InkPoint, type Item, type Kind,
+  recognize, rotateItem, smoothCurve, dragShape, savedWidth, scaleItem, SHAPE_OPTS, shapeProps, solidLines, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
 const s = (p: number, simulated = false): Item => ({
@@ -273,18 +273,86 @@ test("Form-Erkennung: Linie, Pfeil, Dreieck, Rechteck, Kreis, Ellipse aus wackli
     return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.4 + (i % 3) * 0.1]);
   }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
   const ring = (rx: number, ry: number): InkPoint[] => Array.from({ length: 80 }, (_, i): InkPoint => [100 + rx * Math.cos(i / 12.6 + 0.3) + wob(i), 100 + ry * Math.sin(i / 12.6 + 0.3), 0.5]);
-  const kind = (p: InkPoint[]) => recognize(p).kind;
+  const kind = (p: InkPoint[]) => recognize(p)?.kind ?? null;
+  const rec = (p: InkPoint[]) => recognize(p) ?? { kind: null, points: [] };
   expect(kind(path([0, 0], [100, 30]))).toBe("line");
-  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe("line"); // offener Haken → Linie wie bisher
+  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe(null); // offener Haken → keine Form (langes Halten glättet)
   expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow");
   expect(kind(path([0, 0], [100, 0], [50, 80], [2, 3]))).toBe("triangle");
   expect(kind(path([50, 0], [100, 0], [100, 60], [0, 60], [0, 0], [48, 2]))).toBe("rect"); // Start mitten auf der Kante
   expect(kind(ring(50, 50))).toBe("ellipse");
-  const r = recognize(path([0, 0], [100, 0], [100, 60], [0, 60], [1, 2])).points;
+  const r = rec(path([0, 0], [100, 0], [100, 60], [0, 60], [1, 2])).points;
   expect([new Set(r.map((q) => q[0])).size, new Set(r.map((q) => q[1])).size, r.length]).toEqual([2, 2, 5]); // achsparallel, geschlossen
-  const c = recognize(ring(50, 50)).points, e = recognize(ring(60, 30)).points;
+  const c = rec(ring(50, 50)).points, e = rec(ring(60, 30)).points;
   const radii = (q: InkPoint[]) => q.map(([x, y]) => Math.hypot(x - 100, y - 100));
   expect(Math.max(...radii(c)) - Math.min(...radii(c))).toBeLessThan(1.5); // Kreis bleibt rund
   expect(Math.max(...e.map((q) => q[0])) - Math.min(...e.map((q) => q[0]))).toBeGreaterThan(110); // Ellipse behält Form
   expect(new Set(c.map((q) => q[2])).size).toBe(1); // gleichmäßiger Druck
+});
+
+test("Form-Erkennung: gerader Pfeil in Varianten, gebogener Pfeil nicht", () => {
+  const wob = (i: number) => Math.sin(i * 1.7) * 0.8;
+  const path = (...c: [number, number][]): InkPoint[] => c.slice(1).flatMap((b, k) => {
+    const a = c[k] ?? b;
+    return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.5]);
+  }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
+  const kind = (p: InkPoint[]) => recognize(p)?.kind ?? null;
+  expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow"); // Haken hin und zurück
+  expect(kind(path([0, 0], [100, 0], [88, -8]))).toBe("arrow"); // nur ein Haken
+  expect(kind(path([0, 0], [100, 0], [86, -9], [86, 9], [100, 0]))).toBe("arrow"); // Dreieck-Spitze
+  expect(kind(path([10, 90], [40, 60], [70, 30], [95, 5], [80, 6], [95, 5], [94, 20]))).toBe("arrow"); // schräg
+  // Schaft mit 3 pt Zittern über 120 pt bleibt gerade
+  const shaky: InkPoint[] = Array.from({ length: 60 }, (_, i): InkPoint => [i * 2, Math.sin(i * 0.9) * 3, 0.5]);
+  expect(kind([...shaky, ...path([118, 0], [104, -10], [118, 0], [104, 10]).slice(1)])).toBe("arrow");
+  const a = recognize(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))?.points ?? [];
+  expect(a).toHaveLength(5);
+  expect(a[1]?.[0]).toBeCloseTo(100, -1); // Spitze vorn
+  // gebogener Schaft (Viertelkreis) + Spitze → kein Pfeil
+  const arc: InkPoint[] = Array.from({ length: 40 }, (_, i): InkPoint => [100 * Math.sin((i / 39) * 1.57), 100 - 100 * Math.cos((i / 39) * 1.57), 0.5]);
+  expect(kind([...arc, ...path([100, 100], [92, 86], [100, 100], [86, 94]).slice(1)])).not.toBe("arrow");
+});
+
+test("Form-Erkennung: Wurzelzeichen mit und ohne Anstrich, Dach waagrecht", () => {
+  const path = (...c: [number, number][]): InkPoint[] => c.slice(1).flatMap((b, k) => {
+    const a = c[k] ?? b;
+    return Array.from({ length: 15 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 15 + Math.sin(i * 1.3) * 0.6, a[1] + ((b[1] - a[1]) * i) / 15, 0.5]);
+  }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
+  const r1 = recognize(path([0, 50], [8, 45], [20, 80], [40, 0], [120, 3]));
+  const r2 = recognize(path([8, 45], [20, 80], [42, 2], [110, -2]));
+  expect(r1?.kind).toBe("root");
+  expect(r2?.kind).toBe("root");
+  for (const r of [r1, r2]) {
+    const q = r?.points ?? [];
+    expect(q.at(-1)?.[1]).toBe(q.at(-2)?.[1]); // Dach exakt waagrecht
+  }
+  expect(r1?.points).toHaveLength(5);
+  // ✓-Haken (kein Dach) und Funktionsgraphen sind keine Wurzel
+  expect(recognize(path([0, 40], [15, 60], [50, 0]))?.kind ?? null).toBe(null);
+});
+
+test("Funktionsgraphen: keine Form beim kurzen Halten, langes Halten glättet nur", () => {
+  const graph = (f: (x: number) => number) => Array.from({ length: 120 }, (_, i): InkPoint => [i, f(i) + Math.sin(i * 2.1) * 1.2, 0.5]);
+  const para = (x: number) => 20 + ((x - 60) ** 2) / 50, ex = (x: number) => 100 - (Math.exp(x / 26) - 1), ln = (x: number) => 100 - 18 * Math.log(1 + x);
+  for (const f of [para, ex, ln]) {
+    const raw = graph(f);
+    expect(recognize(raw)).toBe(null);
+    // Abstand zur echten Kurve (nicht senkrecht: am steilen Rand zählt sonst jede Querverschiebung vielfach)
+    const ideal = Array.from({ length: 1191 }, (_, i) => [i / 10, f(i / 10)] as const);
+    const sm = smoothCurve(raw), dev = (p: InkPoint[]) => Math.max(...p.slice(4, -4).map(([x, y]) => Math.min(...ideal.map(([u, v]) => Math.hypot(x - u, y - v)))));
+    expect(sm[0]?.slice(0, 2)).toEqual(raw[0]?.slice(0, 2)); // Enden fest
+    expect(sm.at(-1)?.slice(0, 2)).toEqual(raw.at(-1)?.slice(0, 2));
+    expect(dev(sm)).toBeLessThan(dev(raw)); // weniger Zittern …
+    expect(dev(sm)).toBeLessThan(2); // … Verlauf bleibt
+  }
+});
+
+test("Erkannte Form weiterziehen: skaliert um Mitte bzw. Startpunkt", () => {
+  const ring: InkPoint[] = Array.from({ length: 9 }, (_, i): InkPoint => [100 + 50 * Math.cos(i * Math.PI / 4), 100 + 50 * Math.sin(i * Math.PI / 4), 0.5]);
+  const big = dragShape("ellipse", ring, [150, 100], [200, 100]);
+  expect(Math.hypot((big[3]?.[0] ?? 0) - 100, (big[3]?.[1] ?? 0) - 100)).toBeCloseTo(100);
+  const arrow: InkPoint[] = [[0, 0, 0.5], [100, 0, 0.5], [85, -8, 0.5], [100, 0, 0.5], [85, 8, 0.5]];
+  const half = dragShape("arrow", arrow, [85, 8], [42.5, 4]);
+  expect(half[0]).toEqual([0, 0, 0.5]);
+  expect(half[1]?.[0]).toBeCloseTo(50);
+  expect(dragShape("root", arrow, [85, 8], [0, 0])[1]?.[0]).toBeGreaterThan(0); // nie auf null zusammenfallen
 });

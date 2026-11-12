@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } fro
 import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
-  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem,
+  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
   constrain, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
@@ -65,6 +65,7 @@ export function Thumb({ doc, index, size, active, selected, dropMark, onPointerD
 }
 
 const HOLD_MS = 500;
+const HOLD_LONG_MS = 1500; // Kurve (Funktionsgraph) glätten: deutlich länger als die Formerkennung
 const straighten = (s: Item, x: number, y: number) => {
   s.points = s.points.slice(0, 1).flatMap((a) => [a, [x, y, a[2]] as InkPoint]);
 };
@@ -78,8 +79,8 @@ const ICON = "grid h-7 min-w-7 place-items-center rounded-xs px-1 text-sm text-i
 const family = (font: string) => /mono|courier/i.test(font) ? "monospace" : /sans|helvet|arial|calibri/i.test(font) ? FONT : "serif";
 
 type Gesture =
-  /** `shape`: beim Halten erkannte Form, `raw` = Freihand-Strich davor (Strg+Z kehrt dorthin zurück) */
-  | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; shape: ShapeKind | null; raw: Item | null } | null }
+  /** `shape`: beim Halten erkannte Form (`base` = ihre Punkte vor dem Weiterziehen), `raw` = Freihand-Strich davor (Strg+Z kehrt dorthin zurück) */
+  | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; shape: ShapeKind | null; raw: Item | null; base: InkPoint[] | null } | null }
   | { t: "shape"; item: Item }
   | { t: "erase"; ids: Set<number>; l: Layer }
   /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
@@ -458,19 +459,24 @@ export function PageView(p: PageProps) {
     return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0.5];
   };
 
-  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Rechteck, Dreieck, Kreis/Ellipse)
+  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Wurzel, Rechteck, Dreieck, Kreis/Ellipse);
+  // sonst (Kurve) glättet erst Ruhen ≥ 1500 ms. Weiterziehen danach skaliert die Form (dragShape).
   const armHold = (x: number, y: number) => {
     const c = g.current;
     const hd = c?.t === "draw" ? c.hold : null;
     if (!hd || !c || c.t !== "draw") return;
     clearTimeout(hd.timer);
+    const apply = (kind: ShapeKind, points: InkPoint[]) => {
+      Object.assign(hd, { shape: kind, raw: { ...c.item, points: c.item.points.slice() }, base: points });
+      Object.assign(c.item, { points: points.slice(), simulated: false });
+      setSnap({ x: hd.x, y: hd.y, kind });
+      redraw();
+    };
     Object.assign(hd, { x, y, timer: setTimeout(() => {
       if (c.item.points.length < 3) return;
       const f = recognize(c.item.points);
-      Object.assign(hd, { shape: f.kind, raw: { ...c.item, points: c.item.points.slice() } });
-      Object.assign(c.item, { points: f.points, simulated: false });
-      setSnap({ x: hd.x, y: hd.y, kind: f.kind });
-      redraw();
+      if (f) apply(f.kind, f.points);
+      else hd.timer = setTimeout(() => apply("curve", smoothCurve(c.item.points)), HOLD_LONG_MS - HOLD_MS);
     }, HOLD_MS) });
   };
 
@@ -654,7 +660,7 @@ export function PageView(p: PageProps) {
       const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, q, e.pointerType !== "pen");
       if (pen3) item.layer = 3;
       lastTs.current = e.timeStamp;
-      g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null } };
+      g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null, base: null } };
       armHold(x, y);
     } else if (t === "eraser") {
       g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L };
@@ -710,8 +716,9 @@ export function PageView(p: PageProps) {
         lastTs.current = e.timeStamp;
         for (const ev of evs) {
           const r = pt(ev), hd = c.hold;
-          // Linie folgt weiter dem Stift, andere Formen bleiben stehen
+          // Linie folgt weiter dem Stift, andere Formen wachsen/schrumpfen mit ihm
           if (hd?.shape === "line") straighten(c.item, r[0], r[1]);
+          else if (hd?.shape && hd.base) c.item.points = dragShape(hd.shape, hd.base, [hd.x, hd.y], [r[0], r[1]]);
           else if (!hd?.shape) {
             // Glättung schon beim Aufnehmen: live = gespeichert, beim Loslassen springt nichts
             c.item.points.push(smoothPt(c.item.points.at(-1), r, settings.smooth));

@@ -622,8 +622,10 @@ test("Shape-Hold: Rechteck zeichnen + halten → rastet sichtbar ein, Freihand-S
     for (const [x, y] of pts.slice(1)) fire(el, "pointermove", x, y, 1, "pen");
     act(() => void vi.advanceTimersByTime(600));
     expect(el.querySelector("[role=status]")?.textContent).toMatch(/^(Rechteck|Rectangle)$/);
-    fire(el, "pointermove", 300, 300, 1, "pen"); // nach dem Einrasten bleibt das Rechteck stehen
-    fire(el, "pointerup", 300, 300, 0, "pen");
+    const [hx, hy] = pts.at(-1) as [number, number];
+    fire(el, "pointermove", 300, 300, 1, "pen"); // Weiterziehen skaliert die erkannte Form …
+    fire(el, "pointermove", hx, hy, 1, "pen"); // … zurück zum Haltepunkt = Originalgröße
+    fire(el, "pointerup", hx, hy, 0, "pen");
     const it = lastAdd.at(-1) as Item, raw = raws.at(-1) as Item;
     expect(it.kind).toBe("ink");
     expect(it.points.map(([x, y]) => [Math.round(x), Math.round(y)])).toEqual([[50, 50], [151, 50], [151, 120], [50, 120], [50, 50]]);
