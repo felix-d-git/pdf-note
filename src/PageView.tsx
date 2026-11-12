@@ -6,7 +6,7 @@ import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
   constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, TAGS, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts, type Tag,
 } from "./ink";
-import { BetweenHorizontalStart, Check, CircleAlert, CircleHelp, ListTodo, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, SquareX, Trash, Type, X, type LucideIcon } from "lucide-react";
+import { BetweenHorizontalStart, Check, CircleAlert, CircleHelp, ListTodo, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, Move, SlidersHorizontal, SquareX, Trash, Type, X, type LucideIcon } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
@@ -104,6 +104,8 @@ type Gesture =
   | { t: "hl"; a: Pos; b: Pos; item: Item }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
   | { t: "field" | "link" | "redact"; x: number; y: number; dx: number; dy: number }
+  /** Formularfeld `xref` verschieben (`h` = "move") oder an Griff `h` ziehen */
+  | { t: "fbox"; xref: number; h: string; r: Rect4; x: number; y: number; dx: number; dy: number }
   /** Platz einfügen: Linie bei `y`, um `dy` gezogen */
   | { t: "space"; y: number; dy: number };
 
@@ -126,6 +128,24 @@ const Field = z.object({
   options: z.array(z.tuple([z.string(), z.string()])), readonly: z.boolean(), multiline: z.boolean(),
 });
 type Field = z.infer<typeof Field>;
+type Rect4 = [number, number, number, number];
+const MM = 72 / 25.4;
+/** Kleinste Feldseite beim Ziehen an den Griffen (pt) */
+const FIELD_MIN = 6;
+/** Feldrechteck nach Ziehen um (dx, dy) an Griff `h` ("move" = verschieben), in der Seite `size` gehalten. */
+export function dragRect([x0, y0, x1, y1]: Rect4, h: string, dx: number, dy: number, [w, hh]: [number, number]): Rect4 {
+  if (h === "move") {
+    const mx = Math.min(Math.max(dx, -x0), w - x1), my = Math.min(Math.max(dy, -y0), hh - y1);
+    return [x0 + mx, y0 + my, x1 + mx, y1 + my];
+  }
+  const cl = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  return [
+    h.includes("w") ? cl(x0 + dx, 0, x1 - FIELD_MIN) : x0,
+    h.includes("n") ? cl(y0 + dy, 0, y1 - FIELD_MIN) : y0,
+    h.includes("e") ? cl(x1 + dx, x0 + FIELD_MIN, w) : x1,
+    h.includes("s") ? cl(y1 + dy, y0 + FIELD_MIN, hh) : y1,
+  ];
+}
 export interface NewField { kind: "text" | "check" | "combo"; name: string; rect: [number, number, number, number]; options: string[] }
 /** Änderung an Absatz `para`; `size`/`font` nur, wenn gewählt (erzwingt Ersatzschrift). */
 export interface TextEdit {
@@ -203,6 +223,7 @@ export interface PageProps {
   onUnlink: (n: number) => void;
   /** Formularfeld (Widget) löschen */
   onDeleteField: (xref: number) => void;
+  onPlaceField: (xref: number, rect: Rect4) => void;
   /** Mini-Leiste/Rechtsklick-Menü; `at` = Stelle in pt (Einfügen/Bild hier) */
   onCmd: (cmd: Cmd, at?: [number, number]) => void;
   /** Platz einfügen fertig: verschobene Objekte (leer = nichts verschoben), ein Schritt */
@@ -329,6 +350,8 @@ export function PageView(p: PageProps) {
   const [newf, setNewf] = useState<NewField["rect"]>();
   /** Feld mit Fokus/Rechtsklick: zeigt die Mini-Leiste zum Löschen */
   const [selF, setSelF] = useState<number>();
+  /** Feld per Klick statt Ziehen angelegt → Größe folgt der Feldart */
+  const newClick = useRef(false);
   const formOn = tool === "form" && visible;
   useEffect(() => {
     if (!formOn) return;
@@ -590,6 +613,15 @@ export function PageView(p: PageProps) {
         return openLink(hit);
       }
     }
+    const fg = tgt.closest<HTMLElement>("[data-fgrip]")?.dataset.fgrip;
+    const ff = fg && flist.find((f) => f.xref === selF);
+    if (ff && e.button === 0) {
+      const [x, y] = pt(e);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      owner.current = e.pointerId;
+      g.current = { t: "fbox", xref: ff.xref, h: fg, r: ff.rect, x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
     const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
     const t0 = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
@@ -792,6 +824,7 @@ export function PageView(p: PageProps) {
       case "para":
       case "tmove":
       case "field":
+      case "fbox":
       case "link":
       case "redact":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
@@ -916,9 +949,14 @@ export function PageView(p: PageProps) {
         if (pedit) setPedit({ ...pedit, dx: pedit.dx + c.dx, dy: pedit.dy + c.dy });
         break;
       case "field":
-        if (Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3) {
-          setNewf([Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
-        }
+        newClick.current = !(Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3);
+        // Klick: Textfeld-Größe (60 × 8 mm), in der Seite gehalten
+        setNewf(newClick.current
+          ? dragRect([c.x, c.y, c.x + 60 * MM, c.y + 8 * MM], "move", 0, 0, size)
+          : [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
+        break;
+      case "fbox":
+        if (Math.hypot(c.dx, c.dy) * zoom > 1) p.onPlaceField(c.xref, dragRect(c.r, c.h, c.dx, c.dy, size));
         break;
       case "link": {
         const r: [number, number, number, number] = [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)];
@@ -1013,7 +1051,9 @@ export function PageView(p: PageProps) {
     const d = new FormData(f);
     const kind = String(d.get("kind"));
     const options = String(d.get("options") ?? "").split("\n").map((o) => o.trim()).filter(Boolean);
-    if (newf && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect: newf, options });
+    // Checkbox per Klick: 5 × 5 mm statt Textfeld-Größe
+    const rect = newf && newClick.current && kind === "check" ? dragRect([newf[0], newf[1], newf[0] + 5 * MM, newf[1] + 5 * MM], "move", 0, 0, size) : newf;
+    if (rect && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect, options });
   };
   const fieldBox = gs?.t === "field" || gs?.t === "link" || gs?.t === "redact" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
 
@@ -1340,11 +1380,29 @@ export function PageView(p: PageProps) {
             }} />
         );
       })}
-      {flist.filter((f) => f.xref === selF && !f.readonly).map((f) => (
-        <IconBtn key={`d${f.xref}`} data-pedit icon={Trash} label={T.del} keys="Entf" className={`${ICON} absolute z-10 border border-line bg-surface shadow-raised`}
-          style={{ left: f.rect[2] * zoom + 4, top: f.rect[1] * zoom }}
-          onMouseDown={(e) => e.preventDefault()} onClick={() => p.onDeleteField(f.xref)} />
-      ))}
+      {/* gewähltes Feld: 8 Griffe + Verschiebe-Griff; mousedown abgefangen, sonst verliert das Feld den Fokus (und die Auswahl) */}
+      {flist.filter((f) => f.xref === selF && !f.readonly).map((f) => {
+        const [x0, y0, x1, y1] = gs?.t === "fbox" && gs.xref === f.xref ? dragRect(gs.r, gs.h, gs.dx, gs.dy, size) : f.rect;
+        return (
+          <div key={`d${f.xref}`} onMouseDown={(e) => e.preventDefault()}>
+            <div className="pointer-events-none absolute z-10 border border-dashed border-accent"
+              style={{ left: x0 * zoom - 3, top: y0 * zoom - 3, width: (x1 - x0) * zoom + 6, height: (y1 - y0) * zoom + 6 }}>
+              {HANDLES.map((k) => (
+                <span key={k} data-fgrip={k}
+                  className="pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-xs border border-white bg-accent"
+                  style={{
+                    left: k.includes("w") ? 0 : k.includes("e") ? "100%" : "50%", top: k.includes("n") ? 0 : k.includes("s") ? "100%" : "50%",
+                    cursor: `${HANDLE_CURSOR[k]}-resize`, touchAction: "none",
+                  }} />
+              ))}
+            </div>
+            <div className="absolute z-10 flex flex-col rounded-xs border border-line bg-surface shadow-raised" style={{ left: x1 * zoom + 8, top: y0 * zoom }}>
+              <span data-fgrip="move" title={T.move} aria-label={T.move} className={`${ICON} cursor-move`} style={{ touchAction: "none" }}><Move size={16} aria-hidden /></span>
+              <IconBtn data-pedit icon={Trash} label={T.del} keys="Entf" className={ICON} onClick={() => p.onDeleteField(f.xref)} />
+            </div>
+          </div>
+        );
+      })}
       {snap && (
         <div role="status" className="pointer-events-none absolute z-30 rounded-xs bg-accent px-1.5 py-0.5 text-xs text-white shadow-raised"
           style={{ left: snap.x * zoom + 12, top: snap.y * zoom - 28 }}>{T[snap.kind]}</div>

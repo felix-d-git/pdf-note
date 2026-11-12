@@ -4,7 +4,7 @@ import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { box, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset, type ShapeOpts } from "./ink";
-import { PageView, type OrigEdit, type ParaMove } from "./PageView";
+import { dragRect, PageView, type NewField, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
 const FELD = { xref: 9, kind: "check", name: "H", rect: [20, 60, 32, 72], value: "Off", on: "Yes", options: [], readonly: false, multiline: false };
@@ -15,6 +15,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string) => (cmd in answers ? Promise.resolve(answers[cmd]) : cmd === "form_fields" ? Promise.resolve([FELD]) : backend.reply(cmd)),
 }));
 const deleted: number[] = [];
+const placed: [number, number[]][] = [];
+const newFields: NewField[] = [];
 const draws = vi.hoisted(() => [] as Item[][]);
 vi.mock("./ink", async (orig) => {
   const m = await orig<typeof import("./ink")>();
@@ -68,8 +70,8 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       onCut={(parts) => (cuts.push(parts), setItems((xs) => xs.flatMap((x) => parts.get(x.id) ?? [x])))}
       onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
-      onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
-      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
+      onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={(nf) => void newFields.push(nf)} hits={[]} linking={false}
+      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)} onPlaceField={(x, r) => void placed.push([x, r])}
       onCmd={() => {}} onRedact={(r) => void redacts.push(r)} onSign={(k, x, y) => void signs.push([k, x, y])} onSpace={(y, dy) => {
         spaces.push([y, dy]);
         const moved = makeSpace(items, 0, y, dy);
@@ -414,6 +416,34 @@ test("selbst angelegte Checkbox lässt sich löschen: Entf auf dem Feld und Mini
   act(() => void box?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
   expect(host.querySelector("button[data-pedit]")).not.toBeNull();
   expect(host.querySelector("[role=menu]")).toBeNull();
+});
+
+test("Formularfeld: Griffe ändern Größe/Lage (in der Seite, Mindestgröße), Klick legt Feld in Standardgröße an", async () => {
+  expect(dragRect([20, 60, 32, 72], "w", 30, 0, [600, 800])).toEqual([26, 60, 32, 72]);
+  expect(dragRect([20, 60, 32, 72], "move", -50, 1000, [600, 800])).toEqual([0, 788, 12, 800]);
+  const page = mount("form");
+  await act(async () => {});
+  const box = host.querySelector<HTMLInputElement>("input[data-field]");
+  act(() => box?.focus());
+  const se = host.querySelector("[data-fgrip=se]") as Element;
+  fire(se, "pointerdown", 32, 72);
+  fire(se, "pointermove", 52, 82);
+  fire(se, "pointerup", 52, 82, 0);
+  const mv = host.querySelector("[data-fgrip=move]") as Element;
+  fire(mv, "pointerdown", 40, 60);
+  fire(mv, "pointermove", 50, 70);
+  fire(mv, "pointerup", 50, 70, 0);
+  expect(placed).toEqual([[9, [20, 60, 52, 82]], [9, [30, 70, 42, 82]]]);
+  act(() => box?.blur());
+  expect(host.querySelector("[data-fgrip]")).toBeNull();
+  // Klick ohne Ziehen → Checkbox 5 × 5 mm
+  fire(page, "pointerdown", 100, 100);
+  fire(page, "pointerup", 100, 100, 0);
+  const form = host.querySelector("form") as HTMLFormElement;
+  (form.querySelector("[name=kind]") as HTMLSelectElement).value = "check";
+  (form.querySelector("[name=name]") as HTMLInputElement).value = "K";
+  act(() => form.requestSubmit());
+  expect(newFields.map((f) => f.rect.map((v) => Math.round(v * 10) / 10))).toEqual([[100, 100, 114.2, 114.2]]);
 });
 
 test("Links: einfacher Klick öffnet nichts, Strg+Klick meldet die Adresse (Annotation und Textfeld)", async () => {

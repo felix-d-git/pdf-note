@@ -98,7 +98,8 @@ const DE: Chapter[] = [
   ] },
   { id: "forms", icon: ClipboardPen, title: "Formulare", lines: [
     "Vorhandene Formularfelder direkt ausfüllen; Strg+S speichert auch aus dem Feld.",
-    [ClipboardPen, "Formular-Werkzeug (O): Rechteck aufziehen → neues Feld (Text, Kontrollkästchen, Auswahlliste)."],
+    [ClipboardPen, "Formular-Werkzeug (O): Rechteck aufziehen → neues Feld (Text, Kontrollkästchen, Auswahlliste). Einfacher Klick legt das Feld in Standardgröße an (Textfeld 60 × 8 mm, Kontrollkästchen 5 × 5 mm)."],
+    "Feld anklicken → Rahmen mit 8 Griffen: an Ecke/Kante ziehen ändert die Größe, Vier-Pfeil daneben verschiebt, Papierkorb (oder Entf bei Kästchen/Listen) löscht. Jeder Schritt lässt sich mit Strg+Z zurücknehmen.",
   ] },
   { id: "save", icon: FileOutput, title: "Speichern und Speichern unter", lines: [
     [Save, "Speichern (Strg+S) schreibt in dieselbe PDF; verschlüsselte PDFs bleiben verschlüsselt."],
@@ -206,7 +207,8 @@ const EN: Chapter[] = [
   ] },
   { id: "forms", icon: ClipboardPen, title: "Forms", lines: [
     "Fill in existing form fields directly; Ctrl+S also saves from inside a field.",
-    [ClipboardPen, "Form tool (O): drag a rectangle → new field (text, check box, drop-down list)."],
+    [ClipboardPen, "Form tool (O): drag a rectangle → new field (text, check box, drop-down list). A single click creates the field at default size (text field 60 × 8 mm, check box 5 × 5 mm)."],
+    "Click a field → frame with 8 handles: drag a corner/edge to resize, the four-way arrow next to it moves, the bin (or Delete on boxes/lists) deletes. Ctrl+Z undoes every step.",
   ] },
   { id: "save", icon: FileOutput, title: "Save and Save as", lines: [
     [Save, "Save (Ctrl+S) writes into the same PDF; encrypted PDFs stay encrypted."],

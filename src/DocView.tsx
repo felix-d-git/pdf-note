@@ -1443,6 +1443,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 onOpenUrl={setOpenUrl}
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
                 onDeleteField={(xref) => void pageOp({ op: "deleteField", page: i, xref }, (its) => its)}
+                onPlaceField={(xref, rect) => void pageOp({ op: "placeField", page: i, xref, rect }, (its) => its)}
                 onCmd={(c, at) => pageCmd(i, c, at)}
                 onSpace={(y, dy) => {
                   setTools(afterShape);
