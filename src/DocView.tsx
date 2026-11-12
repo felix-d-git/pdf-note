@@ -52,7 +52,10 @@ const HISTORY_MAX = 200;
 const EMPTY: Snap = { items: [], rev: 0, sizes: [] };
 /** Stift aktiv = gleiche Farbe + Breite (Leiste speichert Werte, keine Ids) */
 const same = (a: Preset, b: Preset) => a.size === b.size && a.color.every((c, k) => c === b.color[k]);
-const push = (h: History, s: Snap): History => {
+/** Neuer Undo-Schritt; ohne echte Änderung (gleiche Objekte, gleicher Seitenstand) bleibt alles, sonst gälte die PDF als geändert. */
+export const push = (h: History, s: Snap): History => {
+  const cur = h.list[h.at];
+  if (cur && s.rev === cur.rev && s.sizes === cur.sizes && s.items.length === cur.items.length && s.items.every((it, k) => it === cur.items[k])) return h;
   const list = [...h.list.slice(0, h.at + 1), s].slice(-HISTORY_MAX);
   return { list, at: list.length - 1 };
 };
