@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Plus, Trash } from "lucide-react";
 import { ColorPicker } from "./ColorPicker";
 import { T } from "./i18n";
 import { DEFAULT_PENS, type Pen, type Rgb } from "./ink";
 import { QUICK } from "./keys";
 import { movePen } from "./settings";
-import { BTN as btn, Dialog, IconBtn, on } from "./ui";
+import { BTN as btn, Dialog, IconBtn, on, useOutside } from "./ui";
 
 const rgb = (c: Rgb) => `rgb(${c.map((v) => v * 255).join(",")})`;
 const max = (k: Pen["kind"]) => (k === "marker" ? 40 : 20);
@@ -73,12 +73,7 @@ export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
   const drag = useRef<number>(undefined);
   const pop = useRef<HTMLDivElement>(null);
   // Klick daneben schließt ohne Änderung
-  useEffect(() => {
-    if (open === undefined) return;
-    const off = (e: PointerEvent) => !pop.current?.contains(e.target as Node) && setOpen(undefined);
-    document.addEventListener("pointerdown", off, true);
-    return () => document.removeEventListener("pointerdown", off, true);
-  }, [open]);
+  useOutside(open !== undefined, (t) => !!pop.current?.contains(t), () => setOpen(undefined));
   const edit = (i: number, next: Pen | null) => {
     const old = pens[i];
     if (!old) return;

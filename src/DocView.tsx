@@ -15,7 +15,7 @@ import {
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
-import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast, useOutside } from "./ui";
 import { T, tip } from "./i18n";
 import { BAR_TOOLS, comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
 import { LOCK_EVENT, lockedLayers, setLayerLocked } from "./layers";
@@ -167,12 +167,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [optsFor, setOptsFor] = useState<Tool>();
   const optsPop = useRef<HTMLDivElement>(null);
   // Klick daneben schließt
-  useEffect(() => {
-    if (!optsFor) return;
-    const off = (e: PointerEvent) => !optsPop.current?.contains(e.target as Node) && setOptsFor(undefined);
-    document.addEventListener("pointerdown", off, true);
-    return () => document.removeEventListener("pointerdown", off, true);
-  }, [optsFor]);
+  useOutside(!!optsFor, (t) => !!optsPop.current?.contains(t), () => setOptsFor(undefined));
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
@@ -444,16 +439,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if ((tool !== "lasso" && penTool !== "lasso") || !Number.isInteger(i)) return;
     void mdOf(i).then((md) => md !== null && setMdEdit((m) => m ?? { page: i, source: md, insert: false, orig: md }));
   };
+  useOutside(!!tmenu, (t) => !!t.closest("[data-tmenu]"), () => setTmenu(undefined));
   useEffect(() => {
     if (!tmenu) return;
-    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-tmenu]")) && setTmenu(undefined));
     const key = (e: KeyboardEvent) => void (e.key === "Escape" && setTmenu(undefined));
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", key);
-    };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
   }, [tmenu]);
   const movePage = (from: number, to: number) => void pageOp({ op: "move", from, to }, (its) => afterMove(its, from, to));
 

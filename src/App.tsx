@@ -17,7 +17,7 @@ import {
   activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, pickDoc, setDirty, show, toggleSplit, toPane, viewActive, type Pane, type Tab,
 } from "./tabs";
 import { Tour, tourSeen } from "./tour";
-import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast, useOutside } from "./ui";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Sitzung einmal je Programmstart wiederherstellen (StrictMode führt Effekte doppelt aus); Öffnen wartet darauf */
@@ -39,6 +39,8 @@ export default function App() {
   const [ratio, setRatio] = useState(0.5);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
+  const settingsPop = useRef<HTMLDivElement>(null);
+  useOutside(showSettings, (t) => !!settingsPop.current?.contains(t), () => setShowSettings(false));
   const [showRecent, setShowRecent] = useState(false);
   const [recent, setRecentState] = useState(loadRecent);
   const setRecent = (f: (r: Recent) => Recent) => setRecentState((r) => {
@@ -463,7 +465,7 @@ export default function App() {
           </div>
         )}
         {showSettings && (
-          <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
+          <div ref={settingsPop} className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
             <div className="flex items-center justify-between gap-2">
               {T.view}
               <div className="flex gap-1" role="radiogroup" aria-label={T.view}>

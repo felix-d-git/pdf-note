@@ -1,5 +1,5 @@
 import { Check, X, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from "react";
 import { T, tip } from "./i18n";
 
 export const BTN = "inline-flex items-center gap-1.5 rounded-xs p-1.5 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
@@ -34,13 +34,42 @@ export function IconBtn({ icon: I, label, keys, text, className = BTN, children,
   );
 }
 
+/**
+ * Offenes Popover: ein Tipp außerhalb von `inside` schließt es nur – der Tipp (samt folgendem Klick)
+ * erreicht nichts darunter, auch nicht den Auslöser; erneuter Tipp auf den Auslöser schließt also.
+ */
+export function useOutside(open: boolean, inside: (t: Element) => boolean, close: () => void) {
+  const cb = useRef({ inside, close });
+  useEffect(() => void (cb.current = { inside, close }));
+  useEffect(() => {
+    if (!open) return;
+    const swallow = (e: Event) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    const down = (e: PointerEvent) => {
+      if (e.target instanceof Element && cb.current.inside(e.target)) return;
+      swallow(e);
+      cb.current.close();
+      addEventListener("click", swallow, { capture: true, once: true });
+      // kein Klick gefolgt (gezogen): Sperre nach dem Loslassen lösen
+      addEventListener("pointerup", () => setTimeout(() => removeEventListener("click", swallow, true)), { capture: true, once: true });
+    };
+    addEventListener("pointerdown", down, true);
+    return () => removeEventListener("pointerdown", down, true);
+  }, [open]);
+}
+
 /** Aufklappmenü hinter einem Symbol; Klick auf einen Eintrag mit `data-close` schließt es. */
 export function Menu({ icon: I, label, keys, panel = "min-w-44 p-1", children }: { icon: LucideIcon; label: string; keys?: string; panel?: string; children: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  useOutside(open, (t) => !!ref.current?.contains(t), () => ref.current?.removeAttribute("open"));
   return (
     <details
       ref={ref}
       className="relative"
+      onToggle={(e) => setOpen(e.currentTarget.open)}
       onClick={(e) => (e.target as HTMLElement).closest("[data-close]") && ref.current?.removeAttribute("open")}
     >
       <summary className={BTN + " list-none cursor-pointer"} title={tip(label, keys)} aria-label={label}>

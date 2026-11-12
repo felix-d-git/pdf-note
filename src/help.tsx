@@ -43,6 +43,7 @@ const DE: Chapter[] = [
     "Klicken oder Rahmen ziehen wählt aus; Umschalt fügt hinzu (Ebene 1: Umschalt+Ziehen zieht den Rahmen auch über Text; mehrere Absätze/Bilder verschieben sich zusammen). Griffe ändern Größe, der runde Griff dreht.",
     [Copy, "Über der Auswahl erscheint die Mini-Leiste (Kopieren, Ausschneiden, Löschen, Stil …)."],
     "Rechtsklick, Menütaste oder Umschalt+F10 öffnet das Kontextmenü (Einfügen, Textfeld hier, Bild hier, nach vorn/hinten).",
+    "Menüs, Einstellungen, Werkzeug-Optionen und Hilfe: ein Tipp daneben schließt sie nur, ohne dort etwas auszulösen; erneuter Tipp auf den Auslöser schließt ebenfalls.",
     "Pfeiltasten schieben die Auswahl um 1 pt, mit Umschalt um 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Platz einfügen", lines: [
@@ -150,6 +151,7 @@ const EN: Chapter[] = [
     "Click or drag a frame to select; Shift adds (layer 1: Shift+drag draws the frame over text too; several paragraphs/images move together). Handles resize, the round handle rotates.",
     [Copy, "The mini bar appears above the selection (copy, cut, delete, style …)."],
     "Right-click, the menu key or Shift+F10 opens the context menu (paste, text box here, image here, forward/backward).",
+    "Menus, settings, tool options and help: a tap outside only closes them without triggering anything there; tapping the trigger again closes them too.",
     "Arrow keys move the selection by 1 pt, with Shift by 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Insert space", lines: [
@@ -290,6 +292,7 @@ export function Help({ onClose, onTour }: { onClose: () => void; onTour: () => v
       aria-modal
       aria-label={T.help}
       className="fixed inset-0 z-40 flex bg-black/30 p-6 outline-none"
+      onPointerDown={(e) => e.target === e.currentTarget && onClose()}
       onKeyDown={(e) => {
         // Tasten erreichen die Fenster- und Dokument-Kürzel nicht
         e.stopPropagation();
