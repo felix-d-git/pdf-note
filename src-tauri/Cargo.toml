@@ -1,6 +1,6 @@
 [package]
 name = "pdf-note"
-version = "1.3.0"
+version = "1.4.0"
 description = "Lokaler PDF-Editor, offline"
 authors = ["felix-d-git"]
 license = "AGPL-3.0-only"
