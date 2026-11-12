@@ -1,5 +1,5 @@
 import { Check, X, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from "react";
 import { T, tip } from "./i18n";
 
 export const BTN = "inline-flex items-center gap-1.5 rounded-xs p-1.5 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
@@ -21,7 +21,7 @@ export function Toast({ msg, onClose, className = "absolute" }: { msg?: string; 
   );
 }
 
-type Props = ButtonHTMLAttributes<HTMLButtonElement> & { icon: LucideIcon; label: string; keys?: string; text?: boolean };
+type Props = ButtonHTMLAttributes<HTMLButtonElement> & { icon: LucideIcon | ComponentType<{ size?: number; "aria-hidden"?: boolean }>; label: string; keys?: string; text?: boolean };
 
 /** Symbol-Knopf: Tooltip „Name (Taste)", aria-label = Name; `text` zeigt den Namen zusätzlich (Menüs, Dialoge). */
 export function IconBtn({ icon: I, label, keys, text, className = BTN, children, ...p }: Props) {

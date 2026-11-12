@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Highlighter, Pen as PenIcon, Plus, Trash } from "lucide-react";
+import { Plus, Trash } from "lucide-react";
 import { ColorPicker } from "./ColorPicker";
 import { T } from "./i18n";
 import { DEFAULT_PENS, type Pen, type Rgb } from "./ink";
@@ -10,18 +10,47 @@ import { BTN as btn, Dialog, IconBtn, on } from "./ui";
 const rgb = (c: Rgb) => `rgb(${c.map((v) => v * 255).join(",")})`;
 const max = (k: Pen["kind"]) => (k === "marker" ? 40 : 20);
 
-/** Farbe + Breite mit Probestrich; jede Änderung wirkt sofort */
+/** Stift: schmaler Schaft mit spitzer Mine. Schaft in Leistenfarbe, nur die Mine in `--tip` (Stiftfarbe). */
+function PenGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" aria-hidden>
+      <g transform="rotate(45 12 12)">
+        <path d="M9.5 15V4a2.5 2.5 0 0 1 5 0v11" />
+        <path d="M9.5 15h5L12 22z" fill="var(--tip)" strokeWidth={1.5} />
+      </g>
+    </svg>
+  );
+}
+
+/** Marker: breiter Schaft, Kragen, schräge Keilspitze in `--tip`. */
+function MarkerGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" aria-hidden>
+      <g transform="rotate(45 12 12)">
+        <path d="M7 11V3h10v8zM7 11l2 4h6l2-4" />
+        <path d="M9 15h6v3l-6 3z" fill="var(--tip)" strokeWidth={1.5} />
+      </g>
+    </svg>
+  );
+}
+
+/** Farbe + Breite mit Probestrich. Übernommen wird nur per Klick (Farbfeld) bzw. Loslassen (Regler, Farbfläche); Hover ändert nichts. */
 function PenForm({ pen, onChange }: { pen: Pen; onChange: (p: Pen) => void }) {
+  const [size, setSize] = useState(pen.size);
+  const commit = (e: { currentTarget: HTMLInputElement }) => {
+    const v = Number(e.currentTarget.value);
+    if (v !== pen.size) onChange({ ...pen, size: v });
+  };
   return (
     <>
-      <ColorPicker value={pen.color} onPreview={(c) => c && onChange({ ...pen, color: c })} onCommit={(c) => c && onChange({ ...pen, color: c })} />
+      <ColorPicker value={pen.color} onPreview={() => {}} onCommit={(c) => c && onChange({ ...pen, color: c })} />
       <label className="flex flex-col gap-1 text-sm text-ink-2">
-        {T.size} <span className="font-mono text-xs text-ink">{pen.size.toFixed(1)}</span>
-        <input type="range" aria-label={T.size} className="accent-accent" min={0.5} max={max(pen.kind)} step={0.1} value={pen.size}
-          onChange={(e) => onChange({ ...pen, size: Number(e.target.value) })} />
+        {T.size} <span className="font-mono text-xs text-ink">{size.toFixed(1)}</span>
+        <input type="range" aria-label={T.size} className="accent-accent" min={0.5} max={max(pen.kind)} step={0.1} value={size}
+          onChange={(e) => setSize(Number(e.target.value))} onPointerUp={commit} onKeyUp={commit} />
       </label>
       <svg width="100%" height="44" viewBox="0 0 200 44" aria-hidden className="rounded-xs bg-white">
-        <path d="M10 30 C 50 6, 90 40, 130 18 S 180 14, 190 22" fill="none" stroke={rgb(pen.color)} strokeWidth={pen.size} strokeLinecap="round"
+        <path d="M10 30 C 50 6, 90 40, 130 18 S 180 14, 190 22" fill="none" stroke={rgb(pen.color)} strokeWidth={size} strokeLinecap="round"
           opacity={pen.kind === "marker" ? 0.4 : 1} />
       </svg>
     </>
@@ -29,7 +58,8 @@ function PenForm({ pen, onChange }: { pen: Pen; onChange: (p: Pen) => void }) {
 }
 
 /**
- * Leiste nur aus Stiften (Spitze) und Markern (Balken): Klick wählt, Rechtsklick öffnet Farbe/Breite/Entfernen,
+ * Leiste nur aus Stiften und Markern (eigene Form, Spitze in Stiftfarbe): Klick wählt, Rechtsklick öffnet Farbe/Breite/Entfernen
+ * (Wahl per Klick übernimmt und schließt),
  * „+“ legt einen neuen an, Ziehen ordnet um. `act` = aktiv für Maus bzw. Stift (Rahmen bzw. Punkt bei `auto`).
  */
 export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
@@ -40,7 +70,7 @@ export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
   const [add, setAdd] = useState<Pen>();
   const drag = useRef<number>(undefined);
   const pop = useRef<HTMLDivElement>(null);
-  // Klick daneben schließt (Änderungen sind schon übernommen)
+  // Klick daneben schließt ohne Änderung
   useEffect(() => {
     if (open === undefined) return;
     const off = (e: PointerEvent) => !pop.current?.contains(e.target as Node) && setOpen(undefined);
@@ -62,7 +92,7 @@ export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
         return (
           <IconBtn
             key={i}
-            icon={p.kind === "pen" ? PenIcon : Highlighter}
+            icon={p.kind === "pen" ? PenGlyph : MarkerGlyph}
             label={q?.[2] ?? (p.kind === "pen" ? T.pen : T.marker)}
             keys={q?.[3]}
             draggable
@@ -74,7 +104,7 @@ export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
               drag.current = undefined;
             }}
             className={`${btn} relative${auto ? (act(p, "mouse") ? " ring-1 ring-inset ring-accent text-ink" : "") : on(act(p, "mouse"))}`}
-            style={{ color: rgb(p.color) }}
+            style={{ "--tip": rgb(p.color) } as React.CSSProperties}
             onClick={(e) => onPick(p, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -88,7 +118,7 @@ export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
       <IconBtn icon={Plus} label={T.penAdd} className={`${btn} px-1`} onClick={() => setAdd({ kind: "pen", color: [0.07, 0.07, 0.07], size: 2.2 })} />
       {open !== undefined && pens[open] && (
         <div ref={pop} role="dialog" aria-label={T.style} className="absolute left-0 top-full z-30 mt-1 flex w-60 flex-col gap-2 rounded-sm border border-line bg-surface p-3 shadow-raised">
-          <PenForm pen={pens[open]} onChange={(n) => edit(open, n)} />
+          <PenForm pen={pens[open]} onChange={(n) => { edit(open, n); setOpen(undefined); }} />
           <IconBtn icon={Trash} label={T.penRemove} text onClick={() => edit(open, null)} />
         </div>
       )}
@@ -104,7 +134,7 @@ export function PenBar({ pens, auto, act, onPick, onEdit, onPens }: {
                 onClick={() => setAdd({ ...add, kind: k, size: DEFAULT_PENS.find((p) => p.kind === k)?.size ?? add.size })}>{k === "pen" ? T.pen : T.marker}</button>
             ))}
           </div>
-          <PenForm pen={add} onChange={setAdd} />
+          <PenForm key={add.kind} pen={add} onChange={setAdd} />
         </Dialog>
       )}
     </span>
