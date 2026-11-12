@@ -943,6 +943,8 @@ pub enum PageOp {
     NewField { page: i32, field: crate::form::NewField },
     /// Formularfeld löschen
     DeleteField { page: i32, xref: i32 },
+    /// Formularfeld verschieben/skalieren
+    PlaceField { page: i32, xref: i32, rect: [f32; 4] },
     /// Markdown-Seite einfügen (`insert`) oder neu setzen
     Markdown {
         page: i32,
@@ -1086,7 +1088,8 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
         PageOp::DeleteField { page, xref } if idx_ok(*page) => crate::form::delete(doc, *page, *xref).map(|_| OpResult::default()),
-        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } | PageOp::Space { .. } | PageOp::Redact { .. } => Err("ungültige Seite".into()),
+        PageOp::PlaceField { page, xref, rect } if idx_ok(*page) => crate::form::place(doc, *page, *xref, *rect).map(|_| OpResult::default()),
+        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::PlaceField { .. } | PageOp::Unlink { .. } | PageOp::Space { .. } | PageOp::Redact { .. } => Err("ungültige Seite".into()),
     }
 }
 
