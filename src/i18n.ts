@@ -1,7 +1,7 @@
 /** Oberflächentexte DE/EN; Sprache = Windows-Sprache (WebView2 `navigator.language`), sonst Englisch. */
 const de = {
   ctrl: "Strg", shift: "Umschalt",
-  newFile: "Neue Notiz-PDF", open: "Öffnen", close: "Schließen", split: "Split View",
+  newFile: "Neue Notiz-PDF", open: "Öffnen", tag: { important: "Wichtig", question: "Frage", task: "Aufgabe" }, tagSet: (t: string) => `Tag „${t}“ setzen`, tags: "Tags", tagFilter: "Nach Tag filtern", noTags: "Keine Tags – Plus-Menü oder Rechtsklick auf die Seite", recent: "Zuletzt geöffnet / Favoriten", fav: "Als Favorit merken", unfav: "Favorit entfernen", close: "Schließen", split: "Split View",
   auto: "Gerät bestimmt Werkzeug", settings: "Einstellungen", sidebar: "Seitenleiste",
   save: "Speichern", saveAs: "Speichern unter …", undo: "Rückgängig", redo: "Wiederholen",
   pen: "Stift", marker: "Textmarker", eraser: "Radierer", lasso: "Auswahl/Text", line: "Linie", arrow: "Pfeil",
@@ -63,7 +63,7 @@ export type Strings = typeof de;
 
 const en: Strings = {
   ctrl: "Ctrl", shift: "Shift",
-  newFile: "New note PDF", open: "Open", close: "Close", split: "Split View",
+  newFile: "New note PDF", open: "Open", tag: { important: "Important", question: "Question", task: "Task" }, tagSet: (t: string) => `Set tag “${t}”`, tags: "Tags", tagFilter: "Filter by tag", noTags: "No tags – Plus menu or right-click on the page", recent: "Recent / favourites", fav: "Add to favourites", unfav: "Remove favourite", close: "Close", split: "Split View",
   auto: "Device picks tool", settings: "Settings", sidebar: "Sidebar",
   save: "Save", saveAs: "Save as …", undo: "Undo", redo: "Redo",
   pen: "Pen", marker: "Highlighter", eraser: "Eraser", lasso: "Select/Text", line: "Line", arrow: "Arrow",

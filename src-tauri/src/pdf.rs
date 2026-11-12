@@ -165,6 +165,15 @@ pub enum Solid {
     Cylinder,
 }
 
+/// Tag eines Textes (Tag-Übersicht); in der PDF eine normale FreeText-Anmerkung mit dem Wort
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Tag {
+    Important,
+    Question,
+    Task,
+}
+
 /// Strichmuster (wie `dashPattern` im Frontend); leer = durchgezogen
 fn dash_pattern(d: Option<Dash>, w: f32) -> Vec<f32> {
     match d {
@@ -226,6 +235,9 @@ pub struct Item {
     /// Rechteck/Ellipse: Füllfarbe (PDF `/IC`); fehlt → keine Füllung
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<[f32; 3]>,
+    /// Text als Tag; fehlt → normaler Text
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<Tag>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -1128,7 +1140,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, planes: None, dash: None, solid: None, fill: None }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, planes: None, dash: None, solid: None, fill: None, tag: None }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -1147,6 +1159,7 @@ mod tests {
             Item { solid: Some(Solid::Cube), dash: Some(Dash::Dash), ..item(Kind::Solid, two.clone()) },
             Item { solid: Some(Solid::Cylinder), ..item(Kind::Solid, two.clone()) },
             Item { size: 14.0, text: "Grüße €".into(), ..item(Kind::Text, vec![[300.0, 400.0, 0.5], [450.0, 430.0, 0.5]]) },
+            Item { size: 14.0, text: "Frage".into(), tag: Some(Tag::Question), ..item(Kind::Text, vec![[300.0, 500.0, 0.5], [360.0, 520.0, 0.5]]) },
         ]
     }
 
@@ -1168,7 +1181,7 @@ mod tests {
         let types: Vec<_> = annotations(&back, 0).unwrap().into_iter().map(|(t, own)| (t, own.is_some())).collect();
         assert_eq!(types, vec![
             (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true),
-            (T::Ink, true), (T::Ink, true), (T::Ink, true), (T::Square, true), (T::Ink, true), (T::Ink, true), (T::FreeText, true),
+            (T::Ink, true), (T::Ink, true), (T::Ink, true), (T::Square, true), (T::Ink, true), (T::Ink, true), (T::FreeText, true), (T::FreeText, true),
         ]);
         let taken = take_own(&back, 0..1).unwrap();
         assert_eq!(taken, items, "Objekte gehen beim Zurücklesen nicht verloren");

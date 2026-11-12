@@ -40,6 +40,9 @@ test("Treffer je Objektart", () => {
   expect(hitTest(text, 30, 20, 0)).toBe(true);
   expect(hitTest(text, 70, 20, 0)).toBe(false);
   expect(hitTest(it("ink", [[5, 5]]), 6, 6, 1)).toBe(true);
+  // Tag bleibt nach Speichern + Neu-Öffnen erhalten
+  expect(back({ ...text, tag: "task" }).tag).toBe("task");
+  expect(back(text).tag).toBeUndefined();
 });
 
 test("Punkt im Lasso", () => {

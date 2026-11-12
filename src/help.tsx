@@ -1,7 +1,7 @@
 import {
   ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FilePenLine, FileOutput, FilePlus, Files, Flame,
   FolderOpen, Grid3x3, Hand, History, ImagePlus, Keyboard, Layers, Lock, MousePointer2, NotebookPen, Palette, PenTool, Redo2, RotateCw,
-  Save, Scale, ScanText, Search, Signature, SquareX, Type, Undo2, Wrench, X, type LucideIcon,
+  Save, Scale, ScanText, Search, Signature, SquareX, Star, Tags, Type, Undo2, Wrench, X, type LucideIcon,
 } from "lucide-react";
 import { resourceDir } from "@tauri-apps/api/path";
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +19,7 @@ const DE: Chapter[] = [
     "Alles, was du schreibst, zeichnest und einfügst, steht in der PDF selbst – keine Zusatzdateien, keine Cloud, kein Netzwerk.",
     "Andere PDF-Programme zeigen deine Notizen ebenfalls; PDF Note öffnet sie wieder bearbeitbar.",
     [FolderOpen, "Öffnen (oder PDF ins Fenster ziehen); jede PDF bekommt einen Tab."],
+    [Star, "Zuletzt geöffnet (Uhr-Symbol neben „Öffnen“ und im leeren Fenster): die letzten 10 Dateien, Favoriten per Stern oben angeheftet. Gespeichert in den Einstellungen dieses Geräts; Dateien, die nicht mehr da sind, werden ausgeblendet."],
     [NotebookPen, "Neue Notiz-PDF: legt eine leere A4-Seite an."],
   ] },
   { id: "layers", icon: Layers, title: "Ebenen 1/2/3", lines: [
@@ -53,6 +54,10 @@ const DE: Chapter[] = [
   { id: "sign", icon: Signature, title: "Unterschrift/Initialen", lines: [
     [Signature, "Unterschrift bzw. Initialen (Plus-Menü): beim ersten Mal ins Feld zeichnen und speichern – sie bleibt in den Einstellungen dieses Geräts (keine Datei neben der PDF). Danach auf die Seite klicken: sie wird dort als Bild eingefügt und lässt sich wie jedes Objekt verschieben und mit den Griffen vergrößern/verkleinern."],
     "„Unterschrift/Initialen zeichnen …“ im Plus-Menü ersetzt die gespeicherte; leer speichern löscht sie.",
+  ] },
+  { id: "tags", icon: Tags, title: "Tags", lines: [
+    [Tags, "Tag „Wichtig“, „Frage“ oder „Aufgabe“ setzen (Plus-Menü oder Rechtsklick auf die Seite): farbiges Wort an der Stelle, Text danach frei änderbar. Gespeichert in der PDF, andere Programme zeigen das Wort."],
+    "Tag-Übersicht: Seitenleiste, Reiter „Tags“ – nach Seite sortiert, oben nach Tag filtern, Klick springt zur Stelle und wählt den Tag aus.",
   ] },
   { id: "images", icon: ImagePlus, title: "Bilder", lines: [
     [ImagePlus, "Bild einfügen (Taste I), aus der Zwischenablage (Strg+V) oder per Ziehen aus dem Explorer an die Drop-Stelle."],
@@ -121,6 +126,7 @@ const EN: Chapter[] = [
     "Everything you write, draw and insert is stored in the PDF itself – no extra files, no cloud, no network.",
     "Other PDF programs show your notes too; PDF Note opens them editable again.",
     [FolderOpen, "Open (or drop a PDF onto the window); each PDF gets a tab."],
+    [Star, "Recent files (clock icon next to “Open” and in the empty window): the last 10 files, favourites pinned on top with the star. Stored in this device's settings; files that no longer exist are hidden."],
     [NotebookPen, "New note PDF: creates a blank A4 page."],
   ] },
   { id: "layers", icon: Layers, title: "Layers 1/2/3", lines: [
@@ -155,6 +161,10 @@ const EN: Chapter[] = [
   { id: "sign", icon: Signature, title: "Signature/initials", lines: [
     [Signature, "Signature or initials (plus menu): the first time, draw into the box and save – it is kept in this device's settings (no file next to the PDF). Then click on the page: it is inserted there as an image and can be moved and resized with the handles like any object."],
     "“Draw signature/initials …” in the plus menu replaces the stored one; saving it empty deletes it.",
+  ] },
+  { id: "tags", icon: Tags, title: "Tags", lines: [
+    [Tags, "Set the tag “Important”, “Question” or “Task” (plus menu or right-click on the page): a coloured word at that spot, its text can be edited afterwards. Stored in the PDF, other programs show the word."],
+    "Tag overview: sidebar, “Tags” tab – sorted by page, filter by tag at the top, a click jumps to the spot and selects the tag.",
   ] },
   { id: "images", icon: ImagePlus, title: "Images", lines: [
     [ImagePlus, "Insert image (key I), paste from the clipboard (Ctrl+V) or drop it from Explorer at the drop point."],

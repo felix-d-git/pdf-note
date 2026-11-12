@@ -4,9 +4,9 @@ import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
-  constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts,
+  constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, TAGS, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts, type Tag,
 } from "./ink";
-import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, SquareX, Trash, Type, X } from "lucide-react";
+import { BetweenHorizontalStart, Check, CircleAlert, CircleHelp, ListTodo, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, SquareX, Trash, Type, X, type LucideIcon } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
@@ -216,7 +216,8 @@ export interface PageProps {
 export interface ParaMove { i: number[]; dx: number; dy: number; del?: boolean }
 export interface OrigEdit { index: number; matrix?: number[] }
 /** Aktionen aus Mini-Leiste/Rechtsklick-Menü, die DocView ausführt; `notes` = auf Ebene 3 wechseln (Textfeld hier auf Ebene 1) */
-export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "redact" | "notes";
+export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "redact" | "notes" | Tag;
+export const TAG_ICON: Record<Tag, LucideIcon> = { important: CircleAlert, question: CircleHelp, task: ListTodo };
 
 /** Griffleiste oben (verschieben, Klick wählt als Objekt) + Breitengriff rechts; Attributwert = Id/Absatz */
 const grips = (grip: string, width: string, id: number) => (
@@ -1221,6 +1222,7 @@ export function PageView(p: PageProps) {
             <IconBtn icon={ImagePlus} label={T.imageHere} role="menuitem" className={ICON} onClick={cmd("image", [menu.x, menu.y])} />
             <IconBtn icon={BetweenHorizontalStart} label={T.space} role="menuitem" className={ICON} onClick={cmd("space")} />
             <IconBtn icon={SquareX} label={T.redact} role="menuitem" className={ICON} onClick={cmd("redact")} />
+            {TAGS.map((t) => <IconBtn key={t} icon={TAG_ICON[t]} label={T.tagSet(T.tag[t])} role="menuitem" className={ICON} onClick={cmd(t, [menu.x, menu.y])} />)}
           </>}
         </div>
       )}

@@ -45,7 +45,14 @@ export interface Item {
   solid?: Solid;
   /** Rechteck/Ellipse: Füllfarbe (Deckkraft = `opacity`, wie `/CA` in der PDF); fehlt → keine Füllung */
   fill?: Rgb;
+  /** Text als Tag (Tag-Übersicht); `text` = Bezeichnung, damit andere Viewer das Wort sehen */
+  tag?: Tag;
 }
+
+/** Tags mit fester Farbe (rot/blau/grün) */
+export const TAGS = ["important", "question", "task"] as const;
+export type Tag = (typeof TAGS)[number];
+export const TAG_COLOR: Record<Tag, Rgb> = { important: [0.86, 0.15, 0.15], question: [0.15, 0.39, 0.92], task: [0.09, 0.64, 0.29] };
 
 /** Ebene 1 = PDF-Inhalt (keine eigenen Objekte), 2 = Elemente, 3 = Notizen */
 export type Layer = 1 | 2 | 3;
@@ -79,6 +86,7 @@ export const ItemData = z.object({
   dash: z.enum(["dash", "dot"]).optional(),
   solid: z.enum(SOLIDS).optional(),
   fill: z.tuple([num, num, num]).optional(),
+  tag: z.enum(TAGS).optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
@@ -88,8 +96,9 @@ export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   ...(d.fill ? { fill: d.fill } : {}), ...opt(d),
 });
 /** Optionale Aufzählungs-Felder, nur wenn gesetzt */
-const opt = (d: Pick<Item, "planes" | "dash" | "solid">) => ({
+const opt = (d: Pick<Item, "planes" | "dash" | "solid" | "tag">) => ({
   ...(d.planes ? { planes: d.planes } : {}), ...(d.dash ? { dash: d.dash } : {}), ...(d.solid ? { solid: d.solid } : {}),
+  ...(d.tag ? { tag: d.tag } : {}),
 });
 
 /** Strichart: Farbe + Grundbreite (Formen nutzen den aktiven Stift) */
