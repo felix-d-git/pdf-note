@@ -10,7 +10,7 @@ import { BetweenHorizontalStart, Check, CircleAlert, CircleHelp, ListTodo, Clipb
 import { ColorButton } from "./ColorPicker";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
-import { IconBtn } from "./ui";
+import { IconBtn, useOutside } from "./ui";
 import { targetLayer } from "./layers";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
@@ -393,16 +393,12 @@ export function PageView(p: PageProps) {
   const cropIt = items.find((it) => it.id === crop && it.kind === "image");
   // Rechtsklick-Menü an Stelle (pt); `on` = worauf geklickt wurde
   const [menu, setMenu] = useState<{ x: number; y: number; on: "sel" | "empty" | "text" }>();
+  useOutside(!!menu, (t) => !!t.closest("[data-menu]"), () => setMenu(undefined));
   useEffect(() => {
     if (!menu) return;
-    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-menu]")) && setMenu(undefined));
     const key = (e: KeyboardEvent) => void (e.key === "Escape" && setMenu(undefined));
-    addEventListener("pointerdown", close, true);
     addEventListener("keydown", key);
-    return () => {
-      removeEventListener("pointerdown", close, true);
-      removeEventListener("keydown", key);
-    };
+    return () => removeEventListener("keydown", key);
   }, [menu]);
   // Zahnrad der Mini-Leiste: zu, sobald sich die Auswahl ändert
   const [gear, setGear] = useState(false);
