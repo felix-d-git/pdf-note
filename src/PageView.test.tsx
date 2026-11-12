@@ -325,11 +325,18 @@ test("gesperrte Ebene: Auswahl und Radierer greifen nicht, Marker darüber (Eben
   expect(lastAdd.map((i) => i.kind)).toEqual(["marker"]);
   run("pen", 2, lock);
   lastAdd.length = 0;
+  const pp = host.querySelector("[data-page]") as HTMLDivElement;
+  fire(pp, "pointerdown", 300, 300);
+  fire(pp, "pointermove", 330, 305);
+  fire(pp, "pointerup", 330, 305, 0);
+  expect(lastAdd.map((i) => i.kind)).toEqual(["ink"]); // Stift-Strich geht nach Ebene 3, Sperre von 2 greift nicht
+  run("rect", 2, lock);
+  shapes.length = 0;
   const p2 = host.querySelector("[data-page]") as HTMLDivElement;
   fire(p2, "pointerdown", 300, 300);
   fire(p2, "pointermove", 330, 305);
   fire(p2, "pointerup", 330, 305, 0);
-  expect(lastAdd).toHaveLength(0); // Zeichnen in gesperrte Ebene 2 blockiert
+  expect(shapes).toHaveLength(0); // Form in gesperrte Ebene 2 blockiert
 });
 
 test("selbst angelegte Checkbox lässt sich löschen: Entf auf dem Feld und Mini-Leiste", async () => {

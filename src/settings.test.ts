@@ -124,7 +124,7 @@ test("§3 Gerätewechsel: Stift → letzter Stift/Marker statt Radierer/Auswahl/
   expect(deviceTools({ ...t, pen: "lasso" }, "pen", "pen").pen).toBe("pen");
   expect(deviceTools({ ...t, pen: "rect", locked: true }, "pen", "pen")).toMatchObject({ pen: "pen", locked: false });
   expect(deviceTools({ ...t, pen: "marker" }, "pen", "pen").pen).toBe("marker");
-  expect(deviceTools({ ...t, mouse: "eraser" }, "mouse", "pen")).toMatchObject({ mouse: "lasso", pen: "pen" });
+  expect(deviceTools({ ...t, mouse: "eraser" }, "mouse", "pen")).toMatchObject({ mouse: "eraser", pen: "pen" }); // Maus behält ihr Werkzeug bis zum Wechsel
 });
 
 test("§3 zuletzt genutzter Stift überlebt den Neustart", () => {

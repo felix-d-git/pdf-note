@@ -161,9 +161,9 @@ export const movePen = (list: Pen[], from: number, to: number) => {
 /** n-ter Stift bzw. Marker (Q W E / Umschalt+Q W E) */
 export const nthPen = (list: Pen[], kind: Pen["kind"], n: number) => list.filter((p) => p.kind === kind)[n];
 
-/** Gerätewechsel (bei `auto`): Stift → zuletzt genutzter Stift/Marker (nie Radierer/Auswahl/Form), Maus → Auswahl. */
+/** Gerätewechsel (bei `auto`): Stift → zuletzt genutzter Stift/Marker (nie Radierer/Auswahl/Form); Maus behält ihr Werkzeug (Standard Auswahl, gezeichnet nur nach Wahl bis zum Wechsel). */
 export const deviceTools = (s: Tools, dev: "pen" | "mouse", last: Pen["kind"]): Tools =>
-  dev === "pen" ? { ...s, pen: s.pen === "pen" || s.pen === "marker" ? s.pen : last, locked: false } : { ...s, mouse: "lasso", locked: false };
+  dev === "pen" ? { ...s, pen: s.pen === "pen" || s.pen === "marker" ? s.pen : last, locked: false } : s;
 
 /** Nach dem Zeichnen einer Form: zurück zum vorherigen Werkzeug, außer mit Schloss. */
 export const afterShape = (s: Tools): Tools => s.locked ? s : {

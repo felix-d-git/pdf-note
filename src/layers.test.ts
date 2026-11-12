@@ -30,5 +30,7 @@ test("Zielebene je Werkzeug: Marker/Formen liegen über gesperrter Ebene 1", () 
   expect(targetLayer("marker", 1)).toBe(3);
   expect(targetLayer("rect", 1)).toBe(2);
   expect(targetLayer("rect", 3)).toBe(3);
+  expect(targetLayer("pen", 2)).toBe(3);
+  expect(targetLayer("marker", 2)).toBe(3);
   expect(targetLayer("space", 2)).toBeNull();
 });
