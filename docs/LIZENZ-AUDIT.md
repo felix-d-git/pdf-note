@@ -41,7 +41,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 | Quelle | Umfang |
 |---|---|
 | `src-tauri/Cargo.lock` | 219 Crates (Windows/MSVC, normal; davon 139 gelinkt, 80 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
-| `package-lock.json` | 301 Einträge (Stand 2026-11-12, Anhang D), davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
+| `package-lock.json` | 309 Einträge (Stand 2026-11-12, Anhang D), davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
 | `spikes/*/Cargo.lock` | Wegwerf-Spikes, nicht ausgeliefert |
 
 **Vendor / inline / native Bibliotheken**
@@ -573,21 +573,21 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `wicked-good-xpath` | 1.3.0 | MIT | nein |
 | `zod` | 4.6.7 | MIT | ja |
 
-### D. npm-Entwicklungsabhängigkeiten (nicht ausgeliefert) – 281 Einträge
+### D. npm-Entwicklungsabhängigkeiten (nicht ausgeliefert) – 289 Einträge
 
-Stand 2026-11-12 (nach TypeScript 7, jsdom 31). Zahlen ändern sich mit jedem Dependabot-Update; neu erzeugen mit
+Stand 2026-11-12 (nach R3: Minor-Updates, minimatch-Override 11). Zahlen ändern sich mit jedem Dependabot-Update; neu erzeugen mit
 `node -e 'const e=Object.entries(require("./package-lock.json").packages).filter(([k,v])=>k&&v.dev),c={};for(const[,v]of e)c[v.license]=(c[v.license]||0)+1;console.log(e.length,c)'`.
 Lizenz-Schranke für neue Lizenzen: `NPM_OK` in `scripts/licenses.mjs`.
 
 | Lizenz | Anzahl |
 |---|---|
-| MIT | 191 |
+| MIT | 197 |
 | Apache-2.0 | 39 |
 | Apache-2.0 OR MIT | 12 |
 | ISC | 12 |
 | MPL-2.0 | 12 |
 | BSD-2-Clause | 8 |
 | BSD-3-Clause | 3 |
-| BlueOak-1.0.0 | 2 |
+| BlueOak-1.0.0 | 3 |
 | CC-BY-4.0 | 1 |
-| 0BSD | 1 |
+| 0BSD | 2 |
