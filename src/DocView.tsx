@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, File, FileCode,
+  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
@@ -180,6 +180,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
   const first = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const thumbNav = useRef<HTMLElement>(null);
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
   /** markierte Miniaturen; gelten nur für den Seitenstand `v` (Seitenoperation/Undo hebt die Markierung auf) */
   const [thumbSel, setThumbSel] = useState<{ v: number; sel: number[]; anchor: number }>({ v: -1, sel: [], anchor: 0 });
@@ -398,6 +399,11 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const clickThumb = (i: number) => (e: React.MouseEvent) => {
     setThumbSel({ v: version, sel: thumbPick(tsel, thumbSel.anchor, i, e.ctrlKey || e.metaKey, e.shiftKey), anchor: e.shiftKey ? thumbSel.anchor : i });
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) goTo(i);
+  };
+  /** Leiste läuft nicht mit (User 12.11.2026): erst dieser Knopf holt die Miniatur der aktuellen Seite ins Bild und markiert sie. */
+  const showCurrent = () => {
+    setThumbSel({ v: version, sel: [current], anchor: current });
+    thumbNav.current?.querySelector(`[data-thumb="${current}"]`)?.scrollIntoView({ block: "center" });
   };
   const mdOf = (index: number) => invoke("page_markdown", { id, index }).then((r) => z.string().nullable().parse(r), () => null);
   const menuThumb = (i: number) => (e: React.MouseEvent) => {
@@ -1189,9 +1195,14 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
             </ul>
           </div>
         ) : (
+        <div className="flex min-h-0 w-40 flex-1 flex-col">
+        <div className="flex gap-0.5 border-b border-line p-1">
+          <IconBtn icon={Crosshair} label={T.toCurrent} onClick={showCurrent} />
+        </div>
         <nav
+          ref={thumbNav}
           data-scroll
-          className="flex w-40 min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
+          className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
           onPointerMove={navMove}
           onPointerUp={navUp}
           onPointerCancel={navUp}
@@ -1227,6 +1238,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
             </div>
           )}
         </nav>
+        </div>
         )}
         </div>}
         {openUrl && (

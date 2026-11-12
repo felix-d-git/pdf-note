@@ -64,7 +64,7 @@ const DE: Chapter[] = [
     [Columns2, "Split View: zwei Hälften mit eigener Tab-Leiste über alle offenen PDFs – Tab-Klick wählt nur für diese Hälfte, dieselbe PDF geht in beiden; + öffnet in dieser Hälfte. Trennlinie verschieben."],
   ] },
   { id: "pages", icon: Files, title: "Seiten", lines: [
-    [Files, "Seitenleiste: Vorschaubilder ziehen sortiert um, Rechtsklick löscht oder dreht."],
+    [Files, "Seitenleiste: Klick springt zur Seite, Vorschaubilder ziehen sortiert um, Rechtsklick löscht oder dreht. Die Leiste scrollt unabhängig; Knopf „Zur aktuellen Seite“ holt die Miniatur der sichtbaren Seite ins Bild."],
     [FilePlus, "Seite einfügen: leer, liniert, kariert, Punkte, Markdown-Seite, PDF anhängen, Bild als Seite."],
     [Bookmark, "Lesezeichen: auf die aktuelle Seite setzen, ein-/ausrücken, umbenennen."],
   ] },
@@ -155,7 +155,7 @@ const EN: Chapter[] = [
     [Columns2, "Split View: two PDFs side by side. Drag a tab onto a half; with Ctrl the same PDF in both halves. Move the divider."],
   ] },
   { id: "pages", icon: Files, title: "Pages", lines: [
-    [Files, "Sidebar: drag thumbnails to reorder, click (Ctrl/Shift for several), right-click: delete, cut, copy, paste (also into other tabs), duplicate, rotate; Del deletes."],
+    [Files, "Sidebar: drag thumbnails to reorder, click (Ctrl/Shift for several), right-click: delete, cut, copy, paste (also into other tabs), duplicate, rotate; Del deletes. The sidebar scrolls on its own; „Go to current page“ brings the visible page's thumbnail into view."],
     [FilePlus, "Insert page: blank, lined, squared, dots, Markdown page, append PDF, image as page."],
     [Bookmark, "Bookmarks: set on the current page, indent/outdent, rename."],
   ] },
