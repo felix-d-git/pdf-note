@@ -41,7 +41,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 | Quelle | Umfang |
 |---|---|
 | `src-tauri/Cargo.lock` | 219 Crates (Windows/MSVC, normal; davon 139 gelinkt, 80 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
-| `package-lock.json` | 302 Einträge, davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
+| `package-lock.json` | 301 Einträge (Stand 2026-11-12, Anhang D), davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
 | `spikes/*/Cargo.lock` | Wegwerf-Spikes, nicht ausgeliefert |
 
 **Vendor / inline / native Bibliotheken**
@@ -70,7 +70,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 |---|---|
 | Permissiv | ~210 Rust-Crates (MIT, Apache-2.0, MIT OR Apache-2.0, BSD-2/3, ISC, Zlib, 0BSD, CC0/MIT-0, Unlicense OR MIT, Unicode-3.0); npm: React, React DOM, scheduler, Zod, perfect-freehand, lucide-react, @tauri-apps/*, mathjax-full; C: HarfBuzz, lcms2, libjpeg (IJG), OpenJPEG, zlib, brotli, gumbo, MuJS, zxing-cpp, zint, Tesseract, Leptonica; Tesseract-Modelle; NSIS-Installer-Stub (zlib/libpng-Lizenz) |
 | Weak Copyleft | MPL-2.0: `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors`, `option-ext` (keine „Incompatible With Secondary Licenses“-Markierung → mit AGPL kombinierbar) |
-| Strong Copyleft | AGPL-3.0: MuPDF, `mupdf`, `mupdf-sys`, jbig2dec, extract; FreeType (gewählt: GPL-2.0-or-later) |
+| Strong Copyleft | AGPL-3.0-or-later: MuPDF-C-Code, jbig2dec; AGPL-3.0 (Altkennung bzw. nur Lizenztext): `mupdf`, `mupdf-sys`, extract; FreeType (gewählt: GPL-2.0-or-later) |
 | Schrift | OFL-1.1: Manrope, IBM Plex Mono, URW-Base-14 (wahlweise AGPL-3.0 mit PS/PDF-Font-Ausnahme) |
 | Proprietär / binär ohne Quelle | `WebView2LoaderStatic.lib` (Microsoft, BSD-artige Lizenz, kein Quellcode) – R3 (akzeptiert) |
 | Ohne Lizenz / UNKLAR | – (App-Icon Y9 geklärt) |
@@ -111,9 +111,9 @@ Vollständige Listen: Anhang A–D.
 | Komponente | Version | Lizenz | Typ | Pfad / Herkunft | Status / Aktion |
 |---|---|---|---|---|---|
 | PDF Note (eigener Code) | 1.2.0 | AGPL-3.0-only | Strong Copyleft | `src/`, `src-tauri/src/` | 🟡 Copyright-Vermerk (Y6, PR), Legal Notices in UI (Y5) |
-| MuPDF (C) | über mupdf-sys 0.8.0 | AGPL-3.0 | Strong Copyleft | crates.io `mupdf-sys` | 🔴 Quellangebot R2 |
+| MuPDF (C) | über mupdf-sys 0.8.0 | AGPL-3.0-or-later | Strong Copyleft | crates.io `mupdf-sys` | 🔴 Quellangebot R2 |
 | `mupdf` (Rust) | 0.8.0 | AGPL-3.0 | Strong Copyleft | `vendor/mupdf/` (gepatcht) | 🟡 Änderungsvermerk (Y8, PR) |
-| jbig2dec | MuPDF-thirdparty | AGPL-3.0 | Strong Copyleft | mupdf-sys | 🟢 mit R2 |
+| jbig2dec | MuPDF-thirdparty | AGPL-3.0-or-later | Strong Copyleft | mupdf-sys | 🟢 mit R2 |
 | extract | MuPDF-thirdparty | AGPL-3.0 | Strong Copyleft | mupdf-sys (MSVC) | 🟡 Y1 Verlinkung prüfen |
 | FreeType | MuPDF-thirdparty | FTL OR GPL-2.0-or-later → **GPL-2.0+** | Strong Copyleft | mupdf-sys | 🟡 Y2 (PR) |
 | HarfBuzz | MuPDF-thirdparty | MIT („Old MIT“) | Permissiv | mupdf-sys | 🔴 R1 |
@@ -284,8 +284,11 @@ Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 in
 | N2–N4 | 🟡 YELLOW | `@tauri-apps/plugin-dialog` nur mit `LICENSE.spdx`; Rechteinhaber von `@tauri-apps/api` und MathJax fehlen in `npm-bundle.md`. | in NOTICES ergänzt |
 | RY1–RY5 | 🟡 YELLOW | cargo-about gibt für `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys` nur Mustertexte ohne Rechteinhaber aus; `regex-syntax` `LICENSE-UNICODE` fehlt (über ICU4X gedeckt). | offen: `clarify`-Einträge in `src-tauri/about.toml` |
 | G4 | 🟡 YELLOW | Dependabot-PRs werden automatisch gemergt; für npm gibt es keine Lizenz-Positivliste (Rust: `about.toml`). | erledigt: `NPM_OK` in `scripts/licenses.mjs` stoppt den Build bei neuer Lizenz |
+| L1 | 🟡 YELLOW | (#24) Auto-Release zählte nur den Tag hoch; `package.json`-Version und damit `licenses/SOURCE.md` im Installer verwiesen auf den vorigen Quellstand. | behoben: kein Auto-Release (`standard-a-exclude.txt`: `no-release`), `scripts/release-source.sh` bricht ab, wenn Tag ≠ Version in `package.json`/`Cargo.toml`/`Cargo.lock` |
+| L2 | 🟢 GREEN | (#25) Kennungen präzisiert, am Original `mupdf-sys` 0.8.0 geprüft: MuPDF-C-Code 222/234 `.c`-Dateien „version 3 … or (at your option) any later version“ (Rest: Fremdteile aus M3) → `AGPL-3.0-or-later`; jbig2dec `thirdparty/jbig2dec/LICENSE` ebenso „or later“ → `AGPL-3.0-or-later` (nicht -only wie im Issue vermutet); extract nur mit AGPL-Text ohne Versionsvermerk → `AGPL-3.0`; Crates `mupdf`/`mupdf-sys` tragen die Altkennung `AGPL-3.0`. Mit dem Projekt (`AGPL-3.0-only`) kompatibel; für proprietären Vertrieb ändert sich nichts. | erledigt |
+| L3 | 🟢 GREEN | (#26) npm-Zahlen nach TypeScript 7 (+22 Apache-2.0, dev) und jsdom 31 veraltet. | aktualisiert, Erzeugungsbefehl in Anhang D |
 | G6 | 🟡 YELLOW | `bundle.copyright` fehlt in `tauri.conf.json`; NSIS verlangt „Annehmen“ der AGPL (§9: nicht nötig); Spike-`Cargo.toml` ohne `license`. | erledigt bis auf NSIS-Annehmen (bleibt, harmlos) |
-| G | 🟢 GREEN | Lizenzfeld = Lizenzdatei bei allen Paketen; gelinktes Copyleft nur MuPDF/jbig2dec (AGPL) und `option-ext` (MPL-2.0); `cssparser`/`selectors`/`dtoa-short` nur Compile-Zeit. `cargo about`/`cargo deny` ok für Windows und macOS. `vendor/mupdf` = Crate + `PATCH.md`. tessdata bitidentisch mit tessdata_fast 4.1.0. Eigener Code ohne Fremdcode; `LICENSE` unverändert; einziger menschlicher Rechteinhaber felix-d-git. | – |
+| G | 🟢 GREEN | Lizenzfeld = Lizenzdatei bei allen Paketen; gelinktes Copyleft nur MuPDF/jbig2dec (AGPL-3.0-or-later) und `option-ext` (MPL-2.0); `cssparser`/`selectors`/`dtoa-short` nur Compile-Zeit. `cargo about`/`cargo deny` ok für Windows und macOS. `vendor/mupdf` = Crate + `PATCH.md`. tessdata bitidentisch mit tessdata_fast 4.1.0. Eigener Code ohne Fremdcode; `LICENSE` unverändert; einziger menschlicher Rechteinhaber felix-d-git. | – |
 
 **Nach dem Ändern von `.cargo/config.toml`** lokal einmal `cargo clean -p mupdf-sys --release` (der Build-Script von `mupdf-sys` merkt Umgebungsänderungen nicht); im CI erzwingt der neue `prefix-key` von `rust-cache` einen frischen Build.
 
@@ -570,19 +573,21 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `wicked-good-xpath` | 1.3.0 | MIT | nein |
 | `zod` | 4.6.7 | MIT | ja |
 
-### D. npm-Entwicklungsabhängigkeiten (nicht ausgeliefert) – 282 Einträge
+### D. npm-Entwicklungsabhängigkeiten (nicht ausgeliefert) – 281 Einträge
+
+Stand 2026-11-12 (nach TypeScript 7, jsdom 31). Zahlen ändern sich mit jedem Dependabot-Update; neu erzeugen mit
+`node -e 'const e=Object.entries(require("./package-lock.json").packages).filter(([k,v])=>k&&v.dev),c={};for(const[,v]of e)c[v.license]=(c[v.license]||0)+1;console.log(e.length,c)'`.
+Lizenz-Schranke für neue Lizenzen: `NPM_OK` in `scripts/licenses.mjs`.
 
 | Lizenz | Anzahl |
 |---|---|
-| MIT | 197 |
-| MPL-2.0 | 24 |
-| Apache-2.0 | 17 |
+| MIT | 191 |
+| Apache-2.0 | 39 |
 | Apache-2.0 OR MIT | 12 |
 | ISC | 12 |
+| MPL-2.0 | 12 |
 | BSD-2-Clause | 8 |
-| BlueOak-1.0.0 | 4 |
 | BSD-3-Clause | 3 |
-| MIT-0 | 2 |
+| BlueOak-1.0.0 | 2 |
 | CC-BY-4.0 | 1 |
-| CC0-1.0 | 1 |
 | 0BSD | 1 |
