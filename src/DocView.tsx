@@ -6,7 +6,7 @@ import {
   ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Box, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
-  Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+  Rows3, Save, ScanText, Slash, Square, SquareX, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
@@ -726,6 +726,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       case "back": return order(c === "front");
       case "image": return void insertImageFile(where);
       case "space": return chooseTool("space");
+      case "redact": return chooseTool("redact");
       case "notes": return switchLayer(3);
     }
   }
@@ -1056,6 +1057,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           <MenuItem icon={Type} label={T.textBox} onClick={() => insertText("Text")} />
           {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
           <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
+          <MenuItem icon={SquareX} label={T.redact} onClick={() => chooseTool("redact")} />
         </Menu>
         {sep}
         {/* nur Stifte + Marker: Rahmen = Maus, Punkt = Stift */}
@@ -1398,6 +1400,19 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                     const moved = makeSpace(its, i, y, dy);
                     return its.map((it) => moved.find((n) => n.id === it.id) ?? it);
                   });
+                }}
+                onRedact={async (r) => {
+                  setTools(afterShape);
+                  if (!r) return;
+                  // unumkehrbar nach dem Speichern → immer nachfragen
+                  if (await message(T.redactAsk, { title: "PDF Note", kind: "warning", buttons: { ok: T.redactOk, cancel: T.cancel } }) !== T.redactOk) return;
+                  // PDF-Inhalt entfernt das Backend; eigene Objekte im Bereich würden sonst darüber stehen bleiben
+                  const [x0, y0, x1, y1] = r;
+                  void pageOp({ op: "redact", page: i, rect: r }, (its) => its.filter((it) => {
+                    if (it.page !== i) return true;
+                    const b = box(it);
+                    return b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1;
+                  }));
                 }}
               />
             ))}

@@ -1,7 +1,7 @@
 import {
   ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FilePenLine, FileOutput, FilePlus, Files, Flame,
   FolderOpen, Grid3x3, Hand, History, ImagePlus, Keyboard, Layers, Lock, MousePointer2, NotebookPen, Palette, PenTool, Redo2, RotateCw,
-  Save, Scale, ScanText, Search, Type, Undo2, Wrench, X, type LucideIcon,
+  Save, Scale, ScanText, Search, SquareX, Type, Undo2, Wrench, X, type LucideIcon,
 } from "lucide-react";
 import { resourceDir } from "@tauri-apps/api/path";
 import { useEffect, useRef, useState } from "react";
@@ -46,6 +46,9 @@ const DE: Chapter[] = [
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Platz einfügen", lines: [
     [BetweenHorizontalStart, "Platz einfügen: an der gewünschten Stelle ansetzen und nach unten ziehen – die Seite wird dort zerschnitten und um eine weiße Fläche verlängert; PDF-Inhalt, Anmerkungen und eigene Objekte darunter rücken mit. Mit dem Stift geht das auch ohne Werkzeugwechsel: am linken oder rechten Seitenrand ansetzen. Nach oben ziehen bricht ab. Danach ist Ebene 1 dieser Seite ein Block (einzelne Absätze nicht mehr verschiebbar)."],
+  ] },
+  { id: "redact", icon: SquareX, title: "Schwärzen", lines: [
+    [SquareX, "Schwärzen (Plus-Menü oder Rechtsklick): Rechteck über den Bereich ziehen und bestätigen – Text, Bilder und Grafik darunter werden echt aus der PDF entfernt (nicht nur überdeckt) und durch einen schwarzen Kasten ersetzt; eigene Objekte im Bereich werden gelöscht. Strg+Z geht nur bis zum Speichern, danach ist der Inhalt endgültig weg."],
   ] },
   { id: "images", icon: ImagePlus, title: "Bilder", lines: [
     [ImagePlus, "Bild einfügen (Taste I), aus der Zwischenablage (Strg+V) oder per Ziehen aus dem Explorer an die Drop-Stelle."],
@@ -142,6 +145,9 @@ const EN: Chapter[] = [
   { id: "space", icon: BetweenHorizontalStart, title: "Insert space", lines: [
     [BetweenHorizontalStart, "Insert space: start at the desired spot and drag down – the page is cut there and extended by a white area; PDF content, annotations and your own objects below move along. With the pen this works without switching tools: start at the left or right page edge. Dragging up cancels. Afterwards layer 1 of that page is one block (single paragraphs can no longer be moved)."],
   ] },
+  { id: "redact", icon: SquareX, title: "Redact", lines: [
+    [SquareX, "Redact (plus menu or right-click): drag a rectangle over the area and confirm – text, images and graphics underneath are really removed from the PDF (not just covered) and replaced by a black box; your own objects in the area are deleted. Ctrl+Z works only until you save, afterwards the content is gone for good."],
+  ] },
   { id: "images", icon: ImagePlus, title: "Images", lines: [
     [ImagePlus, "Insert image (key I), paste from the clipboard (Ctrl+V) or drop it from Explorer at the drop point."],
     [Crop, "Crop: double-click the image, drag the edges; ✓ or Enter applies, Esc cancels. Cropping is permanent."],
@@ -229,7 +235,7 @@ const about = (dir: string | undefined): Chapter => T === STRINGS.de
 /** Zeilen der Werkzeug-Tabelle (aus derselben Liste wie die Werkzeugleiste) */
 const toolRows = (): [LucideIcon, string, string][] => [
   ...TOOL_LABELS.map(([, icon, name, key]): [LucideIcon, string, string] => [icon, name, keyText(key)]),
-  [BetweenHorizontalStart, T.space, ""], [ImagePlus, T.image, keyText(KEYS.image)],
+  [BetweenHorizontalStart, T.space, ""], [SquareX, T.redact, ""], [ImagePlus, T.image, keyText(KEYS.image)],
 ];
 /** Kürzel-Tabelle: jeder Eintrag aus `KEYS` */
 const keyRows = (): [string, string][] => Object.entries(KEYS).map(([k, v]) => [T[k as keyof typeof KEYS], keyText(v)]);

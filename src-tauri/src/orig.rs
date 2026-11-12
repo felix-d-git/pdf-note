@@ -439,6 +439,24 @@ pub(crate) fn space(doc: &mut PdfDocument, index: i32, y: f32, dy: f32) -> Resul
     Ok(())
 }
 
+/// Bereich `rect` (App-Koordinaten) schwärzen: MuPDF-Redaction entfernt Text, Bildpixel und ganz überdeckte Vektorgrafik
+/// darunter aus dem Seiteninhalt und zeichnet ein schwarzes Rechteck. Beim Speichern (Vollschreiben, garbage) bleibt
+/// vom alten Inhalt nichts in der Datei; rückgängig nur per Undo vor dem Speichern.
+pub(crate) fn redact(doc: &mut PdfDocument, index: i32, rect: [f32; 4]) -> Result<(), String> {
+    let err = |e: Error| e.to_string();
+    let [x0, y0, x1, y1] = rect;
+    if !(rect.iter().all(|v| v.is_finite()) && x1 > x0 && y1 > y0) {
+        return Err("ungültiger Bereich".into());
+    }
+    let mut page = doc.load_pdf_page(index).map_err(err)?;
+    // App-Koordinaten = Seitenkoordinaten (nach Drehung) minus Ursprung der Seitenbox
+    let b = page.bounds().map_err(err)?;
+    page.add_redact_annotation(Rect::new(x0 + b.x0, y0 + b.y0, x1 + b.x0, y1 + b.y0)).map_err(err)?;
+    let opts = mupdf::pdf::PdfRedactOptions { black_boxes: true, ..mupdf::pdf::PdfRedactOptions::pymupdf_default() };
+    page.apply_redactions_with_options(opts).map_err(err)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,5 +583,21 @@ mod tests {
         assert_eq!(crate::pdf::page_sizes(&d).unwrap()[0], [200.0, 150.0]);
         let lines = crate::text::chars(&d, 0).unwrap();
         assert_eq!(lines.iter().filter(|l| l.text.contains("unten")).count(), 1);
+    }
+
+    #[test]
+    fn schwaerzen_entfernt_text() {
+        // „geheim“ bei App-y ≈ 20, „offen“ bei App-y ≈ 80
+        let mut d = doc_with(b"BT /Helv 10 Tf 10 78 Td (geheim) Tj ET BT /Helv 10 Tf 10 18 Td (offen) Tj ET");
+        assert!(redact(&mut d, 0, [5.0, 5.0, 5.0, 30.0]).is_err());
+        redact(&mut d, 0, [5.0, 5.0, 150.0, 30.0]).unwrap();
+        // gespeichert und neu geöffnet: Text weg, Rest bleibt, Bytes ohne das Wort
+        let bytes = crate::pdf::to_bytes(&d).unwrap();
+        let d2 = PdfDocument::from_bytes(&bytes).unwrap();
+        let t = page_text(&d2);
+        assert!(!t.contains("geheim") && t.contains("offen"), "{t}");
+        let raw = contents(&d2.load_pdf_page(0).unwrap()).unwrap();
+        assert!(!raw.windows(6).any(|w| w == b"geheim"), "{}", String::from_utf8_lossy(&raw));
+        assert!(d2.load_pdf_page(0).unwrap().annotations().next().is_none(), "Redact-Annotation bleibt");
     }
 }
