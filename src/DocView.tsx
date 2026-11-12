@@ -11,14 +11,14 @@ import {
 import { z } from "zod";
 import {
   afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  isPara, layerOf, moveItem, newId, PARA0, constrain, SHAPE_OPTS, shapeProps, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset, type ShapeOpts,
+  isPara, layerOf, makeSpace, moveItem, newId, PARA0, constrain, SHAPE_OPTS, shapeProps, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset, type ShapeOpts,
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
 import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast } from "./ui";
 import { T, tip } from "./i18n";
 import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
-import { lockedLayers, setLayerLocked } from "./layers";
+import { LOCK_EVENT, lockedLayers, setLayerLocked } from "./layers";
 import { OPT_TOOLS, ShapeOptions } from "./ShapeOptions";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
@@ -139,9 +139,15 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [locks, setLocks] = useState(() => lockedLayers(path));
   const toggleLock = (l: Layer) => {
     setLayerLocked(path, l, !locks.includes(l));
-    setLocks(lockedLayers(path));
     if (l === layer) clearSel();
   };
+  // Split mit derselben PDF: Sperre der anderen Hälfte sofort übernehmen (auch eigene Änderung kommt hierüber)
+  useEffect(() => {
+    const sync = () => setLocks(lockedLayers(path));
+    sync();
+    window.addEventListener(LOCK_EVENT, sync);
+    return () => window.removeEventListener(LOCK_EVENT, sync);
+  }, [path]);
   /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
   const [pal, setPal] = useState(loadPalettes);
@@ -1384,9 +1390,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
                 onDeleteField={(xref) => void pageOp({ op: "deleteField", page: i, xref }, (its) => its)}
                 onCmd={(c, at) => pageCmd(i, c, at)}
-                onSpace={(moved) => {
-                  if (moved.length) edit((all) => all.map((it) => moved.find((n) => n.id === it.id) ?? it));
+                onSpace={(y, dy) => {
                   setTools(afterShape);
+                  // Seite wird im Backend zerschnitten und verlängert; eigene Objekte darunter rücken mit (ein Undo-Schritt)
+                  if (dy >= 1) void pageOp({ op: "space", page: i, y, dy }, (its) => {
+                    const moved = makeSpace(its, i, y, dy);
+                    return its.map((it) => moved.find((n) => n.id === it.id) ?? it);
+                  });
                 }}
               />
             ))}

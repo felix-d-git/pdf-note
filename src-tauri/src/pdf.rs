@@ -12,7 +12,7 @@ const OWN_KEY: &str = "PDFNote";
 /// Text jeder Seite – Prüfgröße für Speichern → Neu-Öffnen.
 pub fn page_texts(doc: &Document) -> Result<Vec<String>, Error> {
     doc.pages()?
-        .map(|p| p?.to_text_page(TextPageFlags::empty())?.to_text())
+        .map(|p| p?.to_text_page(TextPageFlags::CLIP)?.to_text())
         .collect()
 }
 
@@ -112,7 +112,7 @@ pub fn is_scan(doc: &PdfDocument, index: i32) -> Result<bool, Error> {
     let area = |r: Rect| (r.x1 - r.x0).max(0.0) * (r.y1 - r.y0).max(0.0);
     let full = area(page.bounds()?);
     let mut images = 0;
-    for b in page.to_text_page(TextPageFlags::PRESERVE_IMAGES)?.blocks() {
+    for b in page.to_text_page(TextPageFlags::PRESERVE_IMAGES | TextPageFlags::CLIP)?.blocks() {
         match b.r#type() {
             TextBlockType::Image if area(b.bounds()) >= 0.9 * full => images += 1,
             // unsichtbarer Text (OCR, `3 Tr`) macht aus dem Scan keine Textseite
@@ -883,6 +883,8 @@ pub enum PageOp {
         #[serde(default)]
         delete: bool,
     },
+    /// Seite bei App-Höhe `y` zerschneiden und um `dy` weiße Fläche verlängern
+    Space { page: i32, y: f32, dy: f32 },
     /// Original-Textabsatz ändern/verschieben
     Text { page: i32, edit: crate::text::TextEdit },
     /// Formularfeld ausfüllen
@@ -1026,13 +1028,14 @@ pub fn page_op(doc: &mut PdfDocument, op: &PageOp) -> Result<OpResult, String> {
         }
         PageOp::Outline { marks } => crate::notebook::set_outline(doc, marks).map(|_| OpResult::default()),
         PageOp::Link { from, rect, to, x, y } => crate::nav::link(doc, *from, *rect, *to, *x, *y).map(|_| OpResult::default()),
+        PageOp::Space { page, y, dy } if idx_ok(*page) => crate::orig::space(doc, *page, *y, *dy).map(|_| OpResult::default()),
         PageOp::Ocr => Ok(OpResult { warning: crate::ocr::ocr(doc)?, ..Default::default() }),
         PageOp::Unlink { page, n } if idx_ok(*page) => crate::nav::unlink(doc, *page, *n).map(|_| OpResult::default()),
         PageOp::Text { page, edit } => Ok(OpResult { warning: crate::text::edit(doc, *page, edit)?, ..Default::default() }),
         PageOp::Field { page, xref, value } if idx_ok(*page) => crate::form::set(doc, *page, *xref, value).map(|_| OpResult::default()),
         PageOp::NewField { page, field } if idx_ok(*page) => crate::form::create(doc, *page, field).map(|_| OpResult::default()),
         PageOp::DeleteField { page, xref } if idx_ok(*page) => crate::form::delete(doc, *page, *xref).map(|_| OpResult::default()),
-        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } => Err("ungültige Seite".into()),
+        PageOp::Field { .. } | PageOp::NewField { .. } | PageOp::DeleteField { .. } | PageOp::Unlink { .. } | PageOp::Space { .. } => Err("ungültige Seite".into()),
     }
 }
 

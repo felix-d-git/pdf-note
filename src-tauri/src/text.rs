@@ -69,7 +69,7 @@ fn lines(page: &PdfPage) -> Result<Vec<Line>, Error> {
     let b = page.bounds()?;
     let (ox, oy) = (b.x0, b.y0);
     let mut out = Vec::new();
-    for block in page.to_text_page(TextPageFlags::empty())?.blocks() {
+    for block in page.to_text_page(TextPageFlags::CLIP)?.blocks() {
         for l in block.lines() {
             let chars: Vec<_> = l.chars().collect();
             let (Some(first), Some(last)) = (chars.first(), chars.last()) else { continue };
@@ -127,7 +127,7 @@ pub fn chars(doc: &PdfDocument, index: i32) -> Result<Vec<CharLine>, String> {
     let page = doc.load_page(index).map_err(err)?;
     let b = page.bounds().map_err(err)?;
     let mut out = Vec::new();
-    for block in page.to_text_page(TextPageFlags::empty()).map_err(err)?.blocks() {
+    for block in page.to_text_page(TextPageFlags::CLIP).map_err(err)?.blocks() {
         for l in block.lines() {
             let mut line = CharLine { text: String::new(), boxes: Vec::new() };
             for c in l.chars() {
@@ -332,7 +332,7 @@ fn decode_font(font: &PdfObject) -> Result<HashMap<char, (Vec<u8>, f32)>, Error>
     let mut hits: Vec<Vec<char>> = vec![Vec::new(); codes.len()];
     let page = d.load_page(0)?;
     let is_type1 = subtype != b"TrueType" && !two;
-    for b in page.to_text_page(TextPageFlags::empty())?.blocks() {
+    for b in page.to_text_page(TextPageFlags::CLIP)?.blocks() {
         for l in b.lines() {
             for c in l.chars() {
                 let o = c.origin();
