@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { flushSync } from "react-dom";
 import {
   ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
@@ -23,7 +24,7 @@ import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
 import { afterShape, deviceTools, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
 import { PenBar } from "./PenBar";
-import { scrollAfterZoom, wheelFactor } from "./zoom";
+import { anchorShift, wheelFactor } from "./zoom";
 import { formulas, type Formula } from "./math";
 import { MdEditor } from "./MdEditor";
 import { setView } from "./render";
@@ -455,13 +456,28 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     setError(undefined);
   }
 
+  /**
+   * Seitenpunkt unter (x, y) (Bildschirm-px, beim aktuellen Zoom) merken. Rückgabe zoomt auf `nz` (synchron gerendert) und
+   * scrollt so, dass der Punkt unter (x2, y2) steht — Zoom am Zeiger, gerechnet über die Seite (Abstände skalieren nicht).
+   */
+  function zoomAnchor(x: number, y: number) {
+    const pages = [...scroller.current?.querySelectorAll<HTMLElement>("[data-page]") ?? []];
+    const pg = pages.find((p) => p.getBoundingClientRect().bottom >= y) ?? pages.at(-1), r = pg?.getBoundingClientRect();
+    const i = pg?.dataset.page, ux = r ? (x - r.left) / zoom : 0, uy = r ? (y - r.top) / zoom : 0;
+    return (nz: number, x2 = x, y2 = y) => {
+      flushSync(() => setZoom(nz));
+      const el = scroller.current, b = el?.querySelector(`[data-page="${i}"]`)?.getBoundingClientRect();
+      if (el && b) el.scrollBy(anchorShift(b.left, ux, nz, x2), anchorShift(b.top, uy, nz, y2));
+    };
+  }
+
+  /** Tasten/Knöpfe: Zoom um die Mitte des sichtbaren Bereichs */
   function applyZoom(z: number) {
     const el = scroller.current;
     const nz = clampZoom(z);
     if (!el || nz === zoom) return;
-    const r = nz / zoom, top = el.scrollTop, left = el.scrollLeft;
-    setZoom(nz);
-    requestAnimationFrame(() => el.scrollTo(left * r, top * r));
+    const b = el.getBoundingClientRect();
+    zoomAnchor(b.left + b.width / 2, b.top + b.height / 2)(nz);
   }
 
   /** Zur Seite springen; mit `y` (pt) die Stelle ins obere Drittel holen. */
@@ -835,7 +851,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   // Strg+Mausrad und Touchpad-Pinch (Wheel + ctrlKey) zoomen um den Zeiger (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche).
   // Vorschau per CSS-Transform; Neu-Rendern (setZoom) erst nach WHEEL_MS Ruhe. Ohne Strg scrollt der Container selbst (deltaX + deltaY).
   const content = useRef<HTMLDivElement>(null);
-  const wz = useRef<{ z0: number; z: number; cx: number; cy: number; px: number; py: number; timer: number }>(null);
+  const wz = useRef<{ z0: number; z: number; cx: number; cy: number; commit: (nz: number) => void; timer: number }>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -844,7 +860,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       e.preventDefault();
       const b = el.getBoundingClientRect();
       const w = wz.current ??= {
-        z0: zoom, z: zoom, px: e.clientX - b.left, py: e.clientY - b.top,
+        z0: zoom, z: zoom, commit: zoomAnchor(e.clientX, e.clientY),
         cx: el.scrollLeft + e.clientX - b.left, cy: el.scrollTop + e.clientY - b.top, timer: 0,
       };
       w.z = clampZoom(w.z * wheelFactor(e.deltaY, e.deltaMode));
@@ -855,11 +871,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       clearTimeout(w.timer);
       w.timer = window.setTimeout(() => {
         wz.current = null;
-        setZoom(w.z);
-        requestAnimationFrame(() => {
-          el.scrollTo(scrollAfterZoom(el.scrollLeft, w.px, w.z / w.z0), scrollAfterZoom(el.scrollTop, w.py, w.z / w.z0));
-          if (content.current) content.current.style.transform = "";
-        });
+        if (content.current) content.current.style.transform = "";
+        w.commit(w.z);
       }, WHEEL_MS);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -869,18 +882,18 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   // Finger: 1 = scrollen, 2 = Pinch-Zoom um den Fingermittelpunkt + verschieben. Stift/Maus zeichnen in PageView.
   // Palm-Rejection: solange der Stift aufliegt (und PALM_MS danach) und bei breiter Auflage zählen Finger nicht.
   const touches = useRef(new Map<number, { x: number; y: number }>());
-  /** Abstand und Zoom beim Aufsetzen, dazu der Inhaltspunkt (CSS-px bei Zoom 1) unter dem Mittelpunkt */
-  const pinch = useRef<{ d: number; z: number; cx: number; cy: number }>(null);
+  /** Abstand und Zoom beim Aufsetzen, dazu der Anker auf den Seitenpunkt unter dem Mittelpunkt */
+  const pinch = useRef<{ d: number; z: number; commit: (nz: number, x: number, y: number) => void }>(null);
   const pen = useRef({ down: false, at: -Infinity });
   const fingers = () => [...touches.current.values()];
   const dist = () => {
     const [a, b] = fingers();
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   };
-  /** Mittelpunkt der zwei Finger relativ zum Scroll-Container */
+  /** Mittelpunkt der zwei Finger (Bildschirm-px) */
   const mid = () => {
-    const [a, b] = fingers(), r = scroller.current?.getBoundingClientRect();
-    return a && b && r ? { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } : { x: 0, y: 0 };
+    const [a, b] = fingers();
+    return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: 0, y: 0 };
   };
   const penEvent = (e: React.PointerEvent) => {
     if (e.pointerType !== "pen") return;
@@ -895,9 +908,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if (e.pointerType !== "touch") return;
     if (pen.current.down || performance.now() - pen.current.at < PALM_MS || e.width > PALM_PX) return;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    const el = scroller.current, m = mid();
-    pinch.current = touches.current.size === 2 && el
-      ? { d: dist(), z: zoom, cx: (el.scrollLeft + m.x) / zoom, cy: (el.scrollTop + m.y) / zoom } : null;
+    const m = mid();
+    pinch.current = touches.current.size === 2 ? { d: dist(), z: zoom, commit: zoomAnchor(m.x, m.y) } : null;
   };
   const touchMove = (e: React.PointerEvent) => {
     const t = touches.current.get(e.pointerId);
@@ -905,11 +917,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const dx = e.clientX - t.x, dy = e.clientY - t.y;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pc = pinch.current, el = scroller.current;
-    if (pc && pc.d > 0 && el) {
-      // ponytail: Seitenränder/Abstände skalieren nicht mit → Punkt unter den Fingern wandert leicht
-      const nz = clampZoom((pc.z * dist()) / pc.d), m = mid();
-      setZoom(nz);
-      requestAnimationFrame(() => el.scrollTo(pc.cx * nz - m.x, pc.cy * nz - m.y));
+    if (pc && pc.d > 0) {
+      const m = mid();
+      pc.commit(clampZoom((pc.z * dist()) / pc.d), m.x, m.y);
     } else if (touches.current.size === 1) el?.scrollBy(-dx, -dy);
   };
   const touchUp = (e: React.PointerEvent) => {
