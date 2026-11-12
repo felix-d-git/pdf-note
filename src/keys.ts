@@ -1,5 +1,5 @@
 import {
-  ArrowUpRight, Axis3d, Circle, ClipboardPen, Eraser, FileText, Highlighter, Link, MousePointer2, Pen, PenLine, Shapes, Slash, Square, type LucideIcon,
+  ArrowUpRight, Axis3d, Box, Circle, ClipboardPen, Eraser, FileText, Highlighter, Link, MousePointer2, Pen, PenLine, Shapes, Slash, Square, type LucideIcon,
 } from "lucide-react";
 import { T, type Strings } from "./i18n";
 import type { Layer } from "./ink";
@@ -12,7 +12,7 @@ import type { Tool } from "./settings";
 export const KEYS = {
   open: "Strg+O", close: "Strg+W", nextTab: "Strg+Tab", prevTab: "Strg+Umschalt+Tab", help: "F1", palette: "Strg+K",
   save: "Strg+S", saveAs: "Strg+Umschalt+S", undo: "Strg+Z", redo: "Strg+Y / Strg+Umschalt+Z",
-  pen: "P", marker: "M", eraser: "D", lasso: "A / T", line: "L", arrow: "F", rect: "R", ellipse: "K", axes: "X", form: "O", link: "G",
+  pen: "P", marker: "M", eraser: "D", lasso: "A / T", line: "L", arrow: "F", rect: "R", ellipse: "K", axes: "X", solid: "B", form: "O", link: "G",
   pen1: "Q", pen2: "W", pen3: "E", mark1: "Umschalt+Q", mark2: "Umschalt+W", mark3: "Umschalt+E",
   image: "I", rotate: "Strg+Umschalt+D", layer1: "1", layer2: "2", layer3: "3",
   selectAll: "Strg+A", copy: "Strg+C", cut: "Strg+X", paste: "Strg+V", del: "Entf / Rücktaste", nudge: "← / → / ↑ / ↓",
@@ -54,7 +54,7 @@ export const keyMap = (list: [string, () => void][]): Record<string, () => void>
 /** Werkzeug, Symbol, Name, Kürzel (Werkzeugleiste + Hilfe) */
 export const TOOL_LABELS: [Tool, LucideIcon, string, string][] = ([
   ["pen", Pen], ["marker", Highlighter], ["eraser", Eraser], ["lasso", MousePointer2], ["line", Slash], ["arrow", ArrowUpRight],
-  ["rect", Square], ["ellipse", Circle], ["axes", Axis3d], ["form", ClipboardPen], ["link", Link],
+  ["rect", Square], ["ellipse", Circle], ["axes", Axis3d], ["solid", Box], ["form", ClipboardPen], ["link", Link],
 ] as const).map(([t, icon]) => [t, icon, T[t], KEYS[t]]);
 
 /** Stift-Kürzel: Art, n-ter Stift dieser Art in `Palettes.pens`, Name, Kürzel */

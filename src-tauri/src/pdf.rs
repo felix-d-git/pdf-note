@@ -138,6 +138,40 @@ pub enum Kind {
     Highlight,
     /// Koordinatensystem im Rechteck der zwei Punkte (`xyz`, `grid`); in der PDF Ink mit eigenem Aussehen
     Axes,
+    /// Körper als Schrägbild (`solid`); in der PDF Ink mit eigenem Aussehen
+    Solid,
+}
+
+/// xyz-Gitter: Ebenen (fehlt → nur y-z-Rückwand wie bis v1.2)
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Planes {
+    Xz,
+    All,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Dash {
+    Dash,
+    Dot,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Solid {
+    Cuboid,
+    Cube,
+    Cylinder,
+}
+
+/// Strichmuster (wie `dashPattern` im Frontend); leer = durchgezogen
+fn dash_pattern(d: Option<Dash>, w: f32) -> Vec<f32> {
+    match d {
+        Some(Dash::Dash) => vec![3.0 * w, 2.0 * w],
+        Some(Dash::Dot) => vec![w, w],
+        None => vec![],
+    }
 }
 
 impl Kind {
@@ -181,6 +215,14 @@ pub struct Item {
     /// Koordinatensystem: Karo-Gitter im Achsenbereich
     #[serde(default, skip_serializing_if = "is_false")]
     pub grid: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planes: Option<Planes>,
+    /// Linie/Pfeil/Rechteck/Ellipse/Körper: Strichart; fehlt → durchgezogen
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<Dash>,
+    /// Körper: Art; fehlt → Quader
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid: Option<Solid>,
     /// Rechteck/Ellipse: Füllfarbe (PDF `/IC`); fehlt → keine Füllung
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<[f32; 3]>,
@@ -223,18 +265,60 @@ pub fn axes_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
     if it.grid {
         // volle Karos bis eine Pfeillänge vor die Spitzen; Obergrenze gegen absichtlich riesige Rechtecke
         let n = |v: f32| ((v / KARO + 1e-4).floor().max(0.0) as usize).min(1000);
-        let (nx, ny) = (n(x1 - len - o[0]), n(o[1] - y0 - len));
-        let (gx, gy) = (o[0] + nx as f32 * KARO, o[1] - ny as f32 * KARO);
-        for k in 1..=nx {
-            let x = o[0] + k as f32 * KARO;
-            grid.push(vec![[x, o[1]], [x, gy]]);
+        // Schrägbild-x: Karo-Diagonale halb verkürzt (Schritt KARO/2 nach links und unten)
+        let s2 = std::f32::consts::SQRT_2;
+        let (nr, nu, nf) = (n(x1 - len - o[0]), n(o[1] - y0 - len), n((s2 * d - len) / (KARO / s2)));
+        let (r, u, f) = ([KARO, 0.0], [0.0, -KARO], [-KARO / 2.0, KARO / 2.0]);
+        let at = |p: [f32; 2], i: usize, q: [f32; 2], j: usize| {
+            [o[0] + i as f32 * p[0] + j as f32 * q[0], o[1] + i as f32 * p[1] + j as f32 * q[1]]
+        };
+        let mut plane = |p: [f32; 2], np: usize, q: [f32; 2], nq: usize| {
+            for k in 1..=np {
+                grid.push(vec![at(p, k, q, 0), at(p, k, q, nq)]);
+            }
+            for k in 1..=nq {
+                grid.push(vec![at(q, k, p, 0), at(q, k, p, np)]);
+            }
+        };
+        let planes = if it.xyz { it.planes } else { None };
+        if planes != Some(Planes::Xz) {
+            plane(r, nr, u, nu); // xy-System, y-z-Rückwand
         }
-        for k in 1..=ny {
-            let y = o[1] - k as f32 * KARO;
-            grid.push(vec![[o[0], y], [gx, y]]);
+        if planes.is_some() {
+            plane(f, nf, u, nu); // x-z
+        }
+        if planes == Some(Planes::All) {
+            plane(f, nf, r, nr); // x-y-Boden
         }
     }
     (axes, grid)
+}
+
+/// Körper als Schrägbild (wie `solidLines` im Frontend): (sichtbare, verdeckte Kanten), je Polylinie.
+pub fn solid_lines(it: &Item) -> (Vec<Vec<[f32; 2]>>, Vec<Vec<[f32; 2]>>) {
+    let (a, b) = (it.points[0], it.points[1]);
+    let (x0, x1, y0, y1) = (a[0].min(b[0]), a[0].max(b[0]), a[1].min(b[1]), a[1].max(b[1]));
+    let (w, h) = (x1 - x0, y1 - y0);
+    if it.solid == Some(Solid::Cylinder) {
+        let pi = std::f32::consts::PI;
+        let (rx, cx) = (w / 2.0, x0 + w / 2.0);
+        let ry = (rx * 0.35).min(h / 4.0);
+        let (top, bot) = (y0 + ry, y1 - ry);
+        let arc = |cy: f32, t0: f32| -> Vec<[f32; 2]> {
+            (0..25).map(|i| {
+                let t = t0 + i as f32 * pi / 24.0;
+                [cx + rx * t.cos(), cy + ry * t.sin()]
+            }).collect()
+        };
+        let ring = [arc(top, 0.0), arc(top, pi)[1..].to_vec()].concat();
+        return (vec![ring, arc(bot, 0.0), vec![[x0, top], [x0, bot]], vec![[x1, top], [x1, bot]]], vec![arc(bot, pi)]);
+    }
+    let (m, q) = (w.min(h), std::f32::consts::SQRT_2 / 4.0);
+    let k = if it.solid == Some(Solid::Cube) { m / (1.0 + q) * q } else { m * 0.25 };
+    let (pa, pb, pc, pd) = ([x0, y1], [x1 - k, y1], [x1 - k, y0 + k], [x0, y0 + k]);
+    let back = |p: [f32; 2]| [p[0] + k, p[1] - k];
+    let (a2, b2, c2, d2) = (back(pa), back(pb), back(pc), back(pd));
+    (vec![vec![pa, pb, pc, pd, pa], vec![pd, d2, c2, b2, pb], vec![pc, c2]], vec![vec![d2, a2, b2], vec![pa, a2]])
 }
 
 /// Gitterlinien dünner als die Achsen
@@ -242,9 +326,9 @@ fn grid_width(w: f32) -> f32 {
     (w * 0.3).max(0.3)
 }
 
-/// Aussehen des Koordinatensystems: MuPDF zeichnet Ink nur in einer Breite → nach `update` eigenes
-/// Erscheinungsbild (Gitter dünn, Achsen in Strichbreite), in PDF-Koordinaten, BBox = Rect.
-fn axes_ap(doc: &mut PdfDocument, page: &PdfPage, annot: &PdfAnnotation, it: &Item) -> Result<(), Error> {
+/// Aussehen von Koordinatensystem/Körper: MuPDF zeichnet Ink nur in einer Breite und einem Muster → nach `update`
+/// eigenes Erscheinungsbild (Gitter dünn, Achsen in Strichbreite; verdeckte Kanten gestrichelt), PDF-Koordinaten, BBox = Rect.
+fn lines_ap(doc: &mut PdfDocument, page: &PdfPage, annot: &PdfAnnotation, it: &Item) -> Result<(), Error> {
     let bad = || Error::InvalidArgument("Annotation ohne Rect".into());
     let b = page.bounds()?;
     let inv = page.ctm()?.invert().ok_or_else(bad)?;
@@ -252,13 +336,21 @@ fn axes_ap(doc: &mut PdfDocument, page: &PdfPage, annot: &PdfAnnotation, it: &It
     let rect = annot.object().get_dict("Rect")?.ok_or_else(bad)?;
     let w = it.width.clamp(0.1, 200.0);
     let [r, g, bl] = it.color.map(|v| v.clamp(0.0, 1.0));
-    let (axes, grid) = axes_lines(it);
-    let mut s = format!("q /H gs {r} {g} {bl} RG 1 J 1 j\n");
-    for (lines, lw) in [(grid, grid_width(w)), (axes, w)] {
+    let groups = if it.kind == Kind::Solid {
+        let (vis, hid) = solid_lines(it);
+        [(vis, w, it.dash), (hid, w, Some(Dash::Dash))]
+    } else {
+        let (axes, grid) = axes_lines(it);
+        [(grid, grid_width(w), None), (axes, w, None)]
+    };
+    let mut s = format!("q /H gs {r} {g} {bl} RG 1 j\n");
+    for (lines, lw, dash) in groups {
         if lines.is_empty() {
             continue;
         }
-        s += &format!("{lw} w\n");
+        let pat: Vec<String> = dash_pattern(dash, w).iter().map(|v| format!("{v}")).collect();
+        // gemustert wie MuPDF: stumpfe Enden, sonst rund
+        s += &format!("{lw} w {} J [{}] 0 d\n", if pat.is_empty() { 1 } else { 0 }, pat.join(" "));
         for l in lines {
             for (i, p) in l.iter().enumerate() {
                 let (x, y) = inv.transform_xy(b.x0 + p[0], b.y0 + p[1]);
@@ -504,9 +596,9 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
             a
         }
         Kind::Rect => page.add_rect_annotation(rect())?,
-        Kind::Axes => {
-            let (axes, grid) = axes_lines(it);
-            page.add_ink_annotation(axes.iter().chain(&grid).map(|l| l.iter().map(|p| pt(&[p[0], p[1], 0.0]))))?
+        Kind::Axes | Kind::Solid => {
+            let (a, c) = if it.kind == Kind::Axes { axes_lines(it) } else { solid_lines(it) };
+            page.add_ink_annotation(a.iter().chain(&c).map(|l| l.iter().map(|p| pt(&[p[0], p[1], 0.0]))))?
         }
         Kind::Ellipse => page.add_circle_annotation(rect())?,
         Kind::Text => {
@@ -543,6 +635,9 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
             if let (Some(f), Kind::Rect | Kind::Ellipse) = (it.fill, it.kind) {
                 annot.set_interior_color(rgb(f))?;
             }
+            if let (Some(_), Kind::Line | Kind::Arrow | Kind::Rect | Kind::Ellipse) = (it.dash, it.kind) {
+                annot.set_border_dash_pattern(&dash_pattern(it.dash, width))?;
+            }
         }
     }
     // Stamp: Erscheinungsbild wird nicht neu erzeugt → Deckkraft fest 1
@@ -560,8 +655,8 @@ fn add_item(doc: &mut PdfDocument, page: &mut PdfPage, it: &Item, groups: &[Opti
     if it.kind == Kind::Image && it.rot != 0.0 {
         rotate_stamp(doc, &annot, it)?;
     }
-    if it.kind == Kind::Axes {
-        axes_ap(doc, page, &annot, it)?;
+    if matches!(it.kind, Kind::Axes | Kind::Solid) {
+        lines_ap(doc, page, &annot, it)?;
     }
     Ok(())
 }
@@ -1027,7 +1122,7 @@ mod tests {
     use mupdf::pdf::PdfAnnotationType as T;
 
     fn item(kind: Kind, points: Vec<[f32; 3]>) -> Item {
-        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, fill: None }
+        Item { page: 0, kind, color: [1.0, 0.0, 0.0], opacity: 1.0, size: 2.0, width: 2.0, simulated: false, points, text: String::new(), image: String::new(), layer: kind.layer(), rot: 0.0, xyz: false, grid: false, planes: None, dash: None, solid: None, fill: None }
     }
 
     fn all_kinds() -> Vec<Item> {
@@ -1041,6 +1136,10 @@ mod tests {
             item(Kind::Ellipse, two.clone()),
             item(Kind::Axes, two.clone()),
             Item { xyz: true, grid: true, ..item(Kind::Axes, vec![[100.0, 500.0, 0.5], [250.0, 650.0, 0.5]]) },
+            Item { xyz: true, grid: true, planes: Some(Planes::All), ..item(Kind::Axes, vec![[100.0, 500.0, 0.5], [250.0, 650.0, 0.5]]) },
+            Item { dash: Some(Dash::Dot), ..item(Kind::Rect, two.clone()) },
+            Item { solid: Some(Solid::Cube), dash: Some(Dash::Dash), ..item(Kind::Solid, two.clone()) },
+            Item { solid: Some(Solid::Cylinder), ..item(Kind::Solid, two.clone()) },
             Item { size: 14.0, text: "Grüße €".into(), ..item(Kind::Text, vec![[300.0, 400.0, 0.5], [450.0, 430.0, 0.5]]) },
         ]
     }
@@ -1063,7 +1162,7 @@ mod tests {
         let types: Vec<_> = annotations(&back, 0).unwrap().into_iter().map(|(t, own)| (t, own.is_some())).collect();
         assert_eq!(types, vec![
             (T::Ink, true), (T::Ink, true), (T::Line, true), (T::Line, true), (T::Square, true), (T::Circle, true),
-            (T::Ink, true), (T::Ink, true), (T::FreeText, true),
+            (T::Ink, true), (T::Ink, true), (T::Ink, true), (T::Square, true), (T::Ink, true), (T::Ink, true), (T::FreeText, true),
         ]);
         let taken = take_own(&back, 0..1).unwrap();
         assert_eq!(taken, items, "Objekte gehen beim Zurücklesen nicht verloren");
@@ -1102,6 +1201,40 @@ mod tests {
         drop(page);
         assert_eq!(take_own(&back, 0..1).unwrap(), mine);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// Strichart: Rechteck mit `/D` + Muster im Aussehen; Körper: verdeckte Kanten gestrichelt, sichtbare durchgezogen.
+    #[test]
+    fn strichart_und_koerper_aussehen() {
+        let mut doc = PdfDocument::new();
+        doc.new_page(Size::A4).unwrap();
+        let two = vec![[100.0, 100.0, 0.5], [200.0, 160.0, 0.5]];
+        let mine = vec![Item { dash: Some(Dash::Dash), ..item(Kind::Rect, two.clone()) }, item(Kind::Solid, two)];
+        let path = tmp("dash");
+        save(&doc, &mine, &path, false, Crypt::Keep).unwrap();
+        let back = open(&path).unwrap();
+        let page = back.load_pdf_page(0).unwrap();
+        let aps: Vec<String> = page.annotations().map(|a| {
+            let n = a.object().get_dict("AP").unwrap().unwrap().get_dict("N").unwrap().unwrap();
+            String::from_utf8_lossy(&n.read_stream().unwrap()).into_owned()
+        }).collect();
+        assert!(aps[0].contains("[6 4]0 d"), "Muster fehlt: {}", aps[0]);
+        assert!(aps[1].contains("1 J [] 0 d") && aps[1].contains("0 J [6 4] 0 d"), "{}", aps[1]);
+        drop(page);
+        assert_eq!(take_own(&back, 0..1).unwrap(), mine);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// /PDFNote bis v1.2: `grid: true` ohne `planes` = y-z-Rückwand; neue Felder fehlen → Standard.
+    #[test]
+    fn altes_gitter_json_lesbar() {
+        let it: Item = serde_json::from_str(r#"{"page":0,"kind":"axes","color":[0,0,0],"opacity":1,"size":2,"width":2,"points":[[100,500,0.5],[250,650,0.5]],"xyz":true,"grid":true}"#).unwrap();
+        assert_eq!((it.planes, it.dash, it.solid), (None, None, None));
+        let yz = axes_lines(&it).1;
+        assert!(!yz.is_empty() && yz.iter().flatten().all(|p| p[0] >= 100.0 + 45.0 - 0.01), "nur Rückwand rechts vom Ursprung");
+        let all = axes_lines(&Item { planes: Some(Planes::All), ..it.clone() }).1;
+        let xz = axes_lines(&Item { planes: Some(Planes::Xz), ..it }).1;
+        assert!(all.len() > xz.len() && xz.len() > 0 && all.len() > yz.len());
     }
 
     /// 3×2-PNG mit Teiltransparenz.

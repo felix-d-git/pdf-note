@@ -3,7 +3,7 @@ import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plu
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
+  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Box, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
   Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
@@ -11,7 +11,7 @@ import {
 import { z } from "zod";
 import {
   afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  isPara, layerOf, moveItem, newId, PARA0, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset,
+  isPara, layerOf, moveItem, newId, PARA0, constrain, SHAPE_OPTS, shapeProps, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset, type ShapeOpts,
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
@@ -19,6 +19,7 @@ import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toas
 import { T, tip } from "./i18n";
 import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
 import { lockedLayers, setLayerLocked } from "./layers";
+import { OPT_TOOLS, ShapeOptions } from "./ShapeOptions";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
 import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
@@ -70,10 +71,10 @@ const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
 const STROKES: readonly Item["kind"][] = ["ink", "marker", "highlight"];
-const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, solid: 2, form: 1 };
 const LAYER_EDGE: Record<Layer, string> = { 1: "var(--ink-3)", 2: "var(--accent-deep)", 3: "var(--accent)" };
 const SHAPES: [Item["kind"], LucideIcon, string][] = [
-  ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes],
+  ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes], ["solid", Box, T.solid],
 ];
 const PAGE_KINDS: [string, LucideIcon, string][] = [["blank", File, T.blank], ["lined", Rows3, T.lined], ["grid", Grid3x3, T.squared], ["dots", Grip, T.dots]];
 
@@ -153,8 +154,18 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const m = (pal.last?.kind === "marker" ? pal.last : undefined) ?? nthPen(pal.pens, "marker", 0) ?? DEFAULT_PRESET;
     return { color: m.color, size: m.size };
   });
-  /** Koordinatensystem: gilt fürs nächste Aufziehen */
-  const [axes, setAxes] = useState({ xyz: false, grid: false });
+  /** Formen-/Koordinatensystem-Optionen: gelten fürs nächste Aufziehen (Sitzungszustand) */
+  const [opts, setOpts] = useState<ShapeOpts>(SHAPE_OPTS);
+  /** Werkzeug, dessen Optionen per Rechtsklick offen sind */
+  const [optsFor, setOptsFor] = useState<Tool>();
+  const optsPop = useRef<HTMLDivElement>(null);
+  // Klick daneben schließt
+  useEffect(() => {
+    if (!optsFor) return;
+    const off = (e: PointerEvent) => !optsPop.current?.contains(e.target as Node) && setOptsFor(undefined);
+    document.addEventListener("pointerdown", off, true);
+    return () => document.removeEventListener("pointerdown", off, true);
+  }, [optsFor]);
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
@@ -585,10 +596,10 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const c = viewCenter();
     if (!c) return;
     const [page, x, y] = c;
-    const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : [60, 40];
+    const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : constrain(kind, opts, [0, 0, 0], [60, 40, 0]);
     place([{
       id: newId(), page, kind, color: preset.color, opacity: 1, size: preset.size, simulated: false,
-      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "", ...(kind === "axes" ? axes : {}),
+      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "", ...shapeProps(kind, opts),
     }]);
   }
 
@@ -994,19 +1005,33 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         <IconBtn icon={Redo2} label={T.redo} keys={KEYS.redo} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
         {sep}
         {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
+        {/* Rechtsklick auf ein Werkzeug mit Optionen: wählt es und öffnet die Optionen */}
         {TOOL_LABELS.map(([t, icon, label, key]) => (
+          <span key={t} className="relative inline-flex">
           <IconBtn
-            key={t}
             icon={icon}
             label={label}
             keys={key}
             className={`${btn} relative${settings.auto ? (tool === t ? " ring-1 ring-inset ring-accent text-ink" : "") : on(tool === t)}`}
             onClick={(e) => chooseTool(t, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
             onDoubleClick={() => SHAPE_TOOLS.includes(t) && setTools((s) => ({ ...s, locked: true }))}
+            onContextMenu={(e) => {
+              if (!OPT_TOOLS.includes(t)) return;
+              e.preventDefault();
+              if (tool !== t) chooseTool(t);
+              setOptsFor(t);
+            }}
           >
             {locked && (tool === t || (settings.auto && penTool === t)) && <Lock size={10} aria-label={T.locked} className="absolute bottom-0.5 right-0.5" />}
             {settings.auto && penTool === t && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label={T.penMark} />}
           </IconBtn>
+          {optsFor === t && (
+            <div ref={optsPop} role="dialog" aria-label={label} className="absolute left-0 top-full z-30 mt-1 flex w-60 flex-col gap-2 rounded-sm border border-line bg-surface p-3 text-sm text-ink shadow-raised">
+              <span className="font-medium">{label}</span>
+              <ShapeOptions tool={t} o={opts} set={setOpts} />
+            </div>
+          )}
+          </span>
         ))}
         {sep}
         {/* Ebenen: große Ein-Klick-Felder (Nummer + Inhaltsicon), Schloss direkt daneben */}
@@ -1060,19 +1085,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
                 }} />
             </label>
-            {(tool === "axes" || penTool === "axes") && (
-              <div className="flex flex-col gap-1 border-t border-line pt-2">
-                <div className="flex gap-1">
-                  {([[false, T.axesXy], [true, T.axesXyz]] as const).map(([v, l]) => (
-                    <button key={l} className={btn + on(axes.xyz === v)} onClick={() => setAxes((a) => ({ ...a, xyz: v }))}>{l}</button>
-                  ))}
-                </div>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={axes.grid} onChange={(e) => setAxes((a) => ({ ...a, grid: e.target.checked }))} />
-                  {T.grid}
-                </label>
-              </div>
-            )}
+            <ShapeOptions tool={OPT_TOOLS.includes(tool) ? tool : penTool} o={opts} set={setOpts} />
         </Menu>
         {sep}
         <Menu icon={FilePlus} label={T.pageAdd}>
@@ -1317,7 +1330,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 typers={typers}
                 preset={preset}
                 marker={marker}
-                axes={axes}
+                opts={opts}
                 textSize={pal.text}
                 settings={settings}
                 layer={layer}
