@@ -1,4 +1,3 @@
-import { getStroke } from "perfect-freehand";
 import { z } from "zod";
 
 /** Punkt in pt relativ zur linken oberen Seitenecke, p = Druck 0–1. */
@@ -103,36 +102,42 @@ export const MARKER_OPACITY = 0.35;
 export const TEXT_SIZE = 14;
 export const FONT = "Helvetica, Arial, sans-serif";
 
+// Druck bis v1.2: Breite = size·(1 − THINNING·(1 − 2p)); neue Striche haben p = 0,5 → konstant `size`
 const THINNING = 0.5;
-// Stift-Test FELIXHP: Druck erreicht nur ~0,7 → darauf normieren; in den Einstellungen änderbar.
-export const PRESSURE_MAX = 0.75;
-
-export const normPressure = (p: number, max = PRESSURE_MAX) => Math.min(1, Math.max(0.05, p / max));
 
 /** Glättung beim Aufnehmen (live = gespeichert): neuer Punkt läuft um `s` (0–0,9) nach; 0 = exakt wie gezeichnet. */
 export const smoothPt = (prev: InkPoint | undefined, q: InkPoint, s: number): InkPoint =>
   prev && s > 0 ? [prev[0] + (q[0] - prev[0]) * (1 - s), prev[1] + (q[1] - prev[1]) * (1 - s), q[2]] : q;
 
+type Xy = [number, number];
 /**
- * Umriss-Punkte (perfect-freehand) in pt. streamline/smoothing 0: Umriss läuft exakt um die echten Punkte
- * (kein Nachziehen, das Ecken/Schleifen verzieht, keine Punktreduktion) → live, fertig und gespeichert gleich.
+ * Freihand-Mittellinie als quadratische Bézier-Kurven durch die Punkt-Mittelpunkte (Kontrollpunkt = echter Punkt):
+ * knickfrei (Tangente stetig), weicht je Punkt nur |2p − Vor − Nach|/8 ab → bei Stift-Punktdichte < 0,1 pt.
+ * Keine Glättung über mehrere Punkte, also keine Formverfremdung; live, fertig und gespeichert gleich.
+ * Rückgabe: Start + Segmente [Kontrollpunkt, Ende] (Kontrollpunkt = Ende → gerade).
  */
-export const outlinePoints = (s: Item) =>
-  getStroke(s.points, { size: s.size, thinning: THINNING, smoothing: 0, streamline: 0, simulatePressure: s.simulated });
+export function curve(pts: InkPoint[]): { start: Xy; segs: [Xy, Xy][] } {
+  const xy = pts.map(([x, y]): Xy => [x, y]);
+  const [start = [0, 0]] = xy, last = xy.at(-1) ?? start;
+  const segs = xy.slice(1, -1).map((p, i): [Xy, Xy] => {
+    const n = xy[i + 2] ?? p;
+    return [p, [(p[0] + n[0]) / 2, (p[1] + n[1]) / 2]];
+  });
+  // Einzelpunkt: winziges Stück, damit die runde Kappe einen Punkt zeichnet
+  segs.push(xy.length > 1 ? [last, last] : [[start[0] + 0.01, start[1]], [start[0] + 0.01, start[1]]]);
+  return { start, segs };
+}
 
-/** Gefüllter Umriss in pt; Zeichenkontext skaliert auf Zoom. */
-export function outline(s: Item): Path2D {
-  const o = outlinePoints(s);
-  const path = new Path2D();
-  o.forEach(([x, y], i) => (i ? path.lineTo(x, y) : path.moveTo(x, y)));
-  path.closePath();
-  return path;
+function curvePath(ctx: CanvasRenderingContext2D, pts: InkPoint[]) {
+  const { start, segs } = curve(pts);
+  ctx.beginPath();
+  ctx.moveTo(...start);
+  for (const [c, e] of segs) ctx.quadraticCurveTo(c[0], c[1], e[0], e[1]);
 }
 
 /**
- * Breite der gespeicherten Annotation: PDF-Ink kennt nur eine Breite je Strich →
- * mittlerer Durchmesser nach perfect-freehand-Formel (Radius = size·(0,5 − thinning·(0,5 − p))).
- * Andere Arten: Grundbreite.
+ * Breite des Strichs (Bildschirm und PDF-Ink, das nur eine Breite je Strich kennt). Neue Striche: konstant `size`.
+ * Alte Stift-Striche mit Druck: mittlerer Durchmesser der früheren Druckbreite, wie ihr PDF-Erscheinungsbild.
  */
 export function savedWidth(s: Item): number {
   if (s.kind !== "ink" || s.simulated || !s.points.length) return s.size;
@@ -219,13 +224,10 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
   const [a = ORIGIN, b = a] = it.points;
   switch (it.kind) {
     case "ink":
-      return ctx.fill(outline(it));
-    case "marker": {
-      ctx.beginPath();
-      it.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-      if (it.points.length === 1) ctx.lineTo(a[0] + 0.01, a[1]);
+    case "marker":
+      ctx.lineWidth = savedWidth(it);
+      curvePath(ctx, it.points);
       return ctx.stroke();
-    }
     case "line":
     case "arrow": {
       ctx.beginPath();

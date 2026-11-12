@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_PENS, PRESSURE_MAX, TEXT_SIZE, type Pen, type Preset } from "./ink";
+import { DEFAULT_PENS, TEXT_SIZE, type Pen, type Preset } from "./ink";
 
 /** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus); `space` = Platz einfügen (waagrechte Linie ziehen) */
 export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "form", "link", "space"] as const;
@@ -12,9 +12,6 @@ export type Binding = z.infer<typeof Binding>;
 export const Settings = z.object({
   lasso: Binding,
   eraser: Binding,
-  pressureMax: z.number().min(0.3).max(1),
-  /** Stiftdruck für alle Stifte (aus = konstante Breite); fehlt → aus alten Presets übernommen */
-  pressure: z.boolean().default(true),
   /** Glättung 0–0,9 für alle Stifte; 0 = exakt wie gezeichnet */
   smooth: z.number().min(0).max(0.9).default(0),
   /** Gerät bestimmt das Werkzeug: Stift → Stift-Werkzeug, Maus → Auswahl/Text (fehlt in alten Einstellungen → an) */
@@ -33,8 +30,6 @@ export type Settings = z.infer<typeof Settings>;
 export const DEFAULT_SETTINGS: Settings = {
   lasso: { pointerType: "pen", buttons: 2 },
   eraser: { pointerType: "pen", buttons: 32 },
-  pressureMax: PRESSURE_MAX,
-  pressure: true,
   smooth: 0,
   auto: true,
   theme: "dark",
@@ -58,13 +53,7 @@ const PKEY = "pdfnote.presets";
 // localStorage kann in WebView2 fehlen/werfen → Standardwerte
 export function loadSettings(): Settings {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    // v1.1: Druck hing am Stift-Preset → aus, wenn ein altes Stift-Preset ihn abgeschaltet hatte
-    if (raw?.pressure !== undefined) return Settings.parse(raw);
-    // gleich sichern: die Leiste schreibt die Presets beim ersten Öffnen im neuen Format
-    const s = Settings.parse({ ...raw, pressure: !legacyPressureOff() });
-    storeSettings(s);
-    return s;
+    return Settings.parse(JSON.parse(localStorage.getItem(KEY) ?? "null"));
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -82,7 +71,7 @@ export function storeSettings(s: Settings) {
 const Rgb = z.tuple([z.number(), z.number(), z.number()]);
 const PenData = z.object({ kind: z.enum(["pen", "marker"]), color: Rgb, size: z.number().positive() });
 /** v1.1: Punkt-Presets + sechs Farbfelder → Farbfelder und eigene Presets werden Stifte; kaputte Daten → Standard */
-const Old = z.object({ name: z.string(), color: Rgb, size: z.number().positive(), pressure: z.boolean().optional() });
+const Old = z.object({ name: z.string(), color: Rgb, size: z.number().positive() });
 const Legacy = z.object({
   pen: z.array(Old), marker: z.array(Old), text: z.number().positive(),
   quick: z.object({ pen: z.array(Old), marker: z.array(Old) }).optional(),
@@ -102,15 +91,6 @@ const Palettes = z.union([
 ]);
 export interface Palettes { pens: Pen[]; text: number; last?: Pen }
 export const DEFAULT_PALETTES: Palettes = { pens: DEFAULT_PENS, text: TEXT_SIZE };
-
-function legacyPressureOff() {
-  try {
-    const o = Legacy.safeParse(JSON.parse(localStorage.getItem(PKEY) ?? "null"));
-    return o.success && [...o.data.pen, ...(o.data.quick?.pen ?? [])].some((p) => p.pressure === false);
-  } catch {
-    return false; // kaputte Presets dürfen die übrigen Einstellungen nicht verwerfen
-  }
-}
 
 export function loadPalettes(): Palettes {
   try {

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } fro
 import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
-  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, recognize, rotateItem,
+  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem,
   rotMatrix, scaleItem, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
@@ -452,11 +452,10 @@ export function PageView(p: PageProps) {
     };
   });
 
-  // flat = Preset mit „Druck aus“: immer gleiche Breite
-  const pt = (e: PointerEvent | React.PointerEvent, flat = false): InkPoint => {
+  // Druck immer 0,5: Strichbreite konstant (B6, wie Freihand in Edge)
+  const pt = (e: PointerEvent | React.PointerEvent): InkPoint => {
     const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
-    const pr = e.pointerType === "pen" && !flat ? normPressure(e.pressure, settings.pressureMax) : 0.5;
-    return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, pr];
+    return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0.5];
   };
 
   // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Rechteck, Dreieck, Kreis/Ellipse)
@@ -652,8 +651,7 @@ export function PageView(p: PageProps) {
     if (at) {
       g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [], ...(pen3 && { layer: 3 as const }) } };
     } else if (t === "pen" || t === "marker") {
-      const flat = t === "pen" && !settings.pressure;
-      const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
+      const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, q, e.pointerType !== "pen");
       if (pen3) item.layer = 3;
       lastTs.current = e.timeStamp;
       g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null } };
@@ -707,12 +705,11 @@ export function PageView(p: PageProps) {
     const evs = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const q = pt(e);
     const [x, y] = q;
-    const flat = c.t === "draw" && c.item.kind === "ink" && !settings.pressure;
     switch (c.t) {
       case "draw":
         lastTs.current = e.timeStamp;
         for (const ev of evs) {
-          const r = pt(ev, flat), hd = c.hold;
+          const r = pt(ev), hd = c.hold;
           // Linie folgt weiter dem Stift, andere Formen bleiben stehen
           if (hd?.shape === "line") straighten(c.item, r[0], r[1]);
           else if (!hd?.shape) {
