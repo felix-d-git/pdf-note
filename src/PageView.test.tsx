@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, PARA0, savedWidth, type Item, type Layer, type Preset } from "./ink";
+import { box, DEFAULT_PRESET, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset } from "./ink";
 import { PageView, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
@@ -66,7 +66,7 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
       onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
       onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
-      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
+      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} opts={SHAPE_OPTS}
     />
   );
 }

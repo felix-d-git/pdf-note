@@ -53,7 +53,9 @@ const DE: Chapter[] = [
     [RotateCw, "Drehen mit dem runden Griff (Umschalt = 15°-Schritte); die Drehung wird gespeichert."],
   ] },
   { id: "axes", icon: Grid3x3, title: "Koordinatensysteme", lines: [
-    "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Im Stil-Menü: xy oder xyz (Schrägbild), Karo-Gitter.",
+    "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Rechtsklick aufs Werkzeug (oder Stil-Menü): xy oder xyz (Schrägbild), Karo-Gitter aus / nur x-z-Ebene / alle drei Ebenen.",
+    "Formen: Rechtsklick auf Rechteck, Ellipse, Linie, Pfeil oder 3D-Körper → Quadrat bzw. Kreis erzwingen, Füllung, Strichart (durchgezogen/gestrichelt/gepunktet).",
+    "3D-Körper (B): Quader, Würfel oder Zylinder als Schrägbild aufziehen; verdeckte Kanten gestrichelt.",
   ] },
   { id: "marker", icon: Palette, title: "Stifte, Textmarker, Farbe, Breite", lines: [
     "Beginnt ein Textmarker-Strich auf PDF-Text, rastet er auf die Textzeilen ein.",
@@ -144,7 +146,9 @@ const EN: Chapter[] = [
     [RotateCw, "Rotate with the round handle (Shift = 15° steps); the rotation is saved."],
   ] },
   { id: "axes", icon: Grid3x3, title: "Coordinate systems", lines: [
-    "Coordinate system tool (X): drag a rectangle → axes. In the style menu: xy or xyz (oblique), square grid.",
+    "Coordinate system tool (X): drag a rectangle → axes. Right-click the tool (or the style menu): xy or xyz (oblique), square grid off / x-z plane only / all three planes.",
+    "Shapes: right-click rectangle, ellipse, line, arrow or 3D solid → force square or circle, fill, line style (solid/dashed/dotted).",
+    "3D solid (B): drag a cuboid, cube or cylinder in oblique projection; hidden edges dashed.",
   ] },
   { id: "marker", icon: Palette, title: "Pens, highlighter, colour, width", lines: [
     "A highlighter stroke that starts on PDF text snaps to the text lines.",

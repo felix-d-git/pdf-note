@@ -4,7 +4,7 @@ import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
   autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem,
-  rotMatrix, scaleItem, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind,
+  constrain, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts,
 } from "./ink";
 import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
@@ -158,8 +158,8 @@ export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
   /** `tool` = Maus-Werkzeug, `penTool` = Stift-Werkzeug (gleich, wenn „Automatisch wechseln" aus ist) */
   items: Item[]; selected: number[]; tool: Tool; penTool: Tool; preset: Preset; marker: Preset; textSize: number; settings: Settings;
-  /** Koordinatensystem-Werkzeug: Art fürs nächste Aufziehen */
-  axes: { xyz: boolean; grid: boolean };
+  /** Formen-/Koordinatensystem-Optionen fürs nächste Aufziehen */
+  opts: ShapeOpts;
   /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
   layer: Layer;
   /** Ebenen-Sperre: gesperrte Ebene lässt sich nicht wählen, ändern oder radieren (`layers.ts`) */
@@ -669,7 +669,7 @@ export function PageView(p: PageProps) {
       g.current = { t: "space", y, dy: 0 };
       rerender();
     } else {
-      g.current = { t: "shape", item: { ...make(t, preset, q, false), ...(t === "axes" ? p.axes : {}), points: [q, q] } };
+      g.current = { t: "shape", item: { ...make(t, preset, q, false), ...shapeProps(t, p.opts), points: [q, q] } };
     }
   };
 
@@ -720,7 +720,7 @@ export function PageView(p: PageProps) {
         }
         return schedule(drawLive);
       case "shape":
-        c.item.points[1] = q;
+        c.item.points[1] = constrain(c.item.kind, p.opts, c.item.points[0] ?? q, q);
         return schedule();
       case "erase":
         for (const ev of evs) eraseAt(...(pt(ev).slice(0, 2) as [number, number]));

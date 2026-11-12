@@ -4,7 +4,10 @@ import { z } from "zod";
 export type InkPoint = [x: number, y: number, p: number];
 export type Rgb = [number, number, number];
 
-export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight", "axes"] as const;
+export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight", "axes", "solid"] as const;
+export const SOLIDS = ["cuboid", "cube", "cylinder"] as const;
+export type Solid = (typeof SOLIDS)[number];
+export type Dash = "dash" | "dot";
 export type Kind = (typeof KINDS)[number];
 
 /**
@@ -34,6 +37,12 @@ export interface Item {
   xyz?: boolean;
   /** Koordinatensystem: Karo-Gitter im Achsenbereich */
   grid?: boolean;
+  /** xyz-Gitter: Ebenen; fehlt bei `grid` → nur y-z-Rückwand (Dateien bis v1.2) */
+  planes?: "xz" | "all";
+  /** Linie/Pfeil/Rechteck/Ellipse/Körper: Strichart; fehlt → durchgezogen */
+  dash?: Dash;
+  /** Körper (kind "solid") als Schrägbild; fehlt → Quader */
+  solid?: Solid;
   /** Rechteck/Ellipse: Füllfarbe (Deckkraft = `opacity`, wie `/CA` in der PDF); fehlt → keine Füllung */
   fill?: Rgb;
 }
@@ -66,6 +75,9 @@ export const ItemData = z.object({
   rot: num.optional(),
   xyz: z.boolean().optional(),
   grid: z.boolean().optional(),
+  planes: z.enum(["xz", "all"]).optional(),
+  dash: z.enum(["dash", "dot"]).optional(),
+  solid: z.enum(SOLIDS).optional(),
   fill: z.tuple([num, num, num]).optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
@@ -73,7 +85,11 @@ export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
   layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind), ...(d.rot ? { rot: d.rot } : {}),
   ...(d.xyz ? { xyz: true } : {}), ...(d.grid ? { grid: true } : {}),
-  ...(d.fill ? { fill: d.fill } : {}),
+  ...(d.fill ? { fill: d.fill } : {}), ...opt(d),
+});
+/** Optionale Aufzählungs-Felder, nur wenn gesetzt */
+const opt = (d: Pick<Item, "planes" | "dash" | "solid">) => ({
+  ...(d.planes ? { planes: d.planes } : {}), ...(d.dash ? { dash: d.dash } : {}), ...(d.solid ? { solid: d.solid } : {}),
 });
 
 /** Strichart: Farbe + Grundbreite (Formen nutzen den aktiven Stift) */
@@ -150,7 +166,7 @@ export const toData = (it: Item) => ({
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
   ...(it.image ? { image: it.image } : {}), layer: layerOf(it), ...(it.rot ? { rot: it.rot } : {}),
   ...(it.xyz ? { xyz: true } : {}), ...(it.grid ? { grid: true } : {}),
-  ...(it.fill ? { fill: it.fill } : {}),
+  ...(it.fill ? { fill: it.fill } : {}), ...opt(it),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
@@ -209,18 +225,92 @@ export function axesLines(it: Item): { axes: Pt[][]; grid: Pt[][] } {
   if (it.grid) {
     // volle Karos bis eine Pfeillänge vor die Spitzen
     const n = (v: number) => Math.min(1000, Math.max(0, Math.floor(v / KARO + 1e-4)));
-    const [nx, ny] = [n(x1 - len - o[0]), n(o[1] - y0 - len)];
-    for (let k = 1; k <= nx; k++) grid.push([[o[0] + k * KARO, o[1]], [o[0] + k * KARO, o[1] - ny * KARO]]);
-    for (let k = 1; k <= ny; k++) grid.push([[o[0], o[1] - k * KARO], [o[0] + nx * KARO, o[1] - k * KARO]]);
+    // Schrägbild-x: Karo-Diagonale halb verkürzt (Schritt KARO/2 nach links und unten)
+    const [nr, nu, nf] = [n(x1 - len - o[0]), n(o[1] - y0 - len), n((Math.SQRT2 * d - len) / (KARO * Math.SQRT1_2))];
+    const [r, u, f]: [Pt, Pt, Pt] = [[KARO, 0], [0, -KARO], [-KARO / 2, KARO / 2]];
+    const at = (p: Pt, i: number, q: Pt, j: number): Pt => [o[0] + i * p[0] + j * q[0], o[1] + i * p[1] + j * q[1]];
+    const plane = (p: Pt, np: number, q: Pt, nq: number) => {
+      for (let k = 1; k <= np; k++) grid.push([at(p, k, q, 0), at(p, k, q, nq)]);
+      for (let k = 1; k <= nq; k++) grid.push([at(q, k, p, 0), at(q, k, p, np)]);
+    };
+    const planes = it.xyz ? it.planes : undefined;
+    if (planes !== "xz") plane(r, nr, u, nu); // xy-System, y-z-Rückwand
+    if (planes) plane(f, nf, u, nu); // x-z
+    if (planes === "all") plane(f, nf, r, nr); // x-y-Boden
   }
   return { axes, grid };
 }
 
+/** Strichmuster wie in der PDF (`/D`, stumpfe Enden); leer = durchgezogen */
+export const dashPattern = (dash: Dash | undefined, w: number) => (dash === "dash" ? [3 * w, 2 * w] : dash === "dot" ? [w, w] : []);
+
+/**
+ * Körper als Schrägbild (wie `solid_lines` in Rust – beide gleich halten): sichtbare und verdeckte Kanten je Polylinie.
+ * Quader/Würfel: Tiefe 45° nach hinten-rechts, halb verkürzt; Zylinder: stehend, Grundkreise als flache Ellipsen.
+ */
+export function solidLines(it: Item): { vis: Pt[][]; hid: Pt[][] } {
+  const [a = ORIGIN, b = a] = it.points;
+  const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+  const [w, h] = [x1 - x0, y1 - y0];
+  if (it.solid === "cylinder") {
+    const rx = w / 2, ry = Math.min(rx * 0.35, h / 4), cx = x0 + rx, [top, bot] = [y0 + ry, y1 - ry];
+    // halbe Ellipse ab Winkel t0 (0 = vordere/untere Hälfte, π = hintere)
+    const arc = (cy: number, t0: number) => Array.from({ length: 25 }, (_, i): Pt => [cx + rx * Math.cos(t0 + (i * Math.PI) / 24), cy + ry * Math.sin(t0 + (i * Math.PI) / 24)]);
+    return { vis: [[...arc(top, 0), ...arc(top, Math.PI).slice(1)], arc(bot, 0), [[x0, top], [x0, bot]], [[x1, top], [x1, bot]]], hid: [arc(bot, Math.PI)] };
+  }
+  // Versatz der Tiefe je Richtung = Kante·½·cos 45°; Würfel: Kante = Vorderseite
+  const m = Math.min(w, h), q = Math.SQRT2 / 4, k = it.solid === "cube" ? (m / (1 + q)) * q : m * 0.25;
+  const [A, B, C, D]: [Pt, Pt, Pt, Pt] = [[x0, y1], [x1 - k, y1], [x1 - k, y0 + k], [x0, y0 + k]];
+  const back = ([x, y]: Pt): Pt => [x + k, y - k];
+  const [A2, B2, C2, D2] = [back(A), back(B), back(C), back(D)];
+  return { vis: [[A, B, C, D, A], [D, D2, C2, B2, B], [C, C2]], hid: [[D2, A2, B2], [A, A2]] };
+}
+
+/** Werkzeug-Optionen (Zahnrad/Rechtsklick), gelten fürs nächste Aufziehen; Sitzungszustand */
+export interface ShapeOpts {
+  xyz: boolean;
+  /** xy: aus/an ("all"); xyz: aus / x-z-Ebene / alle drei Ebenen */
+  grid: "off" | "xz" | "all";
+  square: boolean;
+  circle: boolean;
+  fill?: Rgb;
+  dash?: Dash;
+  solid: Solid;
+}
+export const SHAPE_OPTS: ShapeOpts = { xyz: false, grid: "off", square: false, circle: false, solid: "cuboid" };
+
+/** Optionen → Felder eines neuen Elements dieser Art */
+export function shapeProps(kind: Kind, o: ShapeOpts): Partial<Item> {
+  const dash = o.dash && { dash: o.dash };
+  if (kind === "axes") return { xyz: o.xyz, grid: o.grid !== "off", ...(o.xyz && o.grid !== "off" && { planes: o.grid }) };
+  if (kind === "solid") return { solid: o.solid, ...dash };
+  if (kind === "rect" || kind === "ellipse") return { ...dash, ...(o.fill && { fill: o.fill }) };
+  if (kind === "line" || kind === "arrow") return { ...dash };
+  return {};
+}
+
+/** Quadrat/Kreis/Würfel: Endpunkt auf gleiche Breite und Höhe (größere gewinnt), Richtung bleibt */
+export function constrain(kind: Kind, o: ShapeOpts, a: InkPoint, b: InkPoint): InkPoint {
+  const eq = (kind === "rect" && o.square) || (kind === "ellipse" && o.circle) || (kind === "solid" && o.solid === "cube");
+  if (!eq) return b;
+  const dx = b[0] - a[0], dy = b[1] - a[1], m = Math.max(Math.abs(dx), Math.abs(dy));
+  return [a[0] + (dx < 0 ? -m : m), a[1] + (dy < 0 ? -m : m), b[2]];
+}
+
+function polylines(ctx: CanvasRenderingContext2D, lines: Pt[][]) {
+  ctx.beginPath();
+  for (const l of lines) l.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+}
+
 function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
+  const dash = dashPattern(it.dash, it.size);
+  ctx.setLineDash(dash);
   ctx.globalAlpha = it.opacity;
   ctx.fillStyle = ctx.strokeStyle = css(it.color);
   ctx.lineWidth = it.size;
   ctx.lineCap = ctx.lineJoin = "round";
+  if (dash.length) ctx.lineCap = "butt";
   const [a = ORIGIN, b = a] = it.points;
   switch (it.kind) {
     case "ink":
@@ -282,10 +372,16 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
       const { axes, grid } = axesLines(it);
       for (const [lines, w] of [[grid, gridWidth(it.size)], [axes, it.size]] as const) {
         ctx.lineWidth = w;
-        ctx.beginPath();
-        for (const l of lines) l.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-        ctx.stroke();
+        polylines(ctx, lines);
       }
+      return;
+    }
+    case "solid": {
+      const { vis, hid } = solidLines(it);
+      polylines(ctx, vis);
+      ctx.setLineDash(dashPattern("dash", it.size));
+      ctx.lineCap = "butt";
+      return polylines(ctx, hid);
     }
   }
 }
@@ -419,9 +515,10 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
       const d = Math.hypot((x - cx) / rx, (y - cy) / ry);
       return (it.fill !== undefined && d <= 1) || Math.abs(d - 1) * Math.min(rx, ry) <= r;
     }
-    case "axes": {
-      const { axes, grid } = axesLines(it);
-      return [...axes, ...grid].some((l) => l.some((p, i) => i > 0 && segDist(x, y, [...(l[i - 1] ?? p), 0], [...p, 0]) <= r));
+    case "axes":
+    case "solid": {
+      const lines = it.kind === "axes" ? Object.values(axesLines(it)).flat() : Object.values(solidLines(it)).flat();
+      return lines.some((l) => l.some((p, i) => i > 0 && segDist(x, y, [...(l[i - 1] ?? p), 0], [...p, 0]) <= r));
     }
     case "text":
     case "image":

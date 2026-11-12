@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
-  recognize, rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
+  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, constrain, cropItem, dashPattern, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
+  recognize, rotateItem, savedWidth, scaleItem, SHAPE_OPTS, shapeProps, solidLines, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
 const s = (p: number, simulated = false): Item => ({
@@ -141,6 +141,45 @@ test("Koordinatensystem: xy 2 Achsen + 2 Spitzen, xyz 3 + 3, Gitter nur mit Scha
   expect(g.length).toBeGreaterThan(4);
   // Gitter bleibt im Rahmen
   expect(g.flat().every(([x, y]) => x >= 0 && x <= 200 && y >= 0 && y <= 150)).toBe(true);
+});
+
+test("xyz-Gitter: ohne planes y-z-Rückwand (alt), xz und alle Ebenen; JSON abwärtskompatibel", () => {
+  const a = { ...it("axes", [[0, 0], [200, 200]]), xyz: true, grid: true };
+  const yz = axesLines(a).grid, xz = axesLines({ ...a, planes: "xz" }).grid, all = axesLines({ ...a, planes: "all" }).grid;
+  expect(yz.length).toBeGreaterThan(0);
+  expect(xz.length).toBeGreaterThan(0);
+  expect(all.length).toBeGreaterThan(Math.max(yz.length, xz.length));
+  // alte Datei ohne neue Felder liest sich, neue Felder bleiben erhalten
+  const old = ItemData.parse({ ...toData(a), planes: undefined });
+  expect(fromData(old).planes).toBeUndefined();
+  expect(fromData(ItemData.parse(toData({ ...a, planes: "all", dash: "dot" })))).toMatchObject({ planes: "all", dash: "dot" });
+  // xy-System ignoriert planes
+  expect(axesLines({ ...a, xyz: false, planes: "xz" }).grid).toEqual(axesLines({ ...a, xyz: false }).grid);
+});
+
+test("Optionen: Quadrat/Kreis/Würfel erzwingen gleiche Seiten, Optionen landen im Element", () => {
+  const o = { ...SHAPE_OPTS, square: true };
+  expect(constrain("rect", o, [10, 10, 0.5], [40, -10, 0.5])).toEqual([40, -20, 0.5]);
+  expect(constrain("ellipse", o, [0, 0, 0.5], [40, 10, 0.5])).toEqual([40, 10, 0.5]);
+  expect(constrain("solid", { ...SHAPE_OPTS, solid: "cube" }, [0, 0, 0.5], [-5, 30, 0.5])).toEqual([-30, 30, 0.5]);
+  expect(shapeProps("axes", { ...SHAPE_OPTS, xyz: true, grid: "xz" })).toEqual({ xyz: true, grid: true, planes: "xz" });
+  expect(shapeProps("axes", { ...SHAPE_OPTS, grid: "all" })).toEqual({ xyz: false, grid: true });
+  expect(shapeProps("rect", { ...SHAPE_OPTS, fill: [1, 0, 0], dash: "dash" })).toEqual({ dash: "dash", fill: [1, 0, 0] });
+  expect(shapeProps("line", { ...SHAPE_OPTS, fill: [1, 0, 0] })).toEqual({});
+  expect(dashPattern("dash", 2)).toEqual([6, 4]);
+  expect(dashPattern(undefined, 2)).toEqual([]);
+});
+
+test("Körper: Kanten im Rahmen, verdeckte getrennt, Treffer auf Kante", () => {
+  for (const solid of ["cuboid", "cube", "cylinder"] as const) {
+    const k = { ...it("solid", [[0, 0], [100, 80]]), solid };
+    const { vis, hid } = solidLines(k);
+    expect(vis.length).toBeGreaterThan(0);
+    expect(hid.length).toBeGreaterThan(0);
+    expect([...vis, ...hid].flat().every(([x, y]) => x >= -1e-9 && x <= 100 + 1e-9 && y >= -1e-9 && y <= 80 + 1e-9)).toBe(true);
+    expect(hitTest(k, 0, 50, 2)).toBe(true);
+    expect(hitTest(k, 50, 40, 2)).toBe(false);
+  }
 });
 
 test("Mehrfachauswahl der Miniaturen und Löschen mehrerer Seiten", () => {
