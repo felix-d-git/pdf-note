@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
-  afterDelete, afterDeleteMany, afterInsert, axesLines, afterMove, afterRotate, box, cropDrag, cropItem, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, normPressure, outlinePoints,
-  recognize, rotateItem, savedWidth, scaleItem, thumbPick, toData, type InkPoint, type Item, type Kind,
+  afterDelete, afterDeleteMany, afterInsert, axesLines, cutStroke, afterMove, afterRotate, box, cropDrag, constrain, cropItem, dashPattern, hitTest, imageItem, imageMime, inPolygon, ItemData, fromData, layerOf, movedIndex, curve,
+  recognize, rotateItem, smoothCurve, dragShape, savedWidth, scaleItem, SHAPE_OPTS, shapeProps, solidLines, thumbPick, toData, type InkPoint, type Item, type Kind,
 } from "./ink";
 
 const s = (p: number, simulated = false): Item => ({
@@ -17,13 +17,6 @@ test("gespeicherte Breite folgt dem mittleren Druck", () => {
   expect(savedWidth(s(0))).toBeCloseTo(1);
   expect(savedWidth(s(0, true))).toBe(2);
   expect(savedWidth({ ...s(1), kind: "rect" })).toBe(2);
-});
-
-test("Druck wird auf Stift-Maximum normiert und begrenzt", () => {
-  expect(normPressure(0.75)).toBe(1);
-  expect(normPressure(0.9)).toBe(1);
-  expect(normPressure(0)).toBe(0.05);
-  expect(normPressure(0.25, 0.5)).toBe(0.5);
 });
 
 test("Treffer je Objektart", () => {
@@ -47,6 +40,9 @@ test("Treffer je Objektart", () => {
   expect(hitTest(text, 30, 20, 0)).toBe(true);
   expect(hitTest(text, 70, 20, 0)).toBe(false);
   expect(hitTest(it("ink", [[5, 5]]), 6, 6, 1)).toBe(true);
+  // Tag bleibt nach Speichern + Neu-Öffnen erhalten
+  expect(back({ ...text, tag: "task" }).tag).toBe("task");
+  expect(back(text).tag).toBeUndefined();
 });
 
 test("Punkt im Lasso", () => {
@@ -150,6 +146,58 @@ test("Koordinatensystem: xy 2 Achsen + 2 Spitzen, xyz 3 + 3, Gitter nur mit Scha
   expect(g.flat().every(([x, y]) => x >= 0 && x <= 200 && y >= 0 && y <= 150)).toBe(true);
 });
 
+test("xyz-Gitter: ohne planes y-z-Rückwand (alt), xz und alle Ebenen; JSON abwärtskompatibel", () => {
+  const a = { ...it("axes", [[0, 0], [200, 200]]), xyz: true, grid: true };
+  const yz = axesLines(a).grid, xz = axesLines({ ...a, planes: "xz" }).grid, all = axesLines({ ...a, planes: "all" }).grid;
+  expect(yz.length).toBeGreaterThan(0);
+  expect(xz.length).toBeGreaterThan(0);
+  expect(all.length).toBeGreaterThan(Math.max(yz.length, xz.length));
+  // alte Datei ohne neue Felder liest sich, neue Felder bleiben erhalten
+  const old = ItemData.parse({ ...toData(a), planes: undefined });
+  expect(fromData(old).planes).toBeUndefined();
+  expect(fromData(ItemData.parse(toData({ ...a, planes: "all", dash: "dot" })))).toMatchObject({ planes: "all", dash: "dot" });
+  // neue Wände: alt `xz` = linke Wand (Y-Z), alt `all` = alle drei; walls schlägt planes
+  const w = (walls: ("xy" | "xz" | "yz")[]) => axesLines({ ...a, walls, planes: "xz" }).grid;
+  expect(w(["yz"])).toEqual(xz);
+  expect(w(["xy"])).toEqual(yz);
+  expect(w(["xy", "xz", "yz"])).toEqual(all);
+  expect(w([])).toEqual([]);
+  // Boden unter der x-Achse, linke Wand links der y-Achse
+  const o = axesLines(a).axes[0]?.[0] ?? [0, 0];
+  expect(w(["xz"]).flat().every(([, y]) => y >= o[1] - 1e-6)).toBe(true);
+  expect(w(["yz"]).flat().every(([x]) => x <= o[0] + 1e-6)).toBe(true);
+  expect(fromData(ItemData.parse(toData({ ...a, walls: ["xz"] })))).toMatchObject({ walls: ["xz"] });
+  // xy-System ignoriert planes
+  expect(axesLines({ ...a, xyz: false, planes: "xz" }).grid).toEqual(axesLines({ ...a, xyz: false }).grid);
+});
+
+test("Optionen: Quadrat/Kreis/Würfel erzwingen gleiche Seiten, Optionen landen im Element", () => {
+  const o = { ...SHAPE_OPTS, square: true };
+  expect(constrain("rect", o, [10, 10, 0.5], [40, -10, 0.5])).toEqual([40, -20, 0.5]);
+  expect(constrain("ellipse", o, [0, 0, 0.5], [40, 10, 0.5])).toEqual([40, 10, 0.5]);
+  expect(constrain("solid", { ...SHAPE_OPTS, solid: "cube" }, [0, 0, 0.5], [-5, 30, 0.5])).toEqual([-30, 30, 0.5]);
+  expect(shapeProps("axes", { ...SHAPE_OPTS, xyz: true, walls: ["yz", "xy"] })).toEqual({ xyz: true, grid: true, walls: ["xy", "yz"] });
+  expect(shapeProps("axes", { ...SHAPE_OPTS, xyz: true })).toEqual({ xyz: true, grid: false });
+  expect(shapeProps("axes", { ...SHAPE_OPTS, grid: true })).toEqual({ xyz: false, grid: true });
+  expect(constrain("solid", { ...SHAPE_OPTS, solid: "sphere" }, [0, 0, 0.5], [-5, 30, 0.5])).toEqual([-30, 30, 0.5]);
+  expect(shapeProps("rect", { ...SHAPE_OPTS, fill: [1, 0, 0], dash: "dash" })).toEqual({ dash: "dash", fill: [1, 0, 0] });
+  expect(shapeProps("line", { ...SHAPE_OPTS, fill: [1, 0, 0] })).toEqual({});
+  expect(dashPattern("dash", 2)).toEqual([6, 4]);
+  expect(dashPattern(undefined, 2)).toEqual([]);
+});
+
+test("Körper: Kanten im Rahmen, verdeckte getrennt, Treffer auf Kante", () => {
+  for (const solid of ["cuboid", "cube", "cylinder"] as const) {
+    const k = { ...it("solid", [[0, 0], [100, 80]]), solid };
+    const { vis, hid } = solidLines(k);
+    expect(vis.length).toBeGreaterThan(0);
+    expect(hid.length).toBeGreaterThan(0);
+    expect([...vis, ...hid].flat().every(([x, y]) => x >= -1e-9 && x <= 100 + 1e-9 && y >= -1e-9 && y <= 80 + 1e-9)).toBe(true);
+    expect(hitTest(k, 0, 50, 2)).toBe(true);
+    expect(hitTest(k, 50, 40, 2)).toBe(false);
+  }
+});
+
 test("Mehrfachauswahl der Miniaturen und Löschen mehrerer Seiten", () => {
   expect(thumbPick([], 0, 2, false, false)).toEqual([2]);
   expect(thumbPick([2], 2, 4, true, false)).toEqual([2, 4]);
@@ -180,19 +228,56 @@ const segDist = ([x = 0, y = 0]: number[], [ax = 0, ay = 0]: number[], [bx = 0, 
 const toEdge = (q: number[], poly: number[][]) => Math.min(...poly.map((a, i) => segDist(q, a, poly[(i + 1) % poly.length] ?? a)));
 const hausdorff = (a: number[][], b: number[][]) => Math.max(...a.map((q) => toEdge(q, b)), ...b.map((q) => toEdge(q, a)));
 
-test("Handschrift: Umriss läuft um die echten Punkte (Ecken/Schleifen nicht verzogen), gleich nach Speichern + Neu-Öffnen", () => {
-  for (const points of [loop, N, dot]) {
+// Gerenderte Kurve (quadratische Bézier durch die Mittelpunkte) als Polygon, 8 Schritte je Segment
+const flatten = (pts: InkPoint[]) => {
+  const { start, segs } = curve(pts), out: number[][] = [start];
+  let a = start;
+  for (const [c, e] of segs) {
+    for (let k = 1; k <= 8; k++) {
+      const t = k / 8, u = 1 - t;
+      out.push([u * u * a[0] + 2 * u * t * c[0] + t * t * e[0], u * u * a[1] + 2 * u * t * c[1] + t * t * e[1]]);
+    }
+    a = e;
+  }
+  return out;
+};
+const openDist = (q: number[], poly: number[][]) => Math.min(...poly.slice(1).map((b, i) => segDist(q, poly[i] ?? b, b)));
+const turns = (p: number[][]) => p.slice(2).flatMap(([cx = 0, cy = 0], i) => {
+  const [[ax = 0, ay = 0] = [], [bx = 0, by = 0] = []] = [p[i], p[i + 1]];
+  if (Math.hypot(cx - bx, cy - by) < 1e-9 || Math.hypot(bx - ax, by - ay) < 1e-9) return [];
+  const d = Math.abs(Math.atan2(cy - by, cx - bx) - Math.atan2(by - ay, bx - ax));
+  return [(Math.min(d, 2 * Math.PI - d) * 180) / Math.PI];
+});
+// Kreis r = 6 pt, Stiftabstand ~0,15 pt, Digitizer-Rauschen ±0,03 pt (wie gemessen)
+const rnd = (() => { let v = 1; return () => ((v = (v * 16807) % 2147483647) / 2147483647) - 0.5; })();
+const circle = Array.from({ length: 251 }, (_, i): InkPoint => {
+  const a = (i / 250) * 2 * Math.PI;
+  return [20 + 6 * Math.cos(a) + rnd() * 0.06, 20 + 6 * Math.sin(a) + rnd() * 0.06, 0.5];
+});
+
+test("Handschrift: Kreisbogen ohne Knicke (Richtungswechsel je Teilstück < 10°)", () => {
+  const t = turns(flatten(circle));
+  // Polygonzug der Eingabe knickt bis 42°, der alte perfect-freehand-Umriss bis 180°
+  expect(Math.max(...t)).toBeLessThan(10);
+});
+
+test("Handschrift: kurzer Strich (< 5 mm) und Ecken liegen ≤ 0,5 pt an den Eingabepunkten, Breite konstant", () => {
+  const short = track([[0, 0], [3, 4], [8, 1], [11, 6]]); // < 14 pt
+  for (const points of [short, loop, N, dot]) {
+    const f = flatten(points);
+    expect(Math.max(...points.map((q) => openDist(q, f)))).toBeLessThanOrEqual(0.5);
+    expect(Math.max(...f.map((q) => openDist(q, points)))).toBeLessThanOrEqual(0.5);
+  }
+  expect(savedWidth({ ...s(0.5), points: short })).toBe(2);
+});
+
+test("Handschrift: Speichern (Rust rundet auf 0,01) → Neu-Öffnen erhält die Form", () => {
+  for (const points of [circle, loop, N, dot]) {
     const st: Item = { ...s(0.5), size: 2.2, points };
-    const o = outlinePoints(st);
-    // Rand des Umrisses liegt je Punkt im Abstand Radius = size·(0,5 − 0,5·(0,5 − p)) (Abweichung < 0,5 pt);
-    // ausgenommen: Kreuzungen (dort liegt der Rand des anderen Strichteils näher) und die letzten 3 pt
-    // (perfect-freehand verbindet sie gerade mit der Endkappe – live genauso, springt also nicht)
-    const alone = (q: InkPoint, i: number) => i < points.length - 3 && points.every((r, j) => Math.abs(i - j) < 8 || Math.hypot(r[0] - q[0], r[1] - q[1]) > 2 * st.size);
-    const off = points.flatMap((q, i) => (alone(q, i) ? [Math.abs(toEdge(q, o) - st.size * (0.5 - 0.5 * (0.5 - q[2])))] : []));
-    if (points.length > 2) expect(Math.max(...off)).toBeLessThan(0.5);
-    // Speichern (Rust rundet auf 0,01) → Neu-Öffnen → derselbe Umriss
     const saved = JSON.parse(JSON.stringify(toData(st)), (_, v: unknown) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
-    expect(hausdorff(outlinePoints(fromData(ItemData.parse(saved))), o)).toBeLessThan(0.5);
+    const back = fromData(ItemData.parse(saved));
+    expect(hausdorff(flatten(back.points), flatten(points))).toBeLessThan(0.05);
+    expect(savedWidth(back)).toBeCloseTo(savedWidth(st), 2);
   }
 });
 
@@ -204,18 +289,100 @@ test("Form-Erkennung: Linie, Pfeil, Dreieck, Rechteck, Kreis, Ellipse aus wackli
     return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.4 + (i % 3) * 0.1]);
   }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
   const ring = (rx: number, ry: number): InkPoint[] => Array.from({ length: 80 }, (_, i): InkPoint => [100 + rx * Math.cos(i / 12.6 + 0.3) + wob(i), 100 + ry * Math.sin(i / 12.6 + 0.3), 0.5]);
-  const kind = (p: InkPoint[]) => recognize(p).kind;
+  const kind = (p: InkPoint[]) => recognize(p)?.kind ?? null;
+  const rec = (p: InkPoint[]) => recognize(p) ?? { kind: null, points: [] };
   expect(kind(path([0, 0], [100, 30]))).toBe("line");
-  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe("line"); // offener Haken → Linie wie bisher
+  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe(null); // offener Haken → keine Form (langes Halten glättet)
   expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow");
   expect(kind(path([0, 0], [100, 0], [50, 80], [2, 3]))).toBe("triangle");
   expect(kind(path([50, 0], [100, 0], [100, 60], [0, 60], [0, 0], [48, 2]))).toBe("rect"); // Start mitten auf der Kante
   expect(kind(ring(50, 50))).toBe("ellipse");
-  const r = recognize(path([0, 0], [100, 0], [100, 60], [0, 60], [1, 2])).points;
+  const r = rec(path([0, 0], [100, 0], [100, 60], [0, 60], [1, 2])).points;
   expect([new Set(r.map((q) => q[0])).size, new Set(r.map((q) => q[1])).size, r.length]).toEqual([2, 2, 5]); // achsparallel, geschlossen
-  const c = recognize(ring(50, 50)).points, e = recognize(ring(60, 30)).points;
+  const c = rec(ring(50, 50)).points, e = rec(ring(60, 30)).points;
   const radii = (q: InkPoint[]) => q.map(([x, y]) => Math.hypot(x - 100, y - 100));
   expect(Math.max(...radii(c)) - Math.min(...radii(c))).toBeLessThan(1.5); // Kreis bleibt rund
   expect(Math.max(...e.map((q) => q[0])) - Math.min(...e.map((q) => q[0]))).toBeGreaterThan(110); // Ellipse behält Form
   expect(new Set(c.map((q) => q[2])).size).toBe(1); // gleichmäßiger Druck
+});
+
+test("Form-Erkennung: gerader Pfeil in Varianten, gebogener Pfeil nicht", () => {
+  const wob = (i: number) => Math.sin(i * 1.7) * 0.8;
+  const path = (...c: [number, number][]): InkPoint[] => c.slice(1).flatMap((b, k) => {
+    const a = c[k] ?? b;
+    return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.5]);
+  }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
+  const kind = (p: InkPoint[]) => recognize(p)?.kind ?? null;
+  expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow"); // Haken hin und zurück
+  expect(kind(path([0, 0], [100, 0], [88, -8]))).toBe("arrow"); // nur ein Haken
+  expect(kind(path([0, 0], [100, 0], [86, -9], [86, 9], [100, 0]))).toBe("arrow"); // Dreieck-Spitze
+  expect(kind(path([10, 90], [40, 60], [70, 30], [95, 5], [80, 6], [95, 5], [94, 20]))).toBe("arrow"); // schräg
+  // Schaft mit 3 pt Zittern über 120 pt bleibt gerade
+  const shaky: InkPoint[] = Array.from({ length: 60 }, (_, i): InkPoint => [i * 2, Math.sin(i * 0.9) * 3, 0.5]);
+  expect(kind([...shaky, ...path([118, 0], [104, -10], [118, 0], [104, 10]).slice(1)])).toBe("arrow");
+  const a = recognize(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))?.points ?? [];
+  expect(a).toHaveLength(5);
+  expect(a[1]?.[0]).toBeCloseTo(100, -1); // Spitze vorn
+  // gebogener Schaft (Viertelkreis) + Spitze → kein Pfeil
+  const arc: InkPoint[] = Array.from({ length: 40 }, (_, i): InkPoint => [100 * Math.sin((i / 39) * 1.57), 100 - 100 * Math.cos((i / 39) * 1.57), 0.5]);
+  expect(kind([...arc, ...path([100, 100], [92, 86], [100, 100], [86, 94]).slice(1)])).not.toBe("arrow");
+});
+
+test("Form-Erkennung: Wurzelzeichen mit und ohne Anstrich, Dach waagrecht", () => {
+  const path = (...c: [number, number][]): InkPoint[] => c.slice(1).flatMap((b, k) => {
+    const a = c[k] ?? b;
+    return Array.from({ length: 15 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 15 + Math.sin(i * 1.3) * 0.6, a[1] + ((b[1] - a[1]) * i) / 15, 0.5]);
+  }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
+  const r1 = recognize(path([0, 50], [8, 45], [20, 80], [40, 0], [120, 3]));
+  const r2 = recognize(path([8, 45], [20, 80], [42, 2], [110, -2]));
+  expect(r1?.kind).toBe("root");
+  expect(r2?.kind).toBe("root");
+  for (const r of [r1, r2]) {
+    const q = r?.points ?? [];
+    expect(q.at(-1)?.[1]).toBe(q.at(-2)?.[1]); // Dach exakt waagrecht
+  }
+  expect(r1?.points).toHaveLength(5);
+  // ✓-Haken (kein Dach) und Funktionsgraphen sind keine Wurzel
+  expect(recognize(path([0, 40], [15, 60], [50, 0]))?.kind ?? null).toBe(null);
+});
+
+test("Funktionsgraphen: keine Form beim kurzen Halten, langes Halten glättet nur", () => {
+  const graph = (f: (x: number) => number) => Array.from({ length: 120 }, (_, i): InkPoint => [i, f(i) + Math.sin(i * 2.1) * 1.2, 0.5]);
+  const para = (x: number) => 20 + ((x - 60) ** 2) / 50, ex = (x: number) => 100 - (Math.exp(x / 26) - 1), ln = (x: number) => 100 - 18 * Math.log(1 + x);
+  for (const f of [para, ex, ln]) {
+    const raw = graph(f);
+    expect(recognize(raw)).toBe(null);
+    // Abstand zur echten Kurve (nicht senkrecht: am steilen Rand zählt sonst jede Querverschiebung vielfach)
+    const ideal = Array.from({ length: 1191 }, (_, i) => [i / 10, f(i / 10)] as const);
+    const sm = smoothCurve(raw), dev = (p: InkPoint[]) => Math.max(...p.slice(4, -4).map(([x, y]) => Math.min(...ideal.map(([u, v]) => Math.hypot(x - u, y - v)))));
+    expect(sm[0]?.slice(0, 2)).toEqual(raw[0]?.slice(0, 2)); // Enden fest
+    expect(sm.at(-1)?.slice(0, 2)).toEqual(raw.at(-1)?.slice(0, 2));
+    expect(dev(sm)).toBeLessThan(dev(raw)); // weniger Zittern …
+    expect(dev(sm)).toBeLessThan(2); // … Verlauf bleibt
+  }
+});
+
+test("Erkannte Form weiterziehen: skaliert um Mitte bzw. Startpunkt", () => {
+  const ring: InkPoint[] = Array.from({ length: 9 }, (_, i): InkPoint => [100 + 50 * Math.cos(i * Math.PI / 4), 100 + 50 * Math.sin(i * Math.PI / 4), 0.5]);
+  const big = dragShape("ellipse", ring, [150, 100], [200, 100]);
+  expect(Math.hypot((big[3]?.[0] ?? 0) - 100, (big[3]?.[1] ?? 0) - 100)).toBeCloseTo(100);
+  const arrow: InkPoint[] = [[0, 0, 0.5], [100, 0, 0.5], [85, -8, 0.5], [100, 0, 0.5], [85, 8, 0.5]];
+  const half = dragShape("arrow", arrow, [85, 8], [42.5, 4]);
+  expect(half[0]).toEqual([0, 0, 0.5]);
+  expect(half[1]?.[0]).toBeCloseTo(50);
+  expect(dragShape("root", arrow, [85, 8], [0, 0])[1]?.[0]).toBeGreaterThan(0); // nie auf null zusammenfallen
+});
+
+test("B1 cutStroke: Mitte raus → zwei Teile mit Schnittpunkten auf dem Kreis; daneben null; ganz drin []; Teile überleben Speichern → Laden", () => {
+  const pts: InkPoint[] = [[0, 0, 0.25], [100, 0, 0.75]]; // Druck linear: 0.25 + x/200
+  expect(cutStroke(pts, 50, 0, 10)).toEqual([[[0, 0, 0.25], [40, 0, 0.45]], [[60, 0, 0.55], [100, 0, 0.75]]]);
+  expect(cutStroke(pts, 50, 20, 10)).toBeNull();
+  expect(cutStroke(pts, 50, 0, 80)).toEqual([]);
+  expect(cutStroke(pts, 0, 0, 10)).toEqual([[[10, 0, 0.3], [100, 0, 0.75]]]); // Anfang weg
+  expect(cutStroke([[5, 5, 0.5]], 5, 6, 2)).toEqual([]); // Punkt
+  // Kreis zwischen zwei Stützpunkten eines mehrteiligen Strichs
+  expect(cutStroke([[0, 0, 0.5], [10, 0, 0.5], [10, 100, 0.5]], 10, 50, 5)?.map((f) => f.map((q) => q.map((v) => +v.toFixed(9))))).toEqual([[[0, 0, 0.5], [10, 0, 0.5], [10, 45, 0.5]], [[10, 55, 0.5], [10, 100, 0.5]]]);
+  const part = { ...s(0.5), points: [[60, 0, 0.44], [100, 0, 0.6]] as InkPoint[] };
+  const back = fromData(ItemData.parse(JSON.parse(JSON.stringify(toData(part)))));
+  expect(back.points).toEqual(part.points);
 });

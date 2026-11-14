@@ -1,11 +1,16 @@
-import { getStroke } from "perfect-freehand";
 import { z } from "zod";
 
 /** Punkt in pt relativ zur linken oberen Seitenecke, p = Druck 0–1. */
 export type InkPoint = [x: number, y: number, p: number];
 export type Rgb = [number, number, number];
 
-export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight", "axes"] as const;
+export const KINDS = ["ink", "marker", "line", "arrow", "rect", "ellipse", "text", "image", "highlight", "axes", "solid"] as const;
+export const SOLIDS = ["cuboid", "cube", "cylinder", "sphere"] as const;
+/** xyz-Gitter: X-Y = Rückwand, X-Z = Boden, Y-Z = linke Seitenwand */
+export const WALLS = ["xy", "xz", "yz"] as const;
+export type Wall = (typeof WALLS)[number];
+export type Solid = (typeof SOLIDS)[number];
+export type Dash = "dash" | "dot";
 export type Kind = (typeof KINDS)[number];
 
 /**
@@ -35,9 +40,24 @@ export interface Item {
   xyz?: boolean;
   /** Koordinatensystem: Karo-Gitter im Achsenbereich */
   grid?: boolean;
+  /** xyz-Gitter bis v1.3: fehlt → Rückwand (bis v1.2), `xz` = linke Wand, `all` = alle drei; neu: `walls` */
+  planes?: "xz" | "all";
+  /** xyz-Gitter ab v1.4: gewählte Wände, vorrangig vor `planes` */
+  walls?: Wall[];
+  /** Linie/Pfeil/Rechteck/Ellipse/Körper: Strichart; fehlt → durchgezogen */
+  dash?: Dash;
+  /** Körper (kind "solid") als Schrägbild; fehlt → Quader */
+  solid?: Solid;
   /** Rechteck/Ellipse: Füllfarbe (Deckkraft = `opacity`, wie `/CA` in der PDF); fehlt → keine Füllung */
   fill?: Rgb;
+  /** Text als Tag (Tag-Übersicht); `text` = Bezeichnung, damit andere Viewer das Wort sehen */
+  tag?: Tag;
 }
+
+/** Tags mit fester Farbe (rot/blau/grün) */
+export const TAGS = ["important", "question", "task"] as const;
+export type Tag = (typeof TAGS)[number];
+export const TAG_COLOR: Record<Tag, Rgb> = { important: [0.86, 0.15, 0.15], question: [0.15, 0.39, 0.92], task: [0.09, 0.64, 0.29] };
 
 /** Ebene 1 = PDF-Inhalt (keine eigenen Objekte), 2 = Elemente, 3 = Notizen */
 export type Layer = 1 | 2 | 3;
@@ -67,14 +87,24 @@ export const ItemData = z.object({
   rot: num.optional(),
   xyz: z.boolean().optional(),
   grid: z.boolean().optional(),
+  planes: z.enum(["xz", "all"]).optional(),
+  walls: z.array(z.enum(WALLS)).optional(),
+  dash: z.enum(["dash", "dot"]).optional(),
+  solid: z.enum(SOLIDS).optional(),
   fill: z.tuple([num, num, num]).optional(),
+  tag: z.enum(TAGS).optional(),
 });
 export const fromData = (d: z.infer<typeof ItemData>): Item => ({
   id: newId(), page: d.page, kind: d.kind, color: d.color, opacity: d.opacity, size: d.size,
   simulated: d.simulated, points: d.points, text: d.text, ...(d.image ? { image: d.image } : {}),
   layer: d.layer === 2 || d.layer === 3 ? d.layer : kindLayer(d.kind), ...(d.rot ? { rot: d.rot } : {}),
   ...(d.xyz ? { xyz: true } : {}), ...(d.grid ? { grid: true } : {}),
-  ...(d.fill ? { fill: d.fill } : {}),
+  ...(d.fill ? { fill: d.fill } : {}), ...opt(d),
+});
+/** Optionale Aufzählungs-Felder, nur wenn gesetzt */
+const opt = (d: Pick<Item, "planes" | "walls" | "dash" | "solid" | "tag">) => ({
+  ...(d.planes ? { planes: d.planes } : {}), ...(d.walls ? { walls: d.walls } : {}), ...(d.dash ? { dash: d.dash } : {}), ...(d.solid ? { solid: d.solid } : {}),
+  ...(d.tag ? { tag: d.tag } : {}),
 });
 
 /** Strichart: Farbe + Grundbreite (Formen nutzen den aktiven Stift) */
@@ -103,36 +133,42 @@ export const MARKER_OPACITY = 0.35;
 export const TEXT_SIZE = 14;
 export const FONT = "Helvetica, Arial, sans-serif";
 
+// Druck bis v1.2: Breite = size·(1 − THINNING·(1 − 2p)); neue Striche haben p = 0,5 → konstant `size`
 const THINNING = 0.5;
-// Stift-Test FELIXHP: Druck erreicht nur ~0,7 → darauf normieren; in den Einstellungen änderbar.
-export const PRESSURE_MAX = 0.75;
-
-export const normPressure = (p: number, max = PRESSURE_MAX) => Math.min(1, Math.max(0.05, p / max));
 
 /** Glättung beim Aufnehmen (live = gespeichert): neuer Punkt läuft um `s` (0–0,9) nach; 0 = exakt wie gezeichnet. */
 export const smoothPt = (prev: InkPoint | undefined, q: InkPoint, s: number): InkPoint =>
   prev && s > 0 ? [prev[0] + (q[0] - prev[0]) * (1 - s), prev[1] + (q[1] - prev[1]) * (1 - s), q[2]] : q;
 
+type Xy = [number, number];
 /**
- * Umriss-Punkte (perfect-freehand) in pt. streamline/smoothing 0: Umriss läuft exakt um die echten Punkte
- * (kein Nachziehen, das Ecken/Schleifen verzieht, keine Punktreduktion) → live, fertig und gespeichert gleich.
+ * Freihand-Mittellinie als quadratische Bézier-Kurven durch die Punkt-Mittelpunkte (Kontrollpunkt = echter Punkt):
+ * knickfrei (Tangente stetig), weicht je Punkt nur |2p − Vor − Nach|/8 ab → bei Stift-Punktdichte < 0,1 pt.
+ * Keine Glättung über mehrere Punkte, also keine Formverfremdung; live, fertig und gespeichert gleich.
+ * Rückgabe: Start + Segmente [Kontrollpunkt, Ende] (Kontrollpunkt = Ende → gerade).
  */
-export const outlinePoints = (s: Item) =>
-  getStroke(s.points, { size: s.size, thinning: THINNING, smoothing: 0, streamline: 0, simulatePressure: s.simulated });
+export function curve(pts: InkPoint[]): { start: Xy; segs: [Xy, Xy][] } {
+  const xy = pts.map(([x, y]): Xy => [x, y]);
+  const [start = [0, 0]] = xy, last = xy.at(-1) ?? start;
+  const segs = xy.slice(1, -1).map((p, i): [Xy, Xy] => {
+    const n = xy[i + 2] ?? p;
+    return [p, [(p[0] + n[0]) / 2, (p[1] + n[1]) / 2]];
+  });
+  // Einzelpunkt: winziges Stück, damit die runde Kappe einen Punkt zeichnet
+  segs.push(xy.length > 1 ? [last, last] : [[start[0] + 0.01, start[1]], [start[0] + 0.01, start[1]]]);
+  return { start, segs };
+}
 
-/** Gefüllter Umriss in pt; Zeichenkontext skaliert auf Zoom. */
-export function outline(s: Item): Path2D {
-  const o = outlinePoints(s);
-  const path = new Path2D();
-  o.forEach(([x, y], i) => (i ? path.lineTo(x, y) : path.moveTo(x, y)));
-  path.closePath();
-  return path;
+function curvePath(ctx: CanvasRenderingContext2D, pts: InkPoint[]) {
+  const { start, segs } = curve(pts);
+  ctx.beginPath();
+  ctx.moveTo(...start);
+  for (const [c, e] of segs) ctx.quadraticCurveTo(c[0], c[1], e[0], e[1]);
 }
 
 /**
- * Breite der gespeicherten Annotation: PDF-Ink kennt nur eine Breite je Strich →
- * mittlerer Durchmesser nach perfect-freehand-Formel (Radius = size·(0,5 − thinning·(0,5 − p))).
- * Andere Arten: Grundbreite.
+ * Breite des Strichs (Bildschirm und PDF-Ink, das nur eine Breite je Strich kennt). Neue Striche: konstant `size`.
+ * Alte Stift-Striche mit Druck: mittlerer Durchmesser der früheren Druckbreite, wie ihr PDF-Erscheinungsbild.
  */
 export function savedWidth(s: Item): number {
   if (s.kind !== "ink" || s.simulated || !s.points.length) return s.size;
@@ -145,7 +181,7 @@ export const toData = (it: Item) => ({
   width: savedWidth(it), simulated: it.simulated, points: it.points, text: it.text,
   ...(it.image ? { image: it.image } : {}), layer: layerOf(it), ...(it.rot ? { rot: it.rot } : {}),
   ...(it.xyz ? { xyz: true } : {}), ...(it.grid ? { grid: true } : {}),
-  ...(it.fill ? { fill: it.fill } : {}),
+  ...(it.fill ? { fill: it.fill } : {}), ...opt(it),
 });
 
 const css = (c: Rgb) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
@@ -186,7 +222,7 @@ export const gridWidth = (w: number) => Math.max(w * 0.3, 0.3);
 
 /**
  * Linien eines Koordinatensystems je Polylinie (wie `axes_lines` in Rust – beide gleich halten).
- * xy: Ursprung unten links. xyz (Schrägbild): y rechts, z oben, x schräg nach vorn-links (45°).
+ * xy: Ursprung unten links. xyz (Schrägbild): x rechts, y oben, z schräg nach vorn-links (45°, halb verkürzt).
  */
 export function axesLines(it: Item): { axes: Pt[][]; grid: Pt[][] } {
   const [a = ORIGIN, b = a] = it.points;
@@ -204,28 +240,157 @@ export function axesLines(it: Item): { axes: Pt[][]; grid: Pt[][] } {
   if (it.grid) {
     // volle Karos bis eine Pfeillänge vor die Spitzen
     const n = (v: number) => Math.min(1000, Math.max(0, Math.floor(v / KARO + 1e-4)));
-    const [nx, ny] = [n(x1 - len - o[0]), n(o[1] - y0 - len)];
-    for (let k = 1; k <= nx; k++) grid.push([[o[0] + k * KARO, o[1]], [o[0] + k * KARO, o[1] - ny * KARO]]);
-    for (let k = 1; k <= ny; k++) grid.push([[o[0], o[1] - k * KARO], [o[0] + nx * KARO, o[1] - k * KARO]]);
+    // Schrägbild-x: Karo-Diagonale halb verkürzt (Schritt KARO/2 nach links und unten)
+    const [nr, nu, nf] = [n(x1 - len - o[0]), n(o[1] - y0 - len), n((Math.SQRT2 * d - len) / (KARO * Math.SQRT1_2))];
+    const [r, u, f]: [Pt, Pt, Pt] = [[KARO, 0], [0, -KARO], [-KARO / 2, KARO / 2]];
+    const at = (p: Pt, i: number, q: Pt, j: number): Pt => [o[0] + i * p[0] + j * q[0], o[1] + i * p[1] + j * q[1]];
+    const plane = (p: Pt, np: number, q: Pt, nq: number) => {
+      for (let k = 1; k <= np; k++) grid.push([at(p, k, q, 0), at(p, k, q, nq)]);
+      for (let k = 1; k <= nq; k++) grid.push([at(q, k, p, 0), at(q, k, p, np)]);
+    };
+    const ws = wallsOf(it);
+    if (ws.includes("xy")) plane(r, nr, u, nu); // xy-System, Rückwand
+    if (ws.includes("yz")) plane(f, nf, u, nu); // linke Seitenwand
+    if (ws.includes("xz")) plane(f, nf, r, nr); // Boden
   }
   return { axes, grid };
 }
 
+/** Gitter-Wände (wie `walls` in Rust); alte Dateien über `planes` */
+export function wallsOf(it: Pick<Item, "xyz" | "walls" | "planes">): Wall[] {
+  if (!it.xyz) return ["xy"];
+  if (it.walls) return it.walls;
+  return it.planes === "xz" ? ["yz"] : it.planes === "all" ? [...WALLS] : ["xy"];
+}
+
+/** Strichmuster wie in der PDF (`/D`, stumpfe Enden); leer = durchgezogen */
+export const dashPattern = (dash: Dash | undefined, w: number) => (dash === "dash" ? [3 * w, 2 * w] : dash === "dot" ? [w, w] : []);
+
+/**
+ * Körper als Schrägbild (wie `solid_lines` in Rust – beide gleich halten): sichtbare und verdeckte Kanten je Polylinie.
+ * Quader/Würfel: Tiefe 45° nach hinten-rechts, halb verkürzt; Zylinder: stehend, Grundkreise als flache Ellipsen.
+ */
+export function solidLines(it: Item): { vis: Pt[][]; hid: Pt[][] } {
+  const [a = ORIGIN, b = a] = it.points;
+  const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+  const [w, h] = [x1 - x0, y1 - y0];
+  if (it.solid === "sphere") {
+    // Umriss-Kreis + Äquator-Ellipse: vordere (untere) Hälfte sichtbar, hintere verdeckt
+    const r = Math.min(w, h) / 2, cx = x0 + w / 2, cy = y0 + h / 2;
+    const arc = (ry: number, t0: number, n: number) =>
+      Array.from({ length: n + 1 }, (_, i): Pt => [cx + r * Math.cos(t0 + (i * Math.PI) / 24), cy + ry * Math.sin(t0 + (i * Math.PI) / 24)]);
+    return { vis: [arc(r, 0, 48), arc(r * 0.35, 0, 24)], hid: [arc(r * 0.35, Math.PI, 24)] };
+  }
+  if (it.solid === "cylinder") {
+    const rx = w / 2, ry = Math.min(rx * 0.35, h / 4), cx = x0 + rx, [top, bot] = [y0 + ry, y1 - ry];
+    // halbe Ellipse ab Winkel t0 (0 = vordere/untere Hälfte, π = hintere)
+    const arc = (cy: number, t0: number) => Array.from({ length: 25 }, (_, i): Pt => [cx + rx * Math.cos(t0 + (i * Math.PI) / 24), cy + ry * Math.sin(t0 + (i * Math.PI) / 24)]);
+    return { vis: [[...arc(top, 0), ...arc(top, Math.PI).slice(1)], arc(bot, 0), [[x0, top], [x0, bot]], [[x1, top], [x1, bot]]], hid: [arc(bot, Math.PI)] };
+  }
+  // Versatz der Tiefe je Richtung = Kante·½·cos 45°; Würfel: Kante = Vorderseite
+  const m = Math.min(w, h), q = Math.SQRT2 / 4, k = it.solid === "cube" ? (m / (1 + q)) * q : m * 0.25;
+  const [A, B, C, D]: [Pt, Pt, Pt, Pt] = [[x0, y1], [x1 - k, y1], [x1 - k, y0 + k], [x0, y0 + k]];
+  const back = ([x, y]: Pt): Pt => [x + k, y - k];
+  const [A2, B2, C2, D2] = [back(A), back(B), back(C), back(D)];
+  return { vis: [[A, B, C, D, A], [D, D2, C2, B2, B], [C, C2]], hid: [[D2, A2, B2], [A, A2]] };
+}
+
+/** Werkzeug-Optionen (Zahnrad/Rechtsklick), gelten fürs nächste Aufziehen; Sitzungszustand */
+export interface ShapeOpts {
+  xyz: boolean;
+  /** xy: Karo-Gitter an/aus */
+  grid: boolean;
+  /** xyz: Karo-Gitter auf diesen Wänden (leer = aus) */
+  walls: Wall[];
+  square: boolean;
+  circle: boolean;
+  fill?: Rgb;
+  dash?: Dash;
+  solid: Solid;
+  /** Radierer: nur den überfahrenen Teil von Stift-/Marker-Strichen entfernen statt ganzer Striche */
+  partial: boolean;
+}
+export const SHAPE_OPTS: ShapeOpts = { xyz: false, grid: false, walls: [], square: false, circle: false, solid: "cuboid", partial: false };
+
+/**
+ * Teil-Radierer: Punktfolge ohne den Kreis (cx, cy, r) → Restteile (je ≥ 2 Punkte, Schnittpunkte exakt auf dem Kreisrand,
+ * Druck interpoliert). `null` = Kreis berührt den Strich nicht; `[]` = ganz entfernt.
+ */
+export function cutStroke(pts: InkPoint[], cx: number, cy: number, r: number): InkPoint[][] | null {
+  const out = (p: InkPoint) => (p[0] - cx) ** 2 + (p[1] - cy) ** 2 > r * r;
+  const [first] = pts;
+  if (!first) return null;
+  if (pts.length === 1) return out(first) ? null : [];
+  const parts: InkPoint[][] = [];
+  let cur: InkPoint[] = out(first) ? [first] : [];
+  let hit = !out(first);
+  const at = (a: InkPoint, b: InkPoint, t: number): InkPoint => [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
+  const end = () => {
+    if (cur.length > 1) parts.push(cur);
+    cur = [];
+  };
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1] ?? first, b = pts[i] ?? first;
+    const dx = b[0] - a[0], dy = b[1] - a[1], fx = a[0] - cx, fy = a[1] - cy;
+    const A = dx * dx + dy * dy, B = 2 * (fx * dx + fy * dy), C = fx * fx + fy * fy - r * r;
+    const disc = B * B - 4 * A * C;
+    const t0 = A && disc > 0 ? (-B - Math.sqrt(disc)) / (2 * A) : 2, t1 = A && disc > 0 ? (-B + Math.sqrt(disc)) / (2 * A) : 2;
+    if (t1 < 0 || t0 > 1) {
+      // Segment ganz außerhalb (bzw. Länge 0 außerhalb)
+      if (out(b)) cur.push(b);
+      continue;
+    }
+    hit = true;
+    if (t0 > 0) cur.push(at(a, b, t0));
+    end();
+    if (t1 < 1) cur.push(at(a, b, t1), b);
+  }
+  end();
+  return hit ? parts : null;
+}
+
+/** Optionen → Felder eines neuen Elements dieser Art */
+export function shapeProps(kind: Kind, o: ShapeOpts): Partial<Item> {
+  const dash = o.dash && { dash: o.dash };
+  if (kind === "axes") {
+    if (!o.xyz) return { xyz: false, grid: o.grid };
+    return { xyz: true, grid: o.walls.length > 0, ...(o.walls.length && { walls: WALLS.filter((w) => o.walls.includes(w)) }) };
+  }
+  if (kind === "solid") return { solid: o.solid, ...dash };
+  if (kind === "rect" || kind === "ellipse") return { ...dash, ...(o.fill && { fill: o.fill }) };
+  if (kind === "line" || kind === "arrow") return { ...dash };
+  return {};
+}
+
+/** Quadrat/Kreis/Würfel: Endpunkt auf gleiche Breite und Höhe (größere gewinnt), Richtung bleibt */
+export function constrain(kind: Kind, o: ShapeOpts, a: InkPoint, b: InkPoint): InkPoint {
+  const eq = (kind === "rect" && o.square) || (kind === "ellipse" && o.circle) || (kind === "solid" && (o.solid === "cube" || o.solid === "sphere"));
+  if (!eq) return b;
+  const dx = b[0] - a[0], dy = b[1] - a[1], m = Math.max(Math.abs(dx), Math.abs(dy));
+  return [a[0] + (dx < 0 ? -m : m), a[1] + (dy < 0 ? -m : m), b[2]];
+}
+
+function polylines(ctx: CanvasRenderingContext2D, lines: Pt[][]) {
+  ctx.beginPath();
+  for (const l of lines) l.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+}
+
 function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
+  const dash = dashPattern(it.dash, it.size);
+  ctx.setLineDash(dash);
   ctx.globalAlpha = it.opacity;
   ctx.fillStyle = ctx.strokeStyle = css(it.color);
   ctx.lineWidth = it.size;
   ctx.lineCap = ctx.lineJoin = "round";
+  if (dash.length) ctx.lineCap = "butt";
   const [a = ORIGIN, b = a] = it.points;
   switch (it.kind) {
     case "ink":
-      return ctx.fill(outline(it));
-    case "marker": {
-      ctx.beginPath();
-      it.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-      if (it.points.length === 1) ctx.lineTo(a[0] + 0.01, a[1]);
+    case "marker":
+      ctx.lineWidth = savedWidth(it);
+      curvePath(ctx, it.points);
       return ctx.stroke();
-    }
     case "line":
     case "arrow": {
       ctx.beginPath();
@@ -280,10 +445,16 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item) {
       const { axes, grid } = axesLines(it);
       for (const [lines, w] of [[grid, gridWidth(it.size)], [axes, it.size]] as const) {
         ctx.lineWidth = w;
-        ctx.beginPath();
-        for (const l of lines) l.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-        ctx.stroke();
+        polylines(ctx, lines);
       }
+      return;
+    }
+    case "solid": {
+      const { vis, hid } = solidLines(it);
+      polylines(ctx, vis);
+      ctx.setLineDash(dashPattern("dash", it.size));
+      ctx.lineCap = "butt";
+      return polylines(ctx, hid);
     }
   }
 }
@@ -417,9 +588,10 @@ export function hitTest(it: Item, x: number, y: number, tol: number): boolean {
       const d = Math.hypot((x - cx) / rx, (y - cy) / ry);
       return (it.fill !== undefined && d <= 1) || Math.abs(d - 1) * Math.min(rx, ry) <= r;
     }
-    case "axes": {
-      const { axes, grid } = axesLines(it);
-      return [...axes, ...grid].some((l) => l.some((p, i) => i > 0 && segDist(x, y, [...(l[i - 1] ?? p), 0], [...p, 0]) <= r));
+    case "axes":
+    case "solid": {
+      const lines = it.kind === "axes" ? Object.values(axesLines(it)).flat() : Object.values(solidLines(it)).flat();
+      return lines.some((l) => l.some((p, i) => i > 0 && segDist(x, y, [...(l[i - 1] ?? p), 0], [...p, 0]) <= r));
     }
     case "text":
     case "image":
@@ -535,18 +707,14 @@ export const afterRotate = (items: Item[], k: number, h: number) =>
   items.map((it) => (it.page === k ? mapItem(it, (x, y) => [h - y, x]) : it));
 
 /**
- * Platz einfügen: Objekte der Seite, die bei `y` oder tiefer beginnen, um `dy` verschieben (negativ = Platz entfernen).
- * Begrenzt auf die Seite (0…h), nichts rutscht über den Rand. Liefert nur die verschobenen Objekte.
+ * Platz einfügen: die Seite wird bei `y` zerschnitten und um `dy` verlängert (Backend); eigene Objekte, die bei `y`
+ * oder tiefer beginnen, rücken um `dy` mit. Liefert nur die verschobenen Objekte.
  */
-export function makeSpace(items: Item[], page: number, y: number, dy: number, h: number): Item[] {
-  const below = items.filter((it) => it.page === page && box(it).y0 >= y);
-  if (!below.length) return [];
-  const top = Math.min(...below.map((it) => box(it).y0)), bottom = Math.max(...below.map((it) => box(it).y1));
-  const d = dy > 0 ? Math.min(dy, Math.max(0, h - bottom)) : Math.max(dy, Math.min(0, -top));
-  return d ? below.map((it) => moveItem(it, 0, d)) : [];
+export function makeSpace(items: Item[], page: number, y: number, dy: number): Item[] {
+  return dy > 0 ? items.filter((it) => it.page === page && box(it).y0 >= y).map((it) => moveItem(it, 0, dy)) : [];
 }
 
-export type ShapeKind = "line" | "arrow" | "rect" | "triangle" | "ellipse";
+export type ShapeKind = "line" | "arrow" | "root" | "rect" | "triangle" | "ellipse" | "curve";
 const dist = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 /** Douglas-Peucker: Eckpunkte eines Zugs mit Toleranz `eps` */
 function corners(p: Pt[], eps: number): Pt[] {
@@ -568,10 +736,11 @@ const turn = (a: Pt, b: Pt, c: Pt) => {
 
 /**
  * Form-Erkennung beim Shape-Hold: Freihand-Zug → saubere Form als Punktfolge (bleibt ein Stift-Strich auf Ebene 3).
- * Offen: Linie, oder Pfeil (langer Schaft + kurze Spitze mit Kehrtwende); geschlossen (Ende nah am Anfang):
+ * Offen: Linie, gerader Pfeil (Spitze = vom Start entferntester Punkt, Schaft gerade, Haken zurück) oder Wurzelzeichen;
+ * sonst `null` (Kurve → erst langes Halten glättet, `smoothCurve`). Geschlossen (Ende nah am Anfang):
  * 3 Ecken → Dreieck, 4 → Rechteck (achsnah → achsparallel), sonst Kreis/Ellipse. Druck = Mittelwert.
  */
-export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } {
+export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } | null {
   // ponytail: Ecken-Zählung per Douglas-Peucker statt trainiertem Erkenner; reicht für die fünf Grundformen
   const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1);
   const p = raw.map(([x, y]): Pt => [x, y]);
@@ -583,15 +752,28 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
   const line = out("line", [a, z]);
   if (D < 4) return line;
   if (dist(a, z) > 0.25 * D) {
-    const s = corners(p, 0.08 * D);
-    const [s0, s1, s2] = s;
-    if (s.length < 3 || !s0 || !s1 || !s2) return line;
-    const shaft = dist(s0, s1), rest = s.slice(2).map((q, i) => dist(s[i + 1] ?? q, q));
-    if (turn(s0, s1, s2) < 100 || rest.some((l) => l > 0.6 * shaft) || rest.reduce((t, l) => t + l, 0) > 1.6 * shaft) return out("line", [s0, z]);
-    // Spitze: zwei gleich lange Schenkel ±28° gegen die Schaftrichtung
-    const bl = Math.min(Math.max(...rest), 0.4 * shaft), ang = Math.atan2(s0[1] - s1[1], s0[0] - s1[0]);
-    const barb = (d: number): Pt => [s1[0] + bl * Math.cos(ang + d), s1[1] + bl * Math.sin(ang + d)];
-    return out("arrow", [s0, s1, barb(0.49), s1, barb(-0.49)]);
+    if (corners(p, 0.06 * D).length === 2) return line;
+    // Pfeil: Spitze = erstes Maximum der Entfernung vom Start (Rückweg darf sie knapp überschreiten),
+    // Schaft davor gerade, Haken danach läuft zurück
+    const dm = Math.max(...p.map((q) => dist(q, a)));
+    let k = p.findIndex((q) => dist(q, a) >= 0.95 * dm);
+    while (k + 1 < p.length && dist(p[k + 1] ?? a, a) >= dist(p[k] ?? a, a)) k++;
+    const tip = p[k] ?? z, shaft = dist(a, tip);
+    const head = p.slice(k + 1), far = head.reduce((m, q) => (dist(q, tip) > dist(m, tip) ? q : m), tip), hl = dist(far, tip);
+    if (corners(p.slice(0, k + 1), 0.06 * shaft).length === 2 && hl > 0.08 * shaft && hl < 0.6 * shaft && turn(a, tip, far) > 105) {
+      const bl = Math.min(hl, 0.4 * shaft), ang = Math.atan2(a[1] - tip[1], a[0] - tip[0]);
+      const barb = (d: number): Pt => [tip[0] + bl * Math.cos(ang + d), tip[1] + bl * Math.sin(ang + d)];
+      return out("arrow", [a, tip, barb(0.49), tip, barb(-0.49)]);
+    }
+    // Wurzel: (Anstrich) ↘ kurz, ↗ lang und steil, → waagrecht; Dach wird exakt waagrecht
+    const s = corners(p, 0.06 * D).filter((q, i, v) => i === 0 || dist(q, v[i - 1] ?? q) > 0.05 * D);
+    const [v, t, e] = s.slice(-3), d0 = s.at(-4);
+    if (d0 && v && t && e && s.length <= 5) {
+      const [dx1, dy1, dx2, dy2, dx3, dy3] = [v[0] - d0[0], v[1] - d0[1], t[0] - v[0], t[1] - v[1], e[0] - t[0], e[1] - t[1]];
+      if (dy1 > 0 && dx1 > -0.3 * dy1 && dy2 < 0 && -dy2 > dy1 && -dy2 > 0.5 * Math.abs(dx2) && dx3 > 0.3 * -dy2 && Math.abs(dy3) < 0.3 * dx3)
+        return out("root", [...s.slice(0, -1), [e[0], t[1]]]);
+    }
+    return null;
   }
   // geschlossen: am entferntesten Punkt teilen, Ecken zyklisch, fast gerade Knicke und Doppelpunkte raus
   const k = p.reduce((m, q, i) => (dist(q, a) > dist(p[m] ?? a, a) ? i : m), 0);
@@ -620,4 +802,48 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
   let rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
   if (Math.abs(rx - ry) < 0.15 * Math.max(rx, ry)) rx = ry = (rx + ry) / 2;
   return out("ellipse", Array.from({ length: 49 }, (_, i): Pt => [cx + rx * Math.cos((i / 48) * 2 * Math.PI), cy + ry * Math.sin((i / 48) * 2 * Math.PI)]));
+}
+
+/**
+ * Langes Halten auf einer Kurve (Funktionsgraph): Verlauf bleibt, nur das Zittern geht weg.
+ * Gleichabständig neu abtasten, dann zweimal gleitender Mittelwert (Fenster ≈ 4 % der Länge), Enden fest.
+ */
+export function smoothCurve(raw: InkPoint[]): InkPoint[] {
+  const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1), P = raw.map(([x, y]): Pt => [x, y]);
+  const len = P.slice(1).reduce((s, q, i) => s + dist(P[i] ?? q, q), 0);
+  const n = Math.round(Math.min(200, Math.max(16, len / 2)));
+  const out: Pt[] = [];
+  for (let i = 0, j = 0, acc = 0; i <= n; i++) {
+    const at = (len * i) / n;
+    for (;;) {
+      const q = P[j], r = P[j + 1];
+      if (!q || !r) break;
+      const l = dist(q, r);
+      if (acc + l >= at) { const t = l ? (at - acc) / l : 0; out.push([q[0] + (r[0] - q[0]) * t, q[1] + (r[1] - q[1]) * t]); break; }
+      acc += l;
+      j++;
+    }
+    const z = P.at(-1);
+    if (z && (i === n || out.length <= i)) out[i] = z;
+  }
+  const w = Math.max(2, Math.round(n * 0.04));
+  let p = out;
+  for (let pass = 0; pass < 2; pass++)
+    p = p.map((_, i) => {
+      const k = Math.min(w, i, p.length - 1 - i), win = p.slice(i - k, i + k + 1);
+      return [win.reduce((s, r) => s + r[0], 0) / win.length, win.reduce((s, r) => s + r[1], 0) / win.length];
+    });
+  return p.map(([x, y]): InkPoint => [x, y, pr]);
+}
+
+/**
+ * Nach der Erkennung weiterziehen: Form gleichmäßig skalieren, so dass der Haltepunkt `hold` dem Stift folgt.
+ * Fixpunkt: geschlossene Formen → Mitte, offene → Startpunkt.
+ */
+export function dragShape(kind: ShapeKind, base: InkPoint[], hold: Pt, pen: Pt): InkPoint[] {
+  const xs = base.map((q) => q[0]), ys = base.map((q) => q[1]), b0 = base[0];
+  const o: Pt = kind === "rect" || kind === "triangle" || kind === "ellipse" || !b0
+    ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : [b0[0], b0[1]];
+  const s = Math.max(0.05, dist(o, pen) / Math.max(1, dist(o, hold)));
+  return base.map(([x, y, pr]): InkPoint => [o[0] + (x - o[0]) * s, o[1] + (y - o[1]) * s, pr]);
 }

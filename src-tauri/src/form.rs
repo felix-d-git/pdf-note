@@ -158,18 +158,38 @@ fn ensure_font(doc: &mut PdfDocument, form: &mut PdfObject, key: &str, base: &st
     Ok(())
 }
 
+/// Feld muss auf der Seite liegen und mindestens 4 pt groß sein.
+fn check_rect(doc: &PdfDocument, page: i32, [x0, y0, x1, y1]: [f32; 4]) -> Result<(), String> {
+    let size = *crate::pdf::page_sizes(doc).map_err(|e| e.to_string())?.get(page as usize).ok_or("ungültige Seite")?;
+    let ok = [x0, y0, x1, y1].iter().all(|v| v.is_finite()) && x1 - x0 >= 4.0 && y1 - y0 >= 4.0
+        && x0 >= -1.0 && y0 >= -1.0 && x1 <= size[0] + 1.0 && y1 <= size[1] + 1.0;
+    if ok { Ok(()) } else { Err("Feld liegt nicht auf der Seite oder ist zu klein".into()) }
+}
+
+/// Feld verschieben/skalieren (`rect` in App-Koordinaten); Erscheinungsbild wird neu erzeugt.
+pub fn place(doc: &mut PdfDocument, page: i32, xref: i32, rect: [f32; 4]) -> Result<(), String> {
+    check_rect(doc, page, rect)?;
+    let err = |e: Error| e.to_string();
+    let mut p = doc.load_pdf_page(page).map_err(err)?;
+    let w = p.load_widget(xref).map_err(err)?.ok_or("Feld nicht gefunden")?;
+    if w.is_readonly().map_err(err)? {
+        return Err("Feld ist schreibgeschützt".into());
+    }
+    let mut a = w.into_annotation();
+    let [x0, y0, x1, y1] = rect;
+    a.set_rect(Rect::new(x0, y0, x1, y1)).map_err(err)?;
+    a.update().map_err(err)?;
+    p.update().map_err(err)?;
+    Ok(())
+}
+
 pub fn create(doc: &mut PdfDocument, page: i32, f: &NewField) -> Result<(), String> {
     let name = f.name.trim();
     if name.is_empty() || name.contains('.') {
         return Err("Feldname fehlt oder enthält einen Punkt".into());
     }
     let [x0, y0, x1, y1] = f.rect;
-    let size = *crate::pdf::page_sizes(doc).map_err(|e| e.to_string())?.get(page as usize).ok_or("ungültige Seite")?;
-    let ok = f.rect.iter().all(|v| v.is_finite()) && x1 - x0 >= 4.0 && y1 - y0 >= 4.0
-        && x0 >= -1.0 && y0 >= -1.0 && x1 <= size[0] + 1.0 && y1 <= size[1] + 1.0;
-    if !ok {
-        return Err("Feld liegt nicht auf der Seite oder ist zu klein".into());
-    }
+    check_rect(doc, page, f.rect)?;
     let options: Vec<&str> = f.options.iter().map(|o| o.trim()).filter(|o| !o.is_empty()).collect();
     let (ft, ff, da) = match f.kind.as_str() {
         "text" => ("Tx", 0, "/Helv 0 Tf 0 g"),
@@ -362,6 +382,19 @@ mod tests {
         assert!(names.contains(&"T".to_string()) && names.contains(&"Liste".to_string()));
         let acro = doc.catalog().unwrap().get_dict("AcroForm").unwrap().unwrap().get_dict("Fields").unwrap().unwrap();
         assert_eq!(acro.len().unwrap(), 2, "Fields: Radio-Gruppe und Haken müssen raus");
+    }
+
+    #[test]
+    fn feld_verschieben() {
+        let mut doc = sample();
+        let nf = NewField { kind: "text".into(), name: "T".into(), rect: [20.0, 80.0, 90.0, 95.0], options: vec![] };
+        create(&mut doc, 0, &nf).unwrap();
+        let x = fields(&doc, 0).unwrap().into_iter().find(|f| f.name == "T").unwrap().xref;
+        place(&mut doc, 0, x, [30.0, 100.0, 150.0, 130.0]).unwrap();
+        assert!(place(&mut doc, 0, x, [30.0, 100.0, 31.0, 130.0]).is_err(), "zu klein");
+        let doc = PdfDocument::from_bytes(&crate::pdf::to_bytes(&doc).unwrap()).unwrap();
+        let r = fields(&doc, 0).unwrap().into_iter().find(|f| f.name == "T").unwrap().rect;
+        assert!(r.iter().zip([30.0, 100.0, 150.0, 130.0]).all(|(a, b)| (a - b).abs() < 0.01), "{r:?}");
     }
 
     #[test]

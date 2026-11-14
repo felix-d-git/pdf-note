@@ -40,7 +40,7 @@ fn b64(bytes: &[u8]) -> String {
 }
 
 fn item(page: i32, kind: pdf::Kind, points: Vec<[f32; 3]>, text: &str) -> pdf::Item {
-    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0, xyz: false, grid: false, fill: None }
+    pdf::Item { page, kind, color: [0.0, 0.0, 1.0], opacity: 1.0, size: 12.0, width: 1.5, simulated: false, points, text: text.into(), image: String::new(), layer: 0, rot: 0.0, xyz: false, grid: false, planes: None, walls: None, dash: None, solid: None, fill: None, tag: None }
 }
 
 /// Alle Schreibpfade der App gegen jede Test-PDF (Kopie): Objekte speichern → neu öffnen → identisch zurück,
@@ -470,6 +470,58 @@ vorher {:?}
 nachher {:?}", o.text, o.bbox, before.iter().map(|p| (&p.text, p.bbox)).collect::<Vec<_>>(), after.iter().map(|p| (&p.text, p.bbox)).collect::<Vec<_>>());
         }
         let t = page_texts(&doc).unwrap();
+        for i in 1..texts.len() {
+            assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
+        }
+        assert_eq!(std::fs::read_dir(&solo).unwrap().count(), 1, "{f}: Zusatzdatei");
+        assert_eq!(original, std::fs::read(&src).unwrap(), "{f}: Original verändert");
+    }
+}
+
+/// Platz einfügen (Seite zerschneiden + verlängern) → speichern → neu öffnen: Seite um `dy` höher,
+/// Absätze oberhalb unverändert, darunter um `dy` tiefer, kein Text doppelt, andere Seiten gleich.
+#[test]
+#[ignore]
+fn platz_einfuegen() {
+    use pdf::PageOp;
+    use pdf_note_lib::text::paragraphs;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/pdfs");
+    let solo = std::env::temp_dir().join("pdf-note-test-platz");
+    for f in ["latex.pdf", "word.pdf"] {
+        let src = dir.join(f);
+        let original = std::fs::read(&src).expect("testdata/pdfs/ fehlt");
+        let _ = std::fs::remove_dir_all(&solo);
+        std::fs::create_dir_all(&solo).unwrap();
+        let copy = solo.join(f);
+        std::fs::copy(&src, &copy).unwrap();
+
+        let mut doc = pdf::open(&copy).unwrap();
+        let texts = page_texts(&doc).unwrap();
+        let [w, h] = pdf::page_sizes(&doc).unwrap()[0];
+        let before = paragraphs(&doc, 0).unwrap();
+        // Schnitt knapp über dem ersten Absatz der unteren Seitenhälfte → keine Zeile wird zerteilt
+        let y = before.iter().map(|p| p.bbox[1]).filter(|&t| t > h / 2.0).fold(f32::MAX, f32::min) - 0.5;
+        assert!(y < h, "{f}: kein Absatz in der unteren Hälfte");
+        let dy = 120.0;
+        pdf::page_op(&mut doc, &PageOp::Space { page: 0, y, dy }).unwrap();
+        pdf::save(&doc, &[], &copy, false, pdf::Crypt::Keep).unwrap();
+
+        let doc = pdf::open(&copy).unwrap();
+        assert_eq!(pdf::page_sizes(&doc).unwrap()[0], [w, h + dy], "{f}: Seitengröße");
+        let after = paragraphs(&doc, 0).unwrap();
+        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(after.len(), before.len(), "{f}: Absatzanzahl");
+        for (i, o) in before.iter().enumerate() {
+            let shift = if o.bbox[1] >= y { dy } else { 0.0 };
+            // gleichlautende Absätze (z. B. leere Zeilen) → den nächstliegenden zur erwarteten Stelle nehmen
+            let (ox, oy) = o.origin();
+            let dist = |q: &&pdf_note_lib::text::Para| (q.origin().0 - ox).abs() + (q.origin().1 - oy - shift).abs();
+            let q = after.iter().filter(|q| norm(&q.text) == norm(&o.text)).min_by(|a, b| dist(a).total_cmp(&dist(b))).unwrap_or_else(|| panic!("{f}: Absatz {i} fehlt: {}", o.text));
+            let (qx, qy) = q.origin();
+            assert!((qx - ox).abs() < 0.5 && (qy - oy - shift).abs() < 0.5, "{f}: Absatz {i}: ({ox},{oy}) -> ({qx},{qy})");
+        }
+        let t = page_texts(&doc).unwrap();
+        assert_eq!(norm(&texts[0]).len(), norm(&t[0]).len(), "{f}: Text Seite 0 doppelt/fehlt");
         for i in 1..texts.len() {
             assert_eq!(texts[i], t[i], "{f}: Text Seite {i}");
         }

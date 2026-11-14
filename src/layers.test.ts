@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { isLayerLocked, lockedLayers, setLayerLocked, targetLayer } from "./layers";
+import { isLayerLocked, LOCK_EVENT, lockedLayers, setLayerLocked, targetLayer } from "./layers";
 
 beforeEach(() => {
   const mem = new Map<string, string>();
@@ -30,5 +30,15 @@ test("Zielebene je Werkzeug: Marker/Formen liegen über gesperrter Ebene 1", () 
   expect(targetLayer("marker", 1)).toBe(3);
   expect(targetLayer("rect", 1)).toBe(2);
   expect(targetLayer("rect", 3)).toBe(3);
+  expect(targetLayer("pen", 2)).toBe(3);
+  expect(targetLayer("marker", 2)).toBe(3);
   expect(targetLayer("space", 2)).toBeNull();
+});
+
+test("Änderung meldet sich per Ereignis (Split-Hälfte mit derselben PDF übernimmt sofort)", () => {
+  const seen = vi.fn();
+  window.addEventListener(LOCK_EVENT, seen);
+  setLayerLocked("a.pdf", 2, true);
+  window.removeEventListener(LOCK_EVENT, seen);
+  expect(seen).toHaveBeenCalledOnce();
 });

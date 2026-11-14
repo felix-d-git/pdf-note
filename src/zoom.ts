@@ -8,7 +8,8 @@ export function wheelFactor(deltaY: number, deltaMode = 0): number {
 }
 
 /**
- * Scrollposition nach dem Zoomen um `r`, sodass der Inhaltspunkt unter dem Zeiger (`p` = Zeiger relativ zum Container) stehen bleibt.
- * ponytail: Seitenränder/Abstände skalieren nicht mit → Punkt wandert dort leicht.
+ * Scroll-Korrektur (eine Achse) nach dem Zoomen: Seite liegt jetzt bei `pageAt` (Bildschirm-px), der gemerkte Seitenpunkt `u`
+ * (CSS-px bei Zoom 1) soll wieder unter dem Zeiger `p` stehen. Über die Seite statt über den Container gerechnet,
+ * weil Seitenabstände und Rand nicht mitskalieren.
  */
-export const scrollAfterZoom = (scroll: number, p: number, r: number) => (scroll + p) * r - p;
+export const anchorShift = (pageAt: number, u: number, zoom: number, p: number) => pageAt + u * zoom - p;

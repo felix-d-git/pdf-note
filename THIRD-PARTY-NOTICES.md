@@ -4,15 +4,14 @@
 
 | Komponente | Version | Lizenz | Verwendung |
 |---|---|---|---|
-| MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex; Rust-Bindings: messense) | 0.8.0 | AGPL-3.0 | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Feature `base14-fonts`: URW-Base-14-Schriften, Lizenz siehe Abschnitt „URW-Schriften“ unten. Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/` siehe nächste Tabelle |
+| MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex; Rust-Bindings: messense) | 0.8.0 | MuPDF-C-Code: AGPL-3.0-or-later (Dateiköpfe „version 3 … or (at your option) any later version“); Rust-Crates: `AGPL-3.0` laut `Cargo.toml` (Altkennung) | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Feature `base14-fonts`: URW-Base-14-Schriften, Lizenz siehe Abschnitt „URW-Schriften“ unten. Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/` siehe nächste Tabelle |
 | Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`) |
 | Tauri (`tauri`, `tauri-build`, `@tauri-apps/api`, `@tauri-apps/cli`; Tauri Apps Contributors) | 2.x | MIT OR Apache-2.0 | Desktop-Shell (WebView2) |
 | Tauri Dialog-Plugin (`tauri-plugin-dialog`, `@tauri-apps/plugin-dialog`), darunter `rfd` 0.17 (MIT) | 2.8 | MIT OR Apache-2.0 | Datei-Öffnen-Dialog, Nachfrage beim Schließen |
 | Tauri Single-Instance-Plugin (`tauri-plugin-single-instance`) | 2.5 | MIT OR Apache-2.0 | eine Instanz: zweiter Start reicht den PDF-Pfad lokal an die laufende App |
 | serde | 1.0 | MIT OR Apache-2.0 | Objekte vom Frontend deserialisieren |
 | serde_json | 1.0 | MIT OR Apache-2.0 | eigene Objekte als JSON in der Annotation (`/PDFNote`) |
-| base64 | 0.22 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
-| perfect-freehand (Stephen Ruiz Ltd) | 1.2.3 | MIT | Ink-Glättung + Druckbreite |
+| base64 | 0.23 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
 | React, React DOM | 19.3 | MIT | UI |
 | lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.64 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
 | Zod | 4.6 | MIT | Validierung an Grenzen |
@@ -29,7 +28,7 @@ Unter Windows/MSVC baut `mupdf-sys` per msbuild die komplette `libmupdf` samt `l
 |---|---|---|
 | FreeType | FTL **oder** GPL-2.0-or-later – hier **GPL-2.0-or-later** gewählt (die FTL ist mit der GPLv2 unvereinbar; mit GPLv3/AGPLv3 wäre sie zwar vereinbar, die GPL-Wahl hält das Gesamtwerk aber ohne Werbeklausel) | Schrift-Rasterung |
 | HarfBuzz | MIT („Old MIT“); USE-Tabellen `src/ms-use`: MIT, Microsoft (`mupdf-harfbuzz-ms-use-COPYING.txt`) | Text-Shaping |
-| jbig2dec | AGPL-3.0 | JBIG2-Bilder |
+| jbig2dec | AGPL-3.0-or-later (`thirdparty/jbig2dec/LICENSE`) | JBIG2-Bilder |
 | lcms2 (lcms2mt, Artifex-Fork) | MIT | Farbmanagement |
 | libjpeg (IJG) | IJG | This software is based in part on the work of the Independent JPEG Group. |
 | OpenJPEG | BSD-2-Clause | JPEG 2000 |

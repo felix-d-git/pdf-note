@@ -1,5 +1,5 @@
 import { Check, X, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from "react";
 import { T, tip } from "./i18n";
 
 export const BTN = "inline-flex items-center gap-1.5 rounded-xs p-1.5 text-sm text-ink-2 hover:bg-raised hover:text-ink disabled:opacity-40";
@@ -21,7 +21,7 @@ export function Toast({ msg, onClose, className = "absolute" }: { msg?: string; 
   );
 }
 
-type Props = ButtonHTMLAttributes<HTMLButtonElement> & { icon: LucideIcon; label: string; keys?: string; text?: boolean };
+type Props = ButtonHTMLAttributes<HTMLButtonElement> & { icon: LucideIcon | ComponentType<{ size?: number; "aria-hidden"?: boolean }>; label: string; keys?: string; text?: boolean };
 
 /** Symbol-Knopf: Tooltip „Name (Taste)", aria-label = Name; `text` zeigt den Namen zusätzlich (Menüs, Dialoge). */
 export function IconBtn({ icon: I, label, keys, text, className = BTN, children, ...p }: Props) {
@@ -34,13 +34,48 @@ export function IconBtn({ icon: I, label, keys, text, className = BTN, children,
   );
 }
 
+/**
+ * Offenes Popover: ein Tipp außerhalb von `inside` schließt es nur – der Tipp (samt folgendem Klick)
+ * erreicht nichts darunter, auch nicht den Auslöser; erneuter Tipp auf den Auslöser schließt also.
+ */
+export function useOutside(open: boolean, inside: (t: Element) => boolean, close: () => void) {
+  const cb = useRef({ inside, close });
+  useEffect(() => void (cb.current = { inside, close }));
+  useEffect(() => {
+    if (!open) return;
+    const swallow = (e: Event) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    const down = (e: PointerEvent) => {
+      if (e.target instanceof Element && cb.current.inside(e.target)) return;
+      swallow(e);
+      cb.current.close();
+      addEventListener("click", swallow, { capture: true, once: true });
+      // kein Klick gefolgt (gezogen/abgebrochen): Sperre nach dem Loslassen lösen
+      const release = () => {
+        removeEventListener("pointerup", release, true);
+        removeEventListener("pointercancel", release, true);
+        setTimeout(() => removeEventListener("click", swallow, true));
+      };
+      addEventListener("pointerup", release, true);
+      addEventListener("pointercancel", release, true);
+    };
+    addEventListener("pointerdown", down, true);
+    return () => removeEventListener("pointerdown", down, true);
+  }, [open]);
+}
+
 /** Aufklappmenü hinter einem Symbol; Klick auf einen Eintrag mit `data-close` schließt es. */
 export function Menu({ icon: I, label, keys, panel = "min-w-44 p-1", children }: { icon: LucideIcon; label: string; keys?: string; panel?: string; children: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  useOutside(open, (t) => !!ref.current?.contains(t), () => ref.current?.removeAttribute("open"));
   return (
     <details
       ref={ref}
       className="relative"
+      onToggle={(e) => setOpen(e.currentTarget.open)}
       onClick={(e) => (e.target as HTMLElement).closest("[data-close]") && ref.current?.removeAttribute("open")}
     >
       <summary className={BTN + " list-none cursor-pointer"} title={tip(label, keys)} aria-label={label}>
@@ -60,7 +95,7 @@ export const pwProblem = (pw: string, repeat = pw) =>
   !pw || pw.includes("\0") || new TextEncoder().encode(pw).length > 127 ? T.pwRule : pw !== repeat ? T.pwMismatch : undefined;
 
 /** Modaler Dialog: Enter = `onOk`, Esc = `onCancel`; Tasten erreichen die Fenster-Kürzel nicht (kein Strg+W darunter). */
-export function Dialog({ title, ok, onOk, onCancel, children }: { title: string; ok: string; onOk: () => void; onCancel: () => void; children: ReactNode }) {
+export function Dialog({ title, ok, onOk, onCancel, children, wide }: { title: string; ok: string; onOk: () => void; onCancel: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLFormElement>(null);
   // Fokus in den Dialog, sonst wirken Esc/Enter nicht und Tasten landen bei den Fenster-Kürzeln
   useEffect(() => {
@@ -74,7 +109,7 @@ export function Dialog({ title, ok, onOk, onCancel, children }: { title: string;
         role="dialog"
         aria-modal
         aria-label={title}
-        className="flex w-80 flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm text-ink shadow-raised outline-none"
+        className={`flex ${wide ? "w-[37rem]" : "w-80"} flex-col gap-2 rounded-xs border border-line bg-surface p-3 text-sm text-ink shadow-raised outline-none`}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") onCancel();

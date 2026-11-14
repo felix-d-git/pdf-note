@@ -34,6 +34,25 @@ function Baum([int]$wurzel) {
 }
 $lokal = '^(127\.|::1$|0\.0\.0\.0$|::$)'
 
+# App-Fenster über den Titel suchen: MainWindowHandle kann auch das unsichtbare Hilfsfenster der
+# Single-Instance-Sperre (<identifier>-siw, WS_VISIBLE + transparent) treffen, je nach Z-Reihenfolge
+Add-Type @'
+using System; using System.Text; using System.Runtime.InteropServices;
+public static class Fenster {
+    delegate bool P(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(P f, IntPtr l);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    public static IntPtr App(int pid, out string titel) {
+        IntPtr r = IntPtr.Zero; string t = "";
+        EnumWindows((h, l) => { uint q; GetWindowThreadProcessId(h, out q); var sb = new StringBuilder(512); GetWindowText(h, sb, 512);
+            if (q == pid && sb.ToString().EndsWith("PDF Note")) { r = h; t = sb.ToString(); return false; } return true; }, IntPtr.Zero);
+        titel = t; return r;
+    }
+}
+'@
+
 # installierte App teilt die Instanz-Sperre (gleiche identifier) → erster Start würde sich sonst sofort beenden
 if (Get-Process pdf-note -ErrorAction SilentlyContinue) { throw 'PDF Note läuft schon (eine Instanz) – erst beenden' }
 $p = Start-Process $Exe -ArgumentList "`"$kopie`"" -PassThru
@@ -55,12 +74,12 @@ while ((Get-Date) -lt $ende -and -not $p.HasExited) {
 if (-not $zweit) { $fehler += 'zweiter Start nicht ausgeführt (Laufzeit zu kurz)' }
 elseif (-not $zweit.WaitForExit(1000)) { Stop-Process -Id $zweit.Id -Force; $fehler += 'zweite Instanz läuft weiter' }
 elseif (-not $p.HasExited) {
-    $p.Refresh()
-    if ($p.MainWindowTitle -notlike '*zweite Datei ü.pdf*') { $fehler += "zweite PDF nicht in der laufenden App geöffnet (Titel: $($p.MainWindowTitle))" }
+    $titel = ''; [void][Fenster]::App($p.Id, [ref]$titel)
+    if ($titel -notlike '*zweite Datei ü.pdf*') { $fehler += "zweite PDF nicht in der laufenden App geöffnet (Titel: $titel)" }
 }
 if ($p.HasExited) { $fehler += "exe vorzeitig beendet (Code $($p.ExitCode))" }
 else {
-    [void]$p.CloseMainWindow()
+    $titel = ''; [void][Fenster]::PostMessage([Fenster]::App($p.Id, [ref]$titel), 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)  # WM_CLOSE
     if (-not $p.WaitForExit(10000)) { Stop-Process -Id $p.Id -Force; $fehler += 'Fenster schließt nicht' }
 }
 Start-Sleep -Seconds 2  # WebView2-Kinder beenden sich verzögert

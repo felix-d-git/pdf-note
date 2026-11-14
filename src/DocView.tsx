@@ -1,29 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { flushSync } from "react-dom";
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Bookmark, BookmarkPlus, Circle, File, FileCode,
+  ArrowDown, ArrowUp, ArrowUpRight, ClipboardPaste, Copy, CopyPlus, Scissors, Axis3d, BetweenHorizontalStart, Box, Bookmark, BookmarkPlus, Circle, Crosshair, File, FileCode,
   FileImage, Flame, FileOutput, FilePenLine, FilePlus, Files, Grid3x3, Grip, ImagePlus, ListIndentDecrease,
   ListIndentIncrease, LocateFixed, Lock, LockOpen, Palette, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, Redo2, RotateCw,
-  Rows3, Save, ScanText, Slash, Square, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
+  Rows3, Save, ScanText, Signature, Slash, Square, SquareX, Tags, Trash, Type, Undo2, X, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import { z } from "zod";
 import {
   afterDeleteMany, afterInsert, afterMove, afterRotate, box, cropItem, DEFAULT_PRESET, fromData, imageItem, imageMime, ItemData, kindLayer,
-  isPara, layerOf, moveItem, newId, PARA0, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset,
+  isPara, layerOf, makeSpace, moveItem, newId, PARA0, constrain, SHAPE_OPTS, shapeProps, TAG_COLOR, TAGS, textRect, thumbPick, toData, unionBox, type Item, type Layer, type Pen, type Preset, type ShapeOpts, type Tag,
 } from "./ink";
 import { useDoc } from "./docstore";
 import { onlyActivates } from "./tabs";
-import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, Menu, MenuItem, on, pwProblem, Toast, useOutside } from "./ui";
 import { T, tip } from "./i18n";
-import { comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
-import { lockedLayers, setLayerLocked } from "./layers";
+import { BAR_TOOLS, comboOf, KEYS, keyMap, LAYERS, QUICK, TOOL_LABELS } from "./keys";
+import { LOCK_EVENT, lockedLayers, setLayerLocked } from "./layers";
+import { OPT_TOOLS, ShapeOptions } from "./ShapeOptions";
 import * as ol from "./outline";
 import type { DocStart } from "./session";
-import { PageView, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
-import { afterShape, deviceTools, initTools, loadPalettes, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, type Settings, type Tool } from "./settings";
+import { PageView, TAG_ICON, Thumb, type Cmd, type Hit, type NewField, type OrigEdit, type ParaMove, type TextEdit, type TextSel } from "./PageView";
+import { afterShape, deviceTools, initTools, loadPalettes, loadSign, nthPen, pickColor, pickTool, SHAPE_TOOLS, storePalettes, storeSign, type Settings, type Sign, type Tool } from "./settings";
+import { SignPad } from "./SignPad";
 import { PenBar } from "./PenBar";
-import { scrollAfterZoom, wheelFactor } from "./zoom";
+import { anchorShift, wheelFactor } from "./zoom";
 import { formulas, type Formula } from "./math";
 import { MdEditor } from "./MdEditor";
 import { setView } from "./render";
@@ -52,7 +55,10 @@ const HISTORY_MAX = 200;
 const EMPTY: Snap = { items: [], rev: 0, sizes: [] };
 /** Stift aktiv = gleiche Farbe + Breite (Leiste speichert Werte, keine Ids) */
 const same = (a: Preset, b: Preset) => a.size === b.size && a.color.every((c, k) => c === b.color[k]);
-const push = (h: History, s: Snap): History => {
+/** Neuer Undo-Schritt; ohne echte Änderung (gleiche Objekte, gleicher Seitenstand) bleibt alles, sonst gälte die PDF als geändert. */
+export const push = (h: History, s: Snap): History => {
+  const cur = h.list[h.at];
+  if (cur && s.rev === cur.rev && s.sizes === cur.sizes && s.items.length === cur.items.length && s.items.every((it, k) => it === cur.items[k])) return h;
   const list = [...h.list.slice(0, h.at + 1), s].slice(-HISTORY_MAX);
   return { list, at: list.length - 1 };
 };
@@ -65,10 +71,11 @@ export const toSnap = (r: z.infer<typeof PageState>): Snap => ({ items: r.items.
 const clip: { items: Item[]; text: string | null } = { items: [], text: null };
 
 /** Werkzeug wählt seine Ebene; Auswahl, Radierer (außer auf 1) und Link behalten die aktuelle */
-const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, form: 1 };
+const STROKES: readonly Item["kind"][] = ["ink", "marker", "highlight"];
+const TOOL_LAYER: Partial<Record<Tool, Layer>> = { pen: 3, marker: 3, line: 2, arrow: 2, rect: 2, ellipse: 2, axes: 2, solid: 2, form: 1, sign: 2, initials: 2 };
 const LAYER_EDGE: Record<Layer, string> = { 1: "var(--ink-3)", 2: "var(--accent-deep)", 3: "var(--accent)" };
 const SHAPES: [Item["kind"], LucideIcon, string][] = [
-  ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes],
+  ["rect", Square, T.rect], ["ellipse", Circle, T.ellipse], ["line", Slash, T.line], ["arrow", ArrowUpRight, T.arrow], ["axes", Axis3d, T.axes], ["solid", Box, T.solid],
 ];
 const PAGE_KINDS: [string, LucideIcon, string][] = [["blank", File, T.blank], ["lined", Rows3, T.lined], ["grid", Grid3x3, T.squared], ["dots", Grip, T.dots]];
 
@@ -133,9 +140,15 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [locks, setLocks] = useState(() => lockedLayers(path));
   const toggleLock = (l: Layer) => {
     setLayerLocked(path, l, !locks.includes(l));
-    setLocks(lockedLayers(path));
     if (l === layer) clearSel();
   };
+  // Split mit derselben PDF: Sperre der anderen Hälfte sofort übernehmen (auch eigene Änderung kommt hierüber)
+  useEffect(() => {
+    const sync = () => setLocks(lockedLayers(path));
+    sync();
+    window.addEventListener(LOCK_EVENT, sync);
+    return () => window.removeEventListener(LOCK_EVENT, sync);
+  }, [path]);
   /** markierter PDF-Text (Ebene 1), gilt nur für den Stand `v` */
   const [textSel, setTextSel] = useState<TextSel & { page: number; v: number } | null>(null);
   const [pal, setPal] = useState(loadPalettes);
@@ -148,8 +161,13 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const m = (pal.last?.kind === "marker" ? pal.last : undefined) ?? nthPen(pal.pens, "marker", 0) ?? DEFAULT_PRESET;
     return { color: m.color, size: m.size };
   });
-  /** Koordinatensystem: gilt fürs nächste Aufziehen */
-  const [axes, setAxes] = useState({ xyz: false, grid: false });
+  /** Formen-/Koordinatensystem-Optionen: gelten fürs nächste Aufziehen (Sitzungszustand) */
+  const [opts, setOpts] = useState<ShapeOpts>(SHAPE_OPTS);
+  /** Werkzeug, dessen Optionen per Rechtsklick offen sind */
+  const [optsFor, setOptsFor] = useState<Tool>();
+  const optsPop = useRef<HTMLDivElement>(null);
+  // Klick daneben schließt
+  useOutside(!!optsFor, (t) => !!optsPop.current?.contains(t), () => setOptsFor(undefined));
   const [selection, setSelection] = useState<{ page: number; ids: number[] }>({ page: -1, ids: [] });
   const [current, setCurrent] = useState(0);
   const [jump, setJump] = useState("");
@@ -164,7 +182,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   // Werkzeugwechsel bricht einen angefangenen Link ab
   if (linkFrom && tool !== "link") setLinkFrom(undefined);
   const [drop, setDrop] = useState<{ from: number; to: number }>();
-  const [side, setSide] = useState<"pages" | "marks">("pages");
+  const [side, setSide] = useState<"pages" | "marks" | "tags">("pages");
+  /** Tag-Übersicht: Filter (leer = alle) */
+  const [tagFilter, setTagFilter] = useState<Tag[]>([]);
   const [marks, setMarks] = useState<ol.Mark[]>([]);
   const [markSel, setMarkSel] = useState(-1);
   const [renaming, setRenaming] = useState(-1);
@@ -177,9 +197,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const [saveDlg, setSaveDlg] = useState<{ flat: boolean; encrypt: boolean; pw: string; pw2: string; error?: string }>();
   const first = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const thumbNav = useRef<HTMLElement>(null);
   const scrollPos = useRef({ left: start?.left ?? 0, top: start?.top ?? 0 });
   /** markierte Miniaturen; gelten nur für den Seitenstand `v` (Seitenoperation/Undo hebt die Markierung auf) */
   const [thumbSel, setThumbSel] = useState<{ v: number; sel: number[]; anchor: number }>({ v: -1, sel: [], anchor: 0 });
+  /** Zeichenfeld für Unterschrift/Initialen offen; `place` = danach gleich platzieren */
+  const [signPad, setSignPad] = useState<{ kind: keyof Sign; place: boolean }>();
   const [tmenu, setTmenu] = useState<{ x: number; y: number; md?: string | null }>();
   const thumbDrag = useRef<{ from: number; x: number; y: number; moved: boolean }>(null);
 
@@ -219,7 +242,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   const penNow = pt === "pen" || pt === "marker" ? pt : undefined;
   const lastPen = penNow && { kind: penNow, ...(penNow === "pen" ? preset : marker) };
   if (lastPen && !(pal.last && pal.last.kind === lastPen.kind && same(pal.last, lastPen))) setPal({ ...pal, last: lastPen });
-  /** Gerätewechsel: Stift → Ebene 3 + letzter Stift/Marker, Maus → Ebene 2 + Auswahl (Hovern genügt) */
+  /** Gerätewechsel: Stift → Ebene 3 + letzter Stift/Marker, Maus → eigenes Werkzeug (Standard Auswahl) + dessen Ebene, sonst 2 (Hovern genügt) */
   const device = useRef<"pen" | "mouse">("mouse");
   const deviceEvent = (e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
@@ -227,7 +250,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if (d === device.current) return;
     device.current = d;
     if (settings.auto) setTools((s) => deviceTools(s, d, pal.last?.kind ?? "pen"));
-    switchLayer(d === "pen" ? 3 : 2);
+    switchLayer(d === "pen" ? 3 : (settings.auto && TOOL_LAYER[tool]) || 2);
   };
   const chooseTool = (t: Tool, dev: "pen" | "mouse" = "mouse") => {
     setTools((s) => pickTool(s, t, dev, settings.auto));
@@ -396,6 +419,11 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     setThumbSel({ v: version, sel: thumbPick(tsel, thumbSel.anchor, i, e.ctrlKey || e.metaKey, e.shiftKey), anchor: e.shiftKey ? thumbSel.anchor : i });
     if (!e.ctrlKey && !e.metaKey && !e.shiftKey) goTo(i);
   };
+  /** Leiste läuft nicht mit (User 12.11.2026): erst dieser Knopf holt die Miniatur der aktuellen Seite ins Bild und markiert sie. */
+  const showCurrent = () => {
+    setThumbSel({ v: version, sel: [current], anchor: current });
+    thumbNav.current?.querySelector(`[data-thumb="${current}"]`)?.scrollIntoView({ block: "center" });
+  };
   const mdOf = (index: number) => invoke("page_markdown", { id, index }).then((r) => z.string().nullable().parse(r), () => null);
   const menuThumb = (i: number) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -411,16 +439,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if ((tool !== "lasso" && penTool !== "lasso") || !Number.isInteger(i)) return;
     void mdOf(i).then((md) => md !== null && setMdEdit((m) => m ?? { page: i, source: md, insert: false, orig: md }));
   };
+  useOutside(!!tmenu, (t) => !!t.closest("[data-tmenu]"), () => setTmenu(undefined));
   useEffect(() => {
     if (!tmenu) return;
-    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-tmenu]")) && setTmenu(undefined));
     const key = (e: KeyboardEvent) => void (e.key === "Escape" && setTmenu(undefined));
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", key);
-    };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
   }, [tmenu]);
   const movePage = (from: number, to: number) => void pageOp({ op: "move", from, to }, (its) => afterMove(its, from, to));
 
@@ -445,13 +469,28 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     setError(undefined);
   }
 
+  /**
+   * Seitenpunkt unter (x, y) (Bildschirm-px, beim aktuellen Zoom) merken. Rückgabe zoomt auf `nz` (synchron gerendert) und
+   * scrollt so, dass der Punkt unter (x2, y2) steht — Zoom am Zeiger, gerechnet über die Seite (Abstände skalieren nicht).
+   */
+  function zoomAnchor(x: number, y: number) {
+    const pages = [...scroller.current?.querySelectorAll<HTMLElement>("[data-page]") ?? []];
+    const pg = pages.find((p) => p.getBoundingClientRect().bottom >= y) ?? pages.at(-1), r = pg?.getBoundingClientRect();
+    const i = pg?.dataset.page, ux = r ? (x - r.left) / zoom : 0, uy = r ? (y - r.top) / zoom : 0;
+    return (nz: number, x2 = x, y2 = y) => {
+      flushSync(() => setZoom(nz));
+      const el = scroller.current, b = el?.querySelector(`[data-page="${i}"]`)?.getBoundingClientRect();
+      if (el && b) el.scrollBy(anchorShift(b.left, ux, nz, x2), anchorShift(b.top, uy, nz, y2));
+    };
+  }
+
+  /** Tasten/Knöpfe: Zoom um die Mitte des sichtbaren Bereichs */
   function applyZoom(z: number) {
     const el = scroller.current;
     const nz = clampZoom(z);
     if (!el || nz === zoom) return;
-    const r = nz / zoom, top = el.scrollTop, left = el.scrollLeft;
-    setZoom(nz);
-    requestAnimationFrame(() => el.scrollTo(left * r, top * r));
+    const b = el.getBoundingClientRect();
+    zoomAnchor(b.left + b.width / 2, b.top + b.height / 2)(nz);
   }
 
   /** Zur Seite springen; mit `y` (pt) die Stelle ins obere Drittel holen. */
@@ -541,8 +580,21 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     place([imageItem(page, b64, img.naturalWidth * 0.75, img.naturalHeight * 0.75, x, y, 0.8 * Math.min(w, h))]);
   }
 
+  /** gespeicherte Unterschrift → Werkzeug (Klick platziert), sonst erst zeichnen */
+  const startSign = (kind: keyof Sign) => (loadSign()[kind] ? chooseTool(kind) : setSignPad({ kind, place: true }));
+
+  /** Unterschrift/Initialen mittig um (x, y): höchstens 150 bzw. 50 pt breit, Bild-Objekt (verschieb-/skalierbar) */
+  async function placeSign(kind: keyof Sign, page: number, x: number, y: number) {
+    const b64 = loadSign()[kind];
+    if (!b64) return;
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    place([imageItem(page, b64, img.naturalWidth, img.naturalHeight, x, y, kind === "sign" ? 150 : 50)]);
+  }
+
   /** ohne `at` mittig in der Ansicht, mit `at` linke obere Ecke dort */
-  function insertText(text: string, at?: [page: number, x: number, y: number]) {
+  function insertText(text: string, at?: [page: number, x: number, y: number], extra?: Pick<Item, "tag" | "color">) {
     const c = viewCenter();
     const ctx = document.createElement("canvas").getContext("2d");
     if (!c || !ctx) return;
@@ -551,18 +603,21 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const points = textRect(ctx, t, pal.text, 0, 0);
     const [, [bw, bh] = [0, 0]] = points;
     place([moveItem({
-      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t,
+      id: newId(), page, kind: "text", color: preset.color, opacity: 1, size: pal.text, simulated: false, points, text: t, ...extra,
     }, at ? x : x - bw / 2, at ? y : y - bh / 2)]);
   }
+
+  /** Tag = Text mit fester Farbe und Wort (andere Viewer sehen das Wort als FreeText); Text bleibt editierbar */
+  const insertTag = (tag: Tag, at?: [number, number, number]) => insertText(T.tag[tag], at, { tag, color: TAG_COLOR[tag] });
 
   function insertShape(kind: Item["kind"]) {
     const c = viewCenter();
     if (!c) return;
     const [page, x, y] = c;
-    const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : [60, 40];
+    const [dx, dy] = kind === "line" || kind === "arrow" ? [60, 0] : constrain(kind, opts, [0, 0, 0], [60, 40, 0]);
     place([{
       id: newId(), page, kind, color: preset.color, opacity: 1, size: preset.size, simulated: false,
-      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "", ...(kind === "axes" ? axes : {}),
+      points: [[x - dx, y - dy, 0.5], [x + dx, y + dy, 0.5]], text: "", ...shapeProps(kind, opts),
     }]);
   }
 
@@ -683,7 +738,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       case "back": return order(c === "front");
       case "image": return void insertImageFile(where);
       case "space": return chooseTool("space");
+      case "redact": return chooseTool("redact");
       case "notes": return switchLayer(3);
+      default: return insertTag(c, where);
     }
   }
 
@@ -825,7 +882,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   // Strg+Mausrad und Touchpad-Pinch (Wheel + ctrlKey) zoomen um den Zeiger (nicht-passiv, sonst zoomt WebView2 die ganze Oberfläche).
   // Vorschau per CSS-Transform; Neu-Rendern (setZoom) erst nach WHEEL_MS Ruhe. Ohne Strg scrollt der Container selbst (deltaX + deltaY).
   const content = useRef<HTMLDivElement>(null);
-  const wz = useRef<{ z0: number; z: number; cx: number; cy: number; px: number; py: number; timer: number }>(null);
+  const wz = useRef<{ z0: number; z: number; cx: number; cy: number; commit: (nz: number) => void; timer: number }>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -834,7 +891,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       e.preventDefault();
       const b = el.getBoundingClientRect();
       const w = wz.current ??= {
-        z0: zoom, z: zoom, px: e.clientX - b.left, py: e.clientY - b.top,
+        z0: zoom, z: zoom, commit: zoomAnchor(e.clientX, e.clientY),
         cx: el.scrollLeft + e.clientX - b.left, cy: el.scrollTop + e.clientY - b.top, timer: 0,
       };
       w.z = clampZoom(w.z * wheelFactor(e.deltaY, e.deltaMode));
@@ -845,11 +902,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
       clearTimeout(w.timer);
       w.timer = window.setTimeout(() => {
         wz.current = null;
-        setZoom(w.z);
-        requestAnimationFrame(() => {
-          el.scrollTo(scrollAfterZoom(el.scrollLeft, w.px, w.z / w.z0), scrollAfterZoom(el.scrollTop, w.py, w.z / w.z0));
-          if (content.current) content.current.style.transform = "";
-        });
+        if (content.current) content.current.style.transform = "";
+        w.commit(w.z);
       }, WHEEL_MS);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -859,18 +913,18 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
   // Finger: 1 = scrollen, 2 = Pinch-Zoom um den Fingermittelpunkt + verschieben. Stift/Maus zeichnen in PageView.
   // Palm-Rejection: solange der Stift aufliegt (und PALM_MS danach) und bei breiter Auflage zählen Finger nicht.
   const touches = useRef(new Map<number, { x: number; y: number }>());
-  /** Abstand und Zoom beim Aufsetzen, dazu der Inhaltspunkt (CSS-px bei Zoom 1) unter dem Mittelpunkt */
-  const pinch = useRef<{ d: number; z: number; cx: number; cy: number }>(null);
+  /** Abstand und Zoom beim Aufsetzen, dazu der Anker auf den Seitenpunkt unter dem Mittelpunkt */
+  const pinch = useRef<{ d: number; z: number; commit: (nz: number, x: number, y: number) => void }>(null);
   const pen = useRef({ down: false, at: -Infinity });
   const fingers = () => [...touches.current.values()];
   const dist = () => {
     const [a, b] = fingers();
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   };
-  /** Mittelpunkt der zwei Finger relativ zum Scroll-Container */
+  /** Mittelpunkt der zwei Finger (Bildschirm-px) */
   const mid = () => {
-    const [a, b] = fingers(), r = scroller.current?.getBoundingClientRect();
-    return a && b && r ? { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } : { x: 0, y: 0 };
+    const [a, b] = fingers();
+    return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: 0, y: 0 };
   };
   const penEvent = (e: React.PointerEvent) => {
     if (e.pointerType !== "pen") return;
@@ -885,9 +939,8 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     if (e.pointerType !== "touch") return;
     if (pen.current.down || performance.now() - pen.current.at < PALM_MS || e.width > PALM_PX) return;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    const el = scroller.current, m = mid();
-    pinch.current = touches.current.size === 2 && el
-      ? { d: dist(), z: zoom, cx: (el.scrollLeft + m.x) / zoom, cy: (el.scrollTop + m.y) / zoom } : null;
+    const m = mid();
+    pinch.current = touches.current.size === 2 ? { d: dist(), z: zoom, commit: zoomAnchor(m.x, m.y) } : null;
   };
   const touchMove = (e: React.PointerEvent) => {
     const t = touches.current.get(e.pointerId);
@@ -895,11 +948,9 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
     const dx = e.clientX - t.x, dy = e.clientY - t.y;
     touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pc = pinch.current, el = scroller.current;
-    if (pc && pc.d > 0 && el) {
-      // ponytail: Seitenränder/Abstände skalieren nicht mit → Punkt unter den Fingern wandert leicht
-      const nz = clampZoom((pc.z * dist()) / pc.d), m = mid();
-      setZoom(nz);
-      requestAnimationFrame(() => el.scrollTo(pc.cx * nz - m.x, pc.cy * nz - m.y));
+    if (pc && pc.d > 0) {
+      const m = mid();
+      pc.commit(clampZoom((pc.z * dist()) / pc.d), m.x, m.y);
     } else if (touches.current.size === 1) el?.scrollBy(-dx, -dy);
   };
   const touchUp = (e: React.PointerEvent) => {
@@ -974,19 +1025,33 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         <IconBtn icon={Redo2} label={T.redo} keys={KEYS.redo} onClick={() => void travel(hist.at + 1)} disabled={hist.at >= hist.list.length - 1} />
         {sep}
         {/* Bei „Automatisch wechseln": Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug; Doppelklick auf Form = Schloss */}
-        {TOOL_LABELS.map(([t, icon, label, key]) => (
+        {/* Rechtsklick auf ein Werkzeug mit Optionen: wählt es und öffnet die Optionen */}
+        {BAR_TOOLS.map(([t, icon, label, key]) => (
+          <span key={t} className="relative inline-flex">
           <IconBtn
-            key={t}
             icon={icon}
             label={label}
             keys={key}
             className={`${btn} relative${settings.auto ? (tool === t ? " ring-1 ring-inset ring-accent text-ink" : "") : on(tool === t)}`}
             onClick={(e) => chooseTool(t, (e.nativeEvent as PointerEvent).pointerType === "pen" ? "pen" : "mouse")}
             onDoubleClick={() => SHAPE_TOOLS.includes(t) && setTools((s) => ({ ...s, locked: true }))}
+            onContextMenu={(e) => {
+              if (!OPT_TOOLS.includes(t)) return;
+              e.preventDefault();
+              if (tool !== t) chooseTool(t);
+              setOptsFor(t);
+            }}
           >
             {locked && (tool === t || (settings.auto && penTool === t)) && <Lock size={10} aria-label={T.locked} className="absolute bottom-0.5 right-0.5" />}
             {settings.auto && penTool === t && <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-pill bg-accent" aria-label={T.penMark} />}
           </IconBtn>
+          {optsFor === t && (
+            <div ref={optsPop} role="dialog" aria-label={label} className="absolute left-0 top-full z-30 mt-1 flex w-60 flex-col gap-2 rounded-sm border border-line bg-surface p-3 text-sm text-ink shadow-raised">
+              <span className="font-medium">{label}</span>
+              <ShapeOptions tool={t} o={opts} set={setOpts} />
+            </div>
+          )}
+          </span>
         ))}
         {sep}
         {/* Ebenen: große Ein-Klick-Felder (Nummer + Inhaltsicon), Schloss direkt daneben */}
@@ -1005,6 +1070,11 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
           <MenuItem icon={Type} label={T.textBox} onClick={() => insertText("Text")} />
           {SHAPES.map(([k, icon, l]) => <MenuItem key={k} icon={icon} label={l} onClick={() => insertShape(k)} />)}
           <MenuItem icon={BetweenHorizontalStart} label={T.space} onClick={() => chooseTool("space")} />
+          <MenuItem icon={SquareX} label={T.redact} onClick={() => chooseTool("redact")} />
+          <MenuItem icon={Signature} label={T.sign} onClick={() => startSign("sign")} />
+          <MenuItem icon={Type} label={T.initials} onClick={() => startSign("initials")} />
+          <MenuItem icon={FilePenLine} label={T.signEdit} onClick={() => setSignPad({ kind: "sign", place: false })} />
+          {TAGS.map((t) => <MenuItem key={t} icon={TAG_ICON[t]} label={T.tagSet(T.tag[t])} onClick={() => insertTag(t)} />)}
         </Menu>
         {sep}
         {/* nur Stifte + Marker: Rahmen = Maus, Punkt = Stift */}
@@ -1040,19 +1110,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setPick({ ...pick, color: [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255] });
                 }} />
             </label>
-            {(tool === "axes" || penTool === "axes") && (
-              <div className="flex flex-col gap-1 border-t border-line pt-2">
-                <div className="flex gap-1">
-                  {([[false, T.axesXy], [true, T.axesXyz]] as const).map(([v, l]) => (
-                    <button key={l} className={btn + on(axes.xyz === v)} onClick={() => setAxes((a) => ({ ...a, xyz: v }))}>{l}</button>
-                  ))}
-                </div>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={axes.grid} onChange={(e) => setAxes((a) => ({ ...a, grid: e.target.checked }))} />
-                  {T.grid}
-                </label>
-              </div>
-            )}
+            <ShapeOptions tool={OPT_TOOLS.includes(tool) ? tool : penTool} o={opts} set={setOpts} />
         </Menu>
         {sep}
         <Menu icon={FilePlus} label={T.pageAdd}>
@@ -1126,8 +1184,42 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
         <div className="flex gap-1 border-b border-line p-1">
           <IconBtn icon={Files} label={T.pages} className={btn + on(side === "pages") + " flex-1 justify-center"} onClick={() => setSide("pages")} />
           <IconBtn icon={Bookmark} label={T.marks} className={btn + on(side === "marks") + " flex-1 justify-center"} onClick={() => setSide("marks")} />
+          <IconBtn icon={Tags} label={T.tags} className={btn + on(side === "tags") + " flex-1 justify-center"} onClick={() => setSide("tags")} />
         </div>
-        {side === "marks" ? (
+        {side === "tags" ? (
+          <div className="flex min-h-0 w-56 flex-1 flex-col">
+            <div className="flex gap-0.5 border-b border-line p-1" role="group" aria-label={T.tagFilter}>
+              {TAGS.map((t) => (
+                <IconBtn key={t} icon={TAG_ICON[t]} label={T.tag[t]} aria-pressed={tagFilter.includes(t)} className={btn + on(tagFilter.includes(t))}
+                  onClick={() => setTagFilter((f) => (f.includes(t) ? f.filter((x) => x !== t) : [...f, t]))} />
+              ))}
+            </div>
+            <ul data-scroll className="flex-1 overflow-y-auto py-1 text-sm">
+              {(() => {
+                const list = items.filter((it) => it.tag && (!tagFilter.length || tagFilter.includes(it.tag)))
+                  .sort((a, b) => a.page - b.page || (a.points[0]?.[1] ?? 0) - (b.points[0]?.[1] ?? 0));
+                if (!list.length) return <li className="px-3 py-2 text-ink-2">{T.noTags}</li>;
+                return list.map((it) => {
+                  const Icon = TAG_ICON[it.tag ?? "important"];
+                  return (
+                    <li key={it.id} className={`px-2 ${selection.ids.includes(it.id) ? "bg-accent-soft" : ""}`}>
+                      <button className="flex w-full items-center gap-1.5 py-0.5 text-left text-ink-2 hover:text-ink" title={`${it.text} – ${T.page} ${it.page + 1}`}
+                        onClick={() => {
+                          switchLayer(layerOf(it));
+                          goTo(it.page, it.points[0]?.[1]);
+                          setSelection({ page: it.page, ids: [it.id] });
+                        }}>
+                        <Icon size={14} className="shrink-0" style={{ color: `rgb(${it.color.map((v) => Math.round(v * 255)).join(",")})` }} />
+                        <span className="min-w-0 flex-1 truncate">{it.text.split("\n")[0] || "–"}</span>
+                        <span className="font-mono text-xs text-ink-3">{it.page + 1}</span>
+                      </button>
+                    </li>
+                  );
+                });
+              })()}
+            </ul>
+          </div>
+        ) : side === "marks" ? (
           <div className="flex min-h-0 w-56 flex-1 flex-col">
             <div className="flex flex-wrap gap-0.5 border-b border-line p-1">
               <IconBtn
@@ -1186,9 +1278,14 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
             </ul>
           </div>
         ) : (
+        <div className="flex min-h-0 w-40 flex-1 flex-col">
+        <div className="flex gap-0.5 border-b border-line p-1">
+          <IconBtn icon={Crosshair} label={T.toCurrent} onClick={showCurrent} />
+        </div>
         <nav
+          ref={thumbNav}
           data-scroll
-          className="flex w-40 min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
+          className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto border-r border-line bg-sunken py-3"
           onPointerMove={navMove}
           onPointerUp={navUp}
           onPointerCancel={navUp}
@@ -1224,6 +1321,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
             </div>
           )}
         </nav>
+        </div>
         )}
         </div>}
         {openUrl && (
@@ -1291,7 +1389,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 typers={typers}
                 preset={preset}
                 marker={marker}
-                axes={axes}
+                opts={opts}
                 textSize={pal.text}
                 settings={settings}
                 layer={layer}
@@ -1303,11 +1401,12 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setTextSel(t && { ...t, page: i, v: version });
                 }}
                 onAdd={(it, raw) => {
-                  const add = (x: Item) => ({ ...x, layer: x.layer ?? (layer === 1 ? kindLayer(x.kind) : layer) });
+                  // Stift-/Marker-Striche immer Ebene 3, egal mit welchem Gerät und auf welcher Ebene gezeichnet
+                  const add = (x: Item) => ({ ...x, layer: x.layer ?? (STROKES.includes(x.kind) ? 3 : layer === 1 ? kindLayer(x.kind) : layer) });
                   if (!raw) return edit((all) => [...all, add(it)]);
-                  // erkannte Form ersetzt den Freihand-Strich in einem zweiten Schritt → Strg+Z holt ihn zurück
+                  // erkannte Form ersetzt den Freihand-Strich in einem zweiten Schritt → Strg+Z holt ihn zurück; sie bleibt auf dessen Ebene
                   edit((all) => [...all, add(raw)]);
-                  edit((all) => all.map((x) => (x.id === raw.id ? add(it) : x)));
+                  edit((all) => all.map((x) => (x.id === raw.id ? { ...it, layer: add(raw).layer } : x)));
                 }}
                 onShape={(it) => {
                   edit((all) => [...all, { ...it, layer: layer === 1 ? kindLayer(it.kind) : layer }]);
@@ -1316,6 +1415,7 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                   setTools(afterShape);
                 }}
                 onRemove={(ids) => edit((all) => all.filter((it) => !ids.includes(it.id)))}
+                onCut={(parts) => edit((all) => all.flatMap((it) => parts.get(it.id) ?? [it]))}
                 onReplace={(next) => edit((all) => all.map((it) => next.find((n) => n.id === it.id) ?? it))}
                 onCrop={(cid, f) => {
                   const img = items.find((it) => it.id === cid);
@@ -1343,16 +1443,45 @@ export function DocView({ id, view, path, init, start, visible, active, marked, 
                 onOpenUrl={setOpenUrl}
                 onUnlink={(n) => void pageOp({ op: "unlink", page: i, n }, (its) => its)}
                 onDeleteField={(xref) => void pageOp({ op: "deleteField", page: i, xref }, (its) => its)}
+                onPlaceField={(xref, rect) => void pageOp({ op: "placeField", page: i, xref, rect }, (its) => its)}
                 onCmd={(c, at) => pageCmd(i, c, at)}
-                onSpace={(moved) => {
-                  if (moved.length) edit((all) => all.map((it) => moved.find((n) => n.id === it.id) ?? it));
+                onSpace={(y, dy) => {
                   setTools(afterShape);
+                  // Seite wird im Backend zerschnitten und verlängert; eigene Objekte darunter rücken mit (ein Undo-Schritt)
+                  if (dy >= 1) void pageOp({ op: "space", page: i, y, dy }, (its) => {
+                    const moved = makeSpace(its, i, y, dy);
+                    return its.map((it) => moved.find((n) => n.id === it.id) ?? it);
+                  });
+                }}
+                onSign={(k, x, y) => {
+                  setTools(afterShape);
+                  void placeSign(k, i, x, y);
+                }}
+                onRedact={async (r) => {
+                  setTools(afterShape);
+                  if (!r) return;
+                  // unumkehrbar nach dem Speichern → immer nachfragen
+                  if (await message(T.redactAsk, { title: "PDF Note", kind: "warning", buttons: { ok: T.redactOk, cancel: T.cancel } }) !== T.redactOk) return;
+                  // PDF-Inhalt entfernt das Backend; eigene Objekte im Bereich würden sonst darüber stehen bleiben
+                  const [x0, y0, x1, y1] = r;
+                  void pageOp({ op: "redact", page: i, rect: r }, (its) => its.filter((it) => {
+                    if (it.page !== i) return true;
+                    const b = box(it);
+                    return b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1;
+                  }));
                 }}
               />
             ))}
           </div>
         </main>
         <Toast msg={error} onClose={closeError} />
+        {signPad && (
+          <SignPad kind={signPad.kind} onCancel={() => setSignPad(undefined)} onSave={(k, b64) => {
+            storeSign({ ...loadSign(), [k]: b64 });
+            setSignPad(undefined);
+            if (b64 && signPad.place) chooseTool(k);
+          }} />
+        )}
       </div>
     </div>
   );

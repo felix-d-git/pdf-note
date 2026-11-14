@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scrollAfterZoom, wheelFactor } from "./zoom";
+import { anchorShift, wheelFactor } from "./zoom";
 
 describe("Zoom per Wheel", () => {
   it("Faktor proportional zu deltaY, Richtung stimmt", () => {
@@ -10,10 +10,13 @@ describe("Zoom per Wheel", () => {
     expect(wheelFactor(-100)).toBe(wheelFactor(-15));
     expect(wheelFactor(-1, 1)).toBe(wheelFactor(-16));
   });
-  it("Punkt unter dem Zeiger bleibt stehen", () => {
-    for (const [scroll, p, r] of [[0, 300, 1.5], [420, 120, 0.7], [1000, 0, 2]] as const) {
-      const content = scroll + p; // Inhaltspunkt unter dem Zeiger
-      expect(content * r - scrollAfterZoom(scroll, p, r)).toBeCloseTo(p, 10);
+  it("Punkt unter dem Zeiger bleibt stehen, auch mit nicht skalierenden Seitenabständen", () => {
+    // Seite 50 bei Zoom 1: oben 50·(800+16) + 24 Rand; Zeiger 300 px unter dem Containerrand, Container auf scroll 40 000
+    const top = (z: number, i: number) => 24 + i * (800 * z + 16);
+    for (const [z0, z1] of [[1, 1.5], [1.5, 0.7], [2, 6]] as const) {
+      const scroll = top(z0, 50) - 100, p = 300, u = (scroll + p - top(z0, 50)) / z0;
+      const scroll2 = scroll + anchorShift(top(z1, 50) - scroll, u, z1, p);
+      expect((scroll2 + p - top(z1, 50)) / z1).toBeCloseTo(u, 10);
     }
   });
 });

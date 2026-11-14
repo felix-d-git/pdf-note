@@ -1,7 +1,7 @@
 import {
   ArrowLeftRight, BetweenHorizontalStart, Bookmark, CircleHelp, ClipboardPen, Columns2, Copy, Crop, FileCode, FilePenLine, FileOutput, FilePlus, Files, Flame,
   FolderOpen, Grid3x3, Hand, History, ImagePlus, Keyboard, Layers, Lock, MousePointer2, NotebookPen, Palette, PenTool, Redo2, RotateCw,
-  Save, Scale, ScanText, Search, Type, Undo2, Wrench, X, type LucideIcon,
+  Save, Scale, ScanText, Search, Signature, SquareX, Star, Tags, Type, Undo2, Wrench, X, type LucideIcon,
 } from "lucide-react";
 import { resourceDir } from "@tauri-apps/api/path";
 import { useEffect, useRef, useState } from "react";
@@ -19,15 +19,16 @@ const DE: Chapter[] = [
     "Alles, was du schreibst, zeichnest und einfügst, steht in der PDF selbst – keine Zusatzdateien, keine Cloud, kein Netzwerk.",
     "Andere PDF-Programme zeigen deine Notizen ebenfalls; PDF Note öffnet sie wieder bearbeitbar.",
     [FolderOpen, "Öffnen (oder PDF ins Fenster ziehen); jede PDF bekommt einen Tab."],
+    [Star, "Zuletzt geöffnet (Uhr-Symbol neben „Öffnen“ und im leeren Fenster): die letzten 10 Dateien, Favoriten per Stern oben angeheftet. Gespeichert in den Einstellungen dieses Geräts; Dateien, die nicht mehr da sind, werden ausgeblendet."],
     [NotebookPen, "Neue Notiz-PDF: legt eine leere A4-Seite an."],
   ] },
   { id: "layers", icon: Layers, title: "Ebenen 1/2/3", lines: [
     ...LAYERS.map(([l, icon, name]): Line => [icon, `${name} – Taste ${l}`]),
-    "Ebene 1: Text und Inhalt der Original-PDF. Ebene 2: Bilder, Linien, Pfeile, Rechtecke, Kreise, Koordinatensysteme. Ebene 3: Handschrift und Textfelder.",
+    "Ebene 1: Text und Inhalt der Original-PDF. Ebene 2: Bilder, Linien, Pfeile, Rechtecke, Kreise, Koordinatensysteme. Ebene 3: Handschrift und Textfelder – Stift- und Marker-Striche landen immer hier, auch mit der Maus gezeichnet.",
     "Werkzeuge wechseln die Ebene selbst; ein Klick allein ändert sie nicht. Auswählen und Radieren wirken nur auf der aktuellen Ebene.",
   ] },
   { id: "auto", icon: ArrowLeftRight, title: "Gerät bestimmt Werkzeug", lines: [
-    [ArrowLeftRight, "An: Stift und Maus haben je ein eigenes Werkzeug (Stift = Stift, Maus = Auswahl/Text). Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug."],
+    [ArrowLeftRight, "An: Stift und Maus haben je ein eigenes Werkzeug. Stift schreibt mit dem zuletzt benutzten Stift/Marker; Maus wählt aus, bis du ein Werkzeug anklickst – das bleibt bis zum nächsten Wechsel. Rahmen = Maus-Werkzeug, Punkt = Stift-Werkzeug."],
     "Aus: alle Geräte nutzen dasselbe Werkzeug.",
   ] },
   { id: "tools", icon: PenTool, title: "Werkzeuge", lines: [
@@ -42,10 +43,22 @@ const DE: Chapter[] = [
     "Klicken oder Rahmen ziehen wählt aus; Umschalt fügt hinzu (Ebene 1: Umschalt+Ziehen zieht den Rahmen auch über Text; mehrere Absätze/Bilder verschieben sich zusammen). Griffe ändern Größe, der runde Griff dreht.",
     [Copy, "Über der Auswahl erscheint die Mini-Leiste (Kopieren, Ausschneiden, Löschen, Stil …)."],
     "Rechtsklick, Menütaste oder Umschalt+F10 öffnet das Kontextmenü (Einfügen, Textfeld hier, Bild hier, nach vorn/hinten).",
+    "Menüs, Einstellungen, Werkzeug-Optionen und Hilfe: ein Tipp daneben schließt sie nur, ohne dort etwas auszulösen; erneuter Tipp auf den Auslöser schließt ebenfalls.",
     "Pfeiltasten schieben die Auswahl um 1 pt, mit Umschalt um 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Platz einfügen", lines: [
-    [BetweenHorizontalStart, "Platz einfügen: Linie aufziehen – alles darunter rückt nach unten (oder nach rechts). Verschoben werden nur eigene Objekte (Ebene 2/3), der PDF-Inhalt bleibt."],
+    [BetweenHorizontalStart, "Platz einfügen: an der gewünschten Stelle ansetzen und nach unten ziehen – die Seite wird dort zerschnitten und um eine weiße Fläche verlängert; PDF-Inhalt, Anmerkungen und eigene Objekte darunter rücken mit. Mit dem Stift geht das auch ohne Werkzeugwechsel: am linken oder rechten Seitenrand ansetzen. Nach oben ziehen bricht ab. Danach ist Ebene 1 dieser Seite ein Block (einzelne Absätze nicht mehr verschiebbar)."],
+  ] },
+  { id: "redact", icon: SquareX, title: "Schwärzen", lines: [
+    [SquareX, "Schwärzen (Plus-Menü oder Rechtsklick): Rechteck über den Bereich ziehen und bestätigen – Text, Bilder und Grafik darunter werden echt aus der PDF entfernt (nicht nur überdeckt) und durch einen schwarzen Kasten ersetzt; eigene Objekte im Bereich werden gelöscht. Strg+Z geht nur bis zum Speichern, danach ist der Inhalt endgültig weg."],
+  ] },
+  { id: "sign", icon: Signature, title: "Unterschrift/Initialen", lines: [
+    [Signature, "Unterschrift bzw. Initialen (Plus-Menü): beim ersten Mal ins Feld zeichnen und speichern – sie bleibt in den Einstellungen dieses Geräts (keine Datei neben der PDF). Danach auf die Seite klicken: sie wird dort als Bild eingefügt und lässt sich wie jedes Objekt verschieben und mit den Griffen vergrößern/verkleinern."],
+    "„Unterschrift/Initialen zeichnen …“ im Plus-Menü ersetzt die gespeicherte; leer speichern löscht sie.",
+  ] },
+  { id: "tags", icon: Tags, title: "Tags", lines: [
+    [Tags, "Tag „Wichtig“, „Frage“ oder „Aufgabe“ setzen (Plus-Menü oder Rechtsklick auf die Seite): farbiges Wort an der Stelle, Text danach frei änderbar. Gespeichert in der PDF, andere Programme zeigen das Wort."],
+    "Tag-Übersicht: Seitenleiste, Reiter „Tags“ – nach Seite sortiert, oben nach Tag filtern, Klick springt zur Stelle und wählt den Tag aus.",
   ] },
   { id: "images", icon: ImagePlus, title: "Bilder", lines: [
     [ImagePlus, "Bild einfügen (Taste I), aus der Zwischenablage (Strg+V) oder per Ziehen aus dem Explorer an die Drop-Stelle."],
@@ -53,18 +66,21 @@ const DE: Chapter[] = [
     [RotateCw, "Drehen mit dem runden Griff (Umschalt = 15°-Schritte); die Drehung wird gespeichert."],
   ] },
   { id: "axes", icon: Grid3x3, title: "Koordinatensysteme", lines: [
-    "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Im Stil-Menü: xy oder xyz (Schrägbild), Karo-Gitter.",
+    "Werkzeug Koordinatensystem (X): Rechteck aufziehen → Achsen. Rechtsklick aufs Werkzeug (oder Stil-Menü): xy oder xyz (Schrägbild: x rechts, y oben, z vorne links unter 45°, halb verkürzt). Karo-Gitter beim xyz-System je Wand einzeln an/aus: X-Y = Rückwand, X-Z = Boden, Y-Z = linke Seitenwand.",
+    "Formen: Rechtsklick auf Rechteck, Ellipse, Linie, Pfeil oder 3D-Körper → Quadrat bzw. Kreis erzwingen, Füllung, Strichart (durchgezogen/gestrichelt/gepunktet).",
+    "Radierer (D): Rechtsklick aufs Werkzeug → „ganzer Strich“ (Standard) oder „nur überfahrener Teil“: dann teilt der Radierer Stift-/Marker-Striche; Formen und Text verschwinden weiter ganz.",
+    "3D-Körper (B): Quader, Würfel, Zylinder oder Kugel (Umriss + Äquator) als Schrägbild aufziehen; verdeckte Kanten gestrichelt.",
   ] },
   { id: "marker", icon: Palette, title: "Stifte, Textmarker, Farbe, Breite", lines: [
     "Beginnt ein Textmarker-Strich auf PDF-Text, rastet er auf die Textzeilen ein.",
-    [Palette, "Leiste: Stifte und Marker. Rechtsklick → Farbe, Breite, Entfernen; „+“ → neuer Stift; Ziehen ordnet um. Q W E = erste drei Stifte, Umschalt+Q W E = erste drei Marker."],
+    [Palette, "Leiste: nur deine farbigen Stifte und Marker (Farbklecks = Farbe, kein allgemeines Stift-/Marker-Symbol mehr). Rechtsklick → Farbe, Breite, Entfernen; kleines „+“ am Ende → neuer Stift oder Marker; Ziehen ordnet um. Q W E = erste drei Stifte, Umschalt+Q W E = erste drei Marker."],
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs und Split View", lines: [
     "Tabs per Ziehen umsortieren; Strg+Tab wechselt.",
     [Columns2, "Split View: zwei Hälften mit eigener Tab-Leiste über alle offenen PDFs – Tab-Klick wählt nur für diese Hälfte, dieselbe PDF geht in beiden; + öffnet in dieser Hälfte. Trennlinie verschieben."],
   ] },
   { id: "pages", icon: Files, title: "Seiten", lines: [
-    [Files, "Seitenleiste: Vorschaubilder ziehen sortiert um, Rechtsklick löscht oder dreht."],
+    [Files, "Seitenleiste: Klick springt zur Seite, Vorschaubilder ziehen sortiert um, Rechtsklick löscht oder dreht. Die Leiste scrollt unabhängig; Knopf „Zur aktuellen Seite“ holt die Miniatur der sichtbaren Seite ins Bild."],
     [FilePlus, "Seite einfügen: leer, liniert, kariert, Punkte, Markdown-Seite, PDF anhängen, Bild als Seite."],
     [Bookmark, "Lesezeichen: auf die aktuelle Seite setzen, ein-/ausrücken, umbenennen."],
   ] },
@@ -82,7 +98,8 @@ const DE: Chapter[] = [
   ] },
   { id: "forms", icon: ClipboardPen, title: "Formulare", lines: [
     "Vorhandene Formularfelder direkt ausfüllen; Strg+S speichert auch aus dem Feld.",
-    [ClipboardPen, "Formular-Werkzeug (O): Rechteck aufziehen → neues Feld (Text, Kontrollkästchen, Auswahlliste)."],
+    [ClipboardPen, "Formular-Werkzeug (O): Rechteck aufziehen → neues Feld (Text, Kontrollkästchen, Auswahlliste). Einfacher Klick legt das Feld in Standardgröße an (Textfeld 60 × 8 mm, Kontrollkästchen 5 × 5 mm)."],
+    "Feld anklicken → Rahmen mit 8 Griffen: an Ecke/Kante ziehen ändert die Größe, Vier-Pfeil daneben verschiebt, Papierkorb (oder Entf bei Kästchen/Listen) löscht. Jeder Schritt lässt sich mit Strg+Z zurücknehmen.",
   ] },
   { id: "save", icon: FileOutput, title: "Speichern und Speichern unter", lines: [
     [Save, "Speichern (Strg+S) schreibt in dieselbe PDF; verschlüsselte PDFs bleiben verschlüsselt."],
@@ -100,8 +117,9 @@ const DE: Chapter[] = [
   ] },
   { id: "pen", icon: Hand, title: "Stifttasten und Handballen", lines: [
     "Stifttasten: obere = Auswahl, untere/Radierer-Ende = Radierer; in den Einstellungen neu lernen.",
+    "Form-Erkennung: Stift am Ende des Strichs 0,5 s ruhen lassen → Linie, gerader Pfeil, Wurzelzeichen, Dreieck, Rechteck oder Kreis. Weiterziehen ohne Abheben macht die Form größer/kleiner, Abheben schließt ab; Strg+Z holt die Freihand-Linie zurück. Kurven (Parabel, e-Funktion …) 1,5 s ruhen lassen → nur geglättet, Verlauf bleibt.",
     "Handballen: Finger zählt nicht, solange der Stift aufliegt und 0,5 s danach, oder wenn die Berührung breiter als 40 px ist.",
-    [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Druck an/aus, Druck-Maximum, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
+    [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
   ] },
 ];
 
@@ -110,6 +128,7 @@ const EN: Chapter[] = [
     "Everything you write, draw and insert is stored in the PDF itself – no extra files, no cloud, no network.",
     "Other PDF programs show your notes too; PDF Note opens them editable again.",
     [FolderOpen, "Open (or drop a PDF onto the window); each PDF gets a tab."],
+    [Star, "Recent files (clock icon next to “Open” and in the empty window): the last 10 files, favourites pinned on top with the star. Stored in this device's settings; files that no longer exist are hidden."],
     [NotebookPen, "New note PDF: creates a blank A4 page."],
   ] },
   { id: "layers", icon: Layers, title: "Layers 1/2/3", lines: [
@@ -133,10 +152,22 @@ const EN: Chapter[] = [
     "Click or drag a frame to select; Shift adds (layer 1: Shift+drag draws the frame over text too; several paragraphs/images move together). Handles resize, the round handle rotates.",
     [Copy, "The mini bar appears above the selection (copy, cut, delete, style …)."],
     "Right-click, the menu key or Shift+F10 opens the context menu (paste, text box here, image here, forward/backward).",
+    "Menus, settings, tool options and help: a tap outside only closes them without triggering anything there; tapping the trigger again closes them too.",
     "Arrow keys move the selection by 1 pt, with Shift by 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Insert space", lines: [
-    [BetweenHorizontalStart, "Insert space: drag a line – everything below moves down (or right). Only your own objects (layer 2/3) move, the PDF content stays."],
+    [BetweenHorizontalStart, "Insert space: start at the desired spot and drag down – the page is cut there and extended by a white area; PDF content, annotations and your own objects below move along. With the pen this works without switching tools: start at the left or right page edge. Dragging up cancels. Afterwards layer 1 of that page is one block (single paragraphs can no longer be moved)."],
+  ] },
+  { id: "redact", icon: SquareX, title: "Redact", lines: [
+    [SquareX, "Redact (plus menu or right-click): drag a rectangle over the area and confirm – text, images and graphics underneath are really removed from the PDF (not just covered) and replaced by a black box; your own objects in the area are deleted. Ctrl+Z works only until you save, afterwards the content is gone for good."],
+  ] },
+  { id: "sign", icon: Signature, title: "Signature/initials", lines: [
+    [Signature, "Signature or initials (plus menu): the first time, draw into the box and save – it is kept in this device's settings (no file next to the PDF). Then click on the page: it is inserted there as an image and can be moved and resized with the handles like any object."],
+    "“Draw signature/initials …” in the plus menu replaces the stored one; saving it empty deletes it.",
+  ] },
+  { id: "tags", icon: Tags, title: "Tags", lines: [
+    [Tags, "Set the tag “Important”, “Question” or “Task” (plus menu or right-click on the page): a coloured word at that spot, its text can be edited afterwards. Stored in the PDF, other programs show the word."],
+    "Tag overview: sidebar, “Tags” tab – sorted by page, filter by tag at the top, a click jumps to the spot and selects the tag.",
   ] },
   { id: "images", icon: ImagePlus, title: "Images", lines: [
     [ImagePlus, "Insert image (key I), paste from the clipboard (Ctrl+V) or drop it from Explorer at the drop point."],
@@ -144,18 +175,21 @@ const EN: Chapter[] = [
     [RotateCw, "Rotate with the round handle (Shift = 15° steps); the rotation is saved."],
   ] },
   { id: "axes", icon: Grid3x3, title: "Coordinate systems", lines: [
-    "Coordinate system tool (X): drag a rectangle → axes. In the style menu: xy or xyz (oblique), square grid.",
+    "Coordinate system tool (X): drag a rectangle → axes. Right-click the tool (or the style menu): xy or xyz (oblique: x right, y up, z front-left at 45°, half length). With xyz the square grid is toggled per wall: X-Y = back wall, X-Z = floor, Y-Z = left side wall.",
+    "Shapes: right-click rectangle, ellipse, line, arrow or 3D solid → force square or circle, fill, line style (solid/dashed/dotted).",
+    "Eraser (D): right-click the tool → “whole stroke” (default) or “only the part touched”: the eraser then splits pen/highlighter strokes; shapes and text still disappear whole.",
+    "3D solid (B): drag a cuboid, cube, cylinder or sphere (outline + equator) in oblique projection; hidden edges dashed.",
   ] },
   { id: "marker", icon: Palette, title: "Pens, highlighter, colour, width", lines: [
     "A highlighter stroke that starts on PDF text snaps to the text lines.",
-    [Palette, "Bar: pens and highlighters. Right-click → colour, width, remove; “+” → new pen; drag to reorder. Q W E = first three pens, Shift+Q W E = first three highlighters."],
+    [Palette, "Bar: only your coloured pens and highlighters (colour blob = colour, no generic pen/highlighter icon). Right-click → colour, width, remove; small “+” at the end → new pen or highlighter; drag to reorder. Q W E = first three pens, Shift+Q W E = first three highlighters."],
   ] },
   { id: "tabs", icon: Columns2, title: "Tabs and Split View", lines: [
     "Drag tabs to reorder; Ctrl+Tab switches.",
     [Columns2, "Split View: two PDFs side by side. Drag a tab onto a half; with Ctrl the same PDF in both halves. Move the divider."],
   ] },
   { id: "pages", icon: Files, title: "Pages", lines: [
-    [Files, "Sidebar: drag thumbnails to reorder, click (Ctrl/Shift for several), right-click: delete, cut, copy, paste (also into other tabs), duplicate, rotate; Del deletes."],
+    [Files, "Sidebar: drag thumbnails to reorder, click (Ctrl/Shift for several), right-click: delete, cut, copy, paste (also into other tabs), duplicate, rotate; Del deletes. The sidebar scrolls on its own; „Go to current page“ brings the visible page's thumbnail into view."],
     [FilePlus, "Insert page: blank, lined, squared, dots, Markdown page, append PDF, image as page."],
     [Bookmark, "Bookmarks: set on the current page, indent/outdent, rename."],
   ] },
@@ -173,7 +207,8 @@ const EN: Chapter[] = [
   ] },
   { id: "forms", icon: ClipboardPen, title: "Forms", lines: [
     "Fill in existing form fields directly; Ctrl+S also saves from inside a field.",
-    [ClipboardPen, "Form tool (O): drag a rectangle → new field (text, check box, drop-down list)."],
+    [ClipboardPen, "Form tool (O): drag a rectangle → new field (text, check box, drop-down list). A single click creates the field at default size (text field 60 × 8 mm, check box 5 × 5 mm)."],
+    "Click a field → frame with 8 handles: drag a corner/edge to resize, the four-way arrow next to it moves, the bin (or Delete on boxes/lists) deletes. Ctrl+Z undoes every step.",
   ] },
   { id: "save", icon: FileOutput, title: "Save and Save as", lines: [
     [Save, "Save (Ctrl+S) writes into the same PDF; encrypted PDFs stay encrypted."],
@@ -191,8 +226,9 @@ const EN: Chapter[] = [
   ] },
   { id: "pen", icon: Hand, title: "Pen buttons and palm rejection", lines: [
     "Pen buttons: upper = select, lower/eraser end = eraser; re-learn them in the settings.",
+    "Shape recognition: rest the pen 0.5 s at the end of a stroke → line, straight arrow, root sign, triangle, rectangle or circle. Keep moving without lifting to resize it, lifting finishes; Ctrl+Z brings back the freehand stroke. Curves (parabola, exponential …): rest 1.5 s → smoothed only, the course stays.",
     "Palm: a finger is ignored while the pen is down and 0.5 s after, or if the touch is wider than 40 px.",
-    [Wrench, "Settings: view light/dark/system, pen buttons, pressure on/off, pressure maximum, smoothing (off = exactly as drawn) – applies to all pens."],
+    [Wrench, "Settings: view light/dark/system, pen buttons, smoothing (off = exactly as drawn) – applies to all pens."],
   ] },
 ];
 
@@ -221,7 +257,7 @@ const about = (dir: string | undefined): Chapter => T === STRINGS.de
 /** Zeilen der Werkzeug-Tabelle (aus derselben Liste wie die Werkzeugleiste) */
 const toolRows = (): [LucideIcon, string, string][] => [
   ...TOOL_LABELS.map(([, icon, name, key]): [LucideIcon, string, string] => [icon, name, keyText(key)]),
-  [BetweenHorizontalStart, T.space, ""], [ImagePlus, T.image, keyText(KEYS.image)],
+  [BetweenHorizontalStart, T.space, ""], [SquareX, T.redact, ""], [Signature, T.sign, ""], [Signature, T.initials, ""], [ImagePlus, T.image, keyText(KEYS.image)],
 ];
 /** Kürzel-Tabelle: jeder Eintrag aus `KEYS` */
 const keyRows = (): [string, string][] => Object.entries(KEYS).map(([k, v]) => [T[k as keyof typeof KEYS], keyText(v)]);
@@ -258,6 +294,7 @@ export function Help({ onClose, onTour }: { onClose: () => void; onTour: () => v
       aria-modal
       aria-label={T.help}
       className="fixed inset-0 z-40 flex bg-black/30 p-6 outline-none"
+      onPointerDown={(e) => e.target === e.currentTarget && onClose()}
       onKeyDown={(e) => {
         // Tasten erreichen die Fenster- und Dokument-Kürzel nicht
         e.stopPropagation();

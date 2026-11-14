@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowLeftRight, CircleHelp, Columns2, FileWarning, FolderOpen, Keyboard, Monitor, Moon, NotebookPen, Plus, Settings as Gear, Sun, X } from "lucide-react";
+import { ArrowLeftRight, CircleHelp, Columns2, FileWarning, FolderOpen, History, Keyboard, Monitor, Moon, NotebookPen, Plus, Settings as Gear, Star, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { dropDoc } from "./docstore";
 import { DocView, PageState, toSnap, type DocApi, type Snap } from "./DocView";
@@ -11,13 +11,13 @@ import { CmdPalette, Help } from "./help";
 import { T } from "./i18n";
 import { comboOf, KEYS, keyMap } from "./keys";
 import { firstFile, fromSession, loadSession, storeSession, toSession, type DocStart, type Session } from "./session";
-import { applyTheme, captureBinding, describe, loadSettings, Settings as SettingsSchema, storeSettings, type Settings } from "./settings";
+import { addRecent, applyTheme, captureBinding, describe, loadRecent, loadSettings, storeRecent, toggleFav, type Recent, Settings as SettingsSchema, storeSettings, type Settings } from "./settings";
 import { setLimits } from "./render";
 import {
   activeId, closeTab, cycle, EMPTY_TABS, focus, moveTab, openTab, samePath, pickDoc, setDirty, show, toggleSplit, toPane, viewActive, type Pane, type Tab,
 } from "./tabs";
 import { Tour, tourSeen } from "./tour";
-import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast } from "./ui";
+import { BTN as btn, Dialog, FIELD, IconBtn, on, pwProblem, Toast, useOutside } from "./ui";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 /** Sitzung einmal je Programmstart wiederherstellen (StrictMode führt Effekte doppelt aus); Öffnen wartet darauf */
@@ -39,6 +39,15 @@ export default function App() {
   const [ratio, setRatio] = useState(0.5);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
+  const settingsPop = useRef<HTMLDivElement>(null);
+  useOutside(showSettings, (t) => !!settingsPop.current?.contains(t), () => setShowSettings(false));
+  const [showRecent, setShowRecent] = useState(false);
+  const [recent, setRecentState] = useState(loadRecent);
+  const setRecent = (f: (r: Recent) => Recent) => setRecentState((r) => {
+    const n = f(r);
+    storeRecent(n);
+    return n;
+  });
   const [capture, setCapture] = useState<"lasso" | "eraser">();
   const [error, setError] = useState<string>();
   const closeError = useCallback(() => setError(undefined), []);
@@ -142,6 +151,7 @@ export default function App() {
       if (!r) return;
       setInits((m) => new Map(m).set(r.id, r.snap));
       setState((s) => openTab(s, r.id, p));
+      setRecent((x) => addRecent(x, p));
       setError(undefined);
     } catch (e) {
       setError(`Öffnen fehlgeschlagen: ${String(e)}`);
@@ -436,6 +446,7 @@ export default function App() {
       <header className="relative flex items-center gap-1 border-b border-line bg-sunken px-2 py-1">
         <IconBtn icon={NotebookPen} label={T.newFile} onClick={() => void newFile()} />
         <IconBtn icon={FolderOpen} label={T.open} keys={KEYS.open} onClick={() => void pickFile()} />
+        <IconBtn icon={History} label={T.recent} className={btn + on(showRecent)} aria-pressed={showRecent} onClick={() => setShowRecent((s) => !s)} />
         {state.split ? <div className="flex-1" /> : tabBar()}
         <IconBtn icon={Columns2} label={T.split} className={btn + on(state.split)} aria-pressed={state.split} onClick={() => setState(toggleSplit)} />
         <IconBtn icon={ArrowLeftRight} label={T.auto} className={btn + on(settings.auto)} aria-pressed={settings.auto}
@@ -445,8 +456,16 @@ export default function App() {
         {missing.length > 0 && (
           <IconBtn icon={FileWarning} label={T.missing(missing.join(", "))} className={btn + " text-accent"} onClick={() => setMissing([])} />
         )}
+        {showRecent && (
+          <div className="absolute top-full left-3 z-10 mt-1 w-96 rounded-sm border border-line bg-raised p-2 text-sm text-ink-2 shadow-raised">
+            <RecentList r={recent} onFav={(p) => setRecent((x) => toggleFav(x, p))} onOpen={(p) => {
+              setShowRecent(false);
+              void openPath(p);
+            }} />
+          </div>
+        )}
         {showSettings && (
-          <div className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
+          <div ref={settingsPop} className="absolute top-full right-3 z-10 mt-1 flex w-80 flex-col gap-3 rounded-sm border border-line bg-raised p-4 text-sm text-ink-2 shadow-raised">
             <div className="flex items-center justify-between gap-2">
               {T.view}
               <div className="flex gap-1" role="radiogroup" aria-label={T.view}>
@@ -463,19 +482,6 @@ export default function App() {
                   onClick={() => setCapture(capture === k ? undefined : k)} />
               </div>
             ))}
-            <label className="flex flex-col gap-1">
-              {T.pressure}: <span className="font-mono text-xs text-ink">{settings.pressureMax.toFixed(2)}</span>
-              <input
-                type="range" min={0.3} max={1} step={0.05} value={settings.pressureMax}
-                onChange={(e) => updateSettings({ ...settings, pressureMax: Number(e.target.value) })}
-                className="accent-accent"
-              />
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={settings.pressure} className="accent-accent"
-                onChange={(e) => updateSettings({ ...settings, pressure: e.target.checked })} />
-              {T.penPressure}
-            </label>
             <label className="flex flex-col gap-1">
               {T.smooth}: <span className="font-mono text-xs text-ink">{settings.smooth ? settings.smooth.toFixed(1) : T.off}</span>
               <input
@@ -529,11 +535,14 @@ export default function App() {
             onPointerDownCapture={() => setState((s) => focus(s, p))}
             className={`grid min-w-0 place-items-center border-t-2 text-center text-ink-2 ${state.split && state.active === p ? "border-accent" : "border-transparent"}`}
           >
-            <p>
-              {T.empty}
-              <br />
-              <span className="text-sm text-ink-3">{T.emptyHint}</span>
-            </p>
+            <div className="flex w-96 max-w-full flex-col gap-4">
+              <p>
+                {T.empty}
+                <br />
+                <span className="text-sm text-ink-3">{T.emptyHint}</span>
+              </p>
+              <RecentList r={recent} onFav={(p) => setRecent((x) => toggleFav(x, p))} onOpen={(p) => void openPath(p)} />
+            </div>
           </div>
         ))}
         {state.split && (
@@ -567,6 +576,37 @@ export default function App() {
       {tour && <Tour onEnd={() => setTour(false)} />}
       {pwAsk && <PasswordPrompt {...pwAsk} />}
     </div>
+  );
+}
+
+/** Favoriten zuerst, dann zuletzt geöffnet; Dateien, die es nicht mehr gibt, nur ausblenden (Laufwerk kann zurückkommen). */
+function RecentList({ r, onOpen, onFav }: { r: Recent; onOpen: (p: string) => void; onFav: (p: string) => void }) {
+  const all = [...r.fav, ...r.recent.filter((p) => !r.fav.some((f) => samePath(f, p)))];
+  const [there, setThere] = useState<boolean[]>([]);
+  const key = all.join("\n");
+  useEffect(() => {
+    let live = true;
+    invoke<boolean[]>("existing", { paths: key ? key.split("\n") : [] }).then((b) => live && setThere(b), () => live && setThere([]));
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  const shown = all.filter((_, i) => there[i]);
+  if (!shown.length) return null;
+  return (
+    <ul aria-label={T.recent} className="flex flex-col text-left text-sm">
+      {shown.map((p) => {
+        const fav = r.fav.some((f) => samePath(f, p));
+        return (
+          <li key={p} className="flex items-center gap-1">
+            <IconBtn icon={Star} label={fav ? T.unfav : T.fav} aria-pressed={fav} className={btn + (fav ? " text-accent" : "")} onClick={() => onFav(p)} />
+            <button type="button" title={p} className="min-w-0 flex-1 truncate rounded-xs px-2 py-1 text-left text-ink hover:bg-sunken" onClick={() => onOpen(p)}>
+              {fileName(p)}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

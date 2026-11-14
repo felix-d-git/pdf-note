@@ -3,7 +3,7 @@ import { expect, test, vi } from "vitest";
 import { DEFAULT_PENS, type Pen } from "./ink";
 import {
   afterShape, applyTheme, captureBinding, DEFAULT_PALETTES, deviceTools, DEFAULT_SETTINGS as S, initTools, loadPalettes, loadSettings, movePen, nthPen, pickTool,
-  storePalettes, storeSettings, toolFor, pickColor,
+  storePalettes, storeSettings, toolFor, pickColor, addRecent, toggleFav, loadRecent,
 } from "./settings";
 
 test("Gerät bestimmt das Werkzeug", () => {
@@ -92,7 +92,7 @@ test("Stiftleiste: Ziehen ordnet um, Q W E = n-ter Stift bzw. Marker in Leistenr
   expect(nthPen(movePen(DEFAULT_PENS, 0, 2), "pen", 0)).toBe(DEFAULT_PENS[1]);
 });
 
-test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Preset → globaler Druck aus; Müll → Standard", () => {
+test("Migration: alte Paletten (quick + eigene) → eine Leiste; Müll → Standard", () => {
   const mem = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) });
   const old = (name: string, c: number, size: number, pressure?: boolean) => ({ name, color: [c, 0, 0], size, ...(pressure === undefined ? {} : { pressure }) });
@@ -104,8 +104,6 @@ test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Prese
   const p = loadPalettes();
   expect(p.text).toBe(16);
   expect(p.pens.map((x) => [x.kind, x.color[0], x.size])).toEqual([["pen", 0.5, 2.2], ["pen", 0.2, 3], ["marker", 0.6, 12], ["marker", 0.4, 20]]);
-  expect(loadSettings().pressure).toBe(false);
-  expect(JSON.parse(mem.get("pdfnote.settings") ?? "{}").pressure).toBe(false); // sofort gespeichert
   mem.set("pdfnote.presets", '{"pens":[{"kind":"pinsel"}]}');
   expect(loadPalettes()).toEqual(DEFAULT_PALETTES);
   mem.set("pdfnote.settings", JSON.stringify({ pressure: "ja", smooth: 5 }));
@@ -115,8 +113,8 @@ test("Migration: alte Paletten (quick + eigene) → eine Leiste; Druck-aus-Prese
   expect(loadPalettes().pens).toEqual(DEFAULT_PALETTES.pens);
   // kaputtes Presets-JSON verwirft die übrigen Einstellungen nicht
   mem.set("pdfnote.presets", "{kaputt");
-  mem.set("pdfnote.settings", JSON.stringify({ lasso: S.lasso, eraser: S.eraser, pressureMax: 0.5 }));
-  expect(loadSettings().pressureMax).toBe(0.5);
+  mem.set("pdfnote.settings", JSON.stringify({ lasso: S.lasso, eraser: S.eraser, smooth: 0.5 }));
+  expect(loadSettings().smooth).toBe(0.5);
   vi.unstubAllGlobals();
 });
 
@@ -126,7 +124,7 @@ test("§3 Gerätewechsel: Stift → letzter Stift/Marker statt Radierer/Auswahl/
   expect(deviceTools({ ...t, pen: "lasso" }, "pen", "pen").pen).toBe("pen");
   expect(deviceTools({ ...t, pen: "rect", locked: true }, "pen", "pen")).toMatchObject({ pen: "pen", locked: false });
   expect(deviceTools({ ...t, pen: "marker" }, "pen", "pen").pen).toBe("marker");
-  expect(deviceTools({ ...t, mouse: "eraser" }, "mouse", "pen")).toMatchObject({ mouse: "lasso", pen: "pen" });
+  expect(deviceTools({ ...t, mouse: "eraser" }, "mouse", "pen")).toMatchObject({ mouse: "eraser", pen: "pen" }); // Maus behält ihr Werkzeug bis zum Wechsel
 });
 
 test("§3 zuletzt genutzter Stift überlebt den Neustart", () => {
@@ -136,4 +134,18 @@ test("§3 zuletzt genutzter Stift überlebt den Neustart", () => {
   storePalettes({ ...DEFAULT_PALETTES, last });
   expect(loadPalettes().last).toEqual(last);
   vi.unstubAllGlobals();
+});
+
+test("Zuletzt geöffnet: neueste zuerst, ohne Doppelte (Groß-/Schrägstrich egal), höchstens 10; Favorit umschalten", () => {
+  let r = { recent: [], fav: [] } as { recent: string[]; fav: string[] };
+  for (let i = 0; i < 12; i++) r = addRecent(r, `C:/d/${i}.pdf`);
+  expect(r.recent).toHaveLength(10);
+  expect(r.recent[0]).toBe("C:/d/11.pdf");
+  r = addRecent(r, "c:\\D\\5.PDF");
+  expect(r.recent[0]).toBe("c:\\D\\5.PDF");
+  expect(r.recent.filter((p) => p.toLowerCase().includes("5.pdf"))).toHaveLength(1);
+  r = toggleFav(r, "C:/d/1.pdf");
+  expect(r.fav).toEqual(["C:/d/1.pdf"]);
+  expect(toggleFav(r, "c:\\d\\1.pdf").fav).toEqual([]);
+  expect(loadRecent()).toEqual({ recent: [], fav: [] });
 });
