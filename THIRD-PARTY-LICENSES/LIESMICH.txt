@@ -16,7 +16,7 @@ PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md  zusätzliche Erlaubnis nach AGPL-3.0 
                                additional permission under AGPL-3.0 section 7 (Microsoft WebView2 Loader)
 SOURCE.md                      Quellcode-Angebot (AGPL-3.0 §6) / offer of Corresponding Source
 rust-crates.html               alle Rust-Crates der Windows-Binary (cargo-about) / all Rust crates
-npm-bundle.md                  gebündelte npm-Pakete: React, Zod, MathJax, lucide-react, perfect-freehand, Tauri-API …
+npm-bundle.md                  gebündelte npm-Pakete: React, Zod, MathJax, lucide-react, Tauri-API …
 font-*-OFL.txt                 Schriften Manrope, IBM Plex Mono (SIL Open Font License 1.1)
 tailwindcss-LICENSE.txt        Tailwind CSS (MIT, Tailwind Labs) – im ausgelieferten CSS enthalten / contained in the shipped CSS
 mupdf-COPYING.txt              MuPDF (Artifex, AGPL-3.0)
