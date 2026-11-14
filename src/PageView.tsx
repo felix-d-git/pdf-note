@@ -3,14 +3,14 @@ import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } fro
 import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
-  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, normPressure, PARA0, recognize, rotateItem,
-  rotMatrix, scaleItem, scaleMatrix, smoothPt, layerOf, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind,
+  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
+  constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, TAGS, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts, type Tag,
 } from "./ink";
-import { BetweenHorizontalStart, Check, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, SlidersHorizontal, Trash, Type, X } from "lucide-react";
+import { BetweenHorizontalStart, Check, CircleAlert, CircleHelp, ListTodo, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, Move, SlidersHorizontal, SquareX, Trash, Type, X, type LucideIcon } from "lucide-react";
 import { ColorButton } from "./ColorPicker";
 import { CropBox, HANDLE_CURSOR, HANDLES } from "./Crop";
 import { T } from "./i18n";
-import { IconBtn } from "./ui";
+import { IconBtn, useOutside } from "./ui";
 import { targetLayer } from "./layers";
 import { toolFor, type Settings, type Tool } from "./settings";
 import { CharLine, posAt, selRange, type Pos } from "./textsel";
@@ -54,22 +54,27 @@ export function Thumb({ doc, index, size, active, selected, dropMark, onPointerD
       className={`flex flex-col items-center gap-1 border-y-2 border-transparent py-1 text-xs text-ink-3 ${mark}`}
     >
       <span
-        className={`block rounded-xs bg-white ring-2 ${selected ? "ring-accent" : active ? "ring-accent/50" : "ring-transparent"}`}
+        className={`block rounded-xs bg-white ${active ? "ring-4 ring-accent" : selected ? "ring-2 ring-accent/60" : "ring-2 ring-transparent"}`}
         style={{ width: w, height: (w * size[1]) / size[0] }}
       >
         {url && <img src={url} alt="" draggable={false} className="h-full w-full rounded-xs" />}
       </span>
-      {index + 1}
+      <span className={active ? "font-semibold text-accent" : ""}>{index + 1}</span>
     </button>
   );
 }
 
 const HOLD_MS = 500;
+const HOLD_LONG_MS = 1500; // Kurve (Funktionsgraph) glätten: deutlich länger als die Formerkennung
 const straighten = (s: Item, x: number, y: number) => {
   s.points = s.points.slice(0, 1).flatMap((a) => [a, [x, y, a[2]] as InkPoint]);
 };
+/** Auswahl nur bei direktem Treffer: 1 Bildschirmpixel über die halbe Strichbreite hinaus (Kantenglättung), keine Nähe-Toleranz */
+const HIT = 1;
 const HOLD_TOL = 2; // pt Bewegung, die das Ruhen nicht unterbricht
 const ERASER_PX = 8; // Radierer-Radius in Bildschirmpixeln
+const SPACE_EDGE_PX = 16; // Stift so nah am linken/rechten Seitenrand → Platz einfügen
+const MAX_PAGE_H = 14_400; // PDF-Grenze (Backend prüft gleich)
 const css = (c: [number, number, number]) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
 const hex = (c: [number, number, number]) => `#${c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`;
 const rgb = (v: string) => [1, 3, 5].map((k) => parseInt(v.slice(k, k + 2), 16) / 255) as [number, number, number];
@@ -78,10 +83,11 @@ const ICON = "grid h-7 min-w-7 place-items-center rounded-xs px-1 text-sm text-i
 const family = (font: string) => /mono|courier/i.test(font) ? "monospace" : /sans|helvet|arial|calibri/i.test(font) ? FONT : "serif";
 
 type Gesture =
-  /** `shape`: beim Halten erkannte Form, `raw` = Freihand-Strich davor (Strg+Z kehrt dorthin zurück) */
-  | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; shape: ShapeKind | null; raw: Item | null } | null }
+  /** `shape`: beim Halten erkannte Form (`base` = ihre Punkte vor dem Weiterziehen), `raw` = Freihand-Strich davor (Strg+Z kehrt dorthin zurück) */
+  | { t: "draw"; item: Item; hold: { x: number; y: number; timer: number; shape: ShapeKind | null; raw: Item | null; base: InkPoint[] | null } | null }
   | { t: "shape"; item: Item }
-  | { t: "erase"; ids: Set<number>; l: Layer }
+  /** `cut` (Teil-Radierer): Original-id → Restteile ([] = ganz weg); `at` = letzte Radierer-Position */
+  | { t: "erase"; ids: Set<number>; l: Layer; cut: Map<number, Item[]> | null; at: [number, number] }
   /** `fresh`: kein Editor war offen → Klick ohne Ziehen setzt Cursor (neues Textfeld/Absatz bearbeiten) */
   | { t: "lasso"; poly: [number, number][]; rect: boolean; fresh: boolean; add: number[] | null; l: Layer }
   | { t: "tsel"; a: Pos; b: Pos; x: number; y: number; moved: boolean; fresh: boolean }
@@ -97,7 +103,9 @@ type Gesture =
   /** Marker auf PDF-Text: folgt den Zeilen von a bis b */
   | { t: "hl"; a: Pos; b: Pos; item: Item }
   | { t: "para"; i: number; x: number; y: number; dx: number; dy: number }
-  | { t: "field" | "link"; x: number; y: number; dx: number; dy: number }
+  | { t: "field" | "link" | "redact"; x: number; y: number; dx: number; dy: number }
+  /** Formularfeld `xref` verschieben (`h` = "move") oder an Griff `h` ziehen */
+  | { t: "fbox"; xref: number; h: string; r: Rect4; x: number; y: number; dx: number; dy: number }
   /** Platz einfügen: Linie bei `y`, um `dy` gezogen */
   | { t: "space"; y: number; dy: number };
 
@@ -120,6 +128,24 @@ const Field = z.object({
   options: z.array(z.tuple([z.string(), z.string()])), readonly: z.boolean(), multiline: z.boolean(),
 });
 type Field = z.infer<typeof Field>;
+type Rect4 = [number, number, number, number];
+const MM = 72 / 25.4;
+/** Kleinste Feldseite beim Ziehen an den Griffen (pt) */
+const FIELD_MIN = 6;
+/** Feldrechteck nach Ziehen um (dx, dy) an Griff `h` ("move" = verschieben), in der Seite `size` gehalten. */
+export function dragRect([x0, y0, x1, y1]: Rect4, h: string, dx: number, dy: number, [w, hh]: [number, number]): Rect4 {
+  if (h === "move") {
+    const mx = Math.min(Math.max(dx, -x0), w - x1), my = Math.min(Math.max(dy, -y0), hh - y1);
+    return [x0 + mx, y0 + my, x1 + mx, y1 + my];
+  }
+  const cl = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  return [
+    h.includes("w") ? cl(x0 + dx, 0, x1 - FIELD_MIN) : x0,
+    h.includes("n") ? cl(y0 + dy, 0, y1 - FIELD_MIN) : y0,
+    h.includes("e") ? cl(x1 + dx, x0 + FIELD_MIN, w) : x1,
+    h.includes("s") ? cl(y1 + dy, y0 + FIELD_MIN, hh) : y1,
+  ];
+}
 export interface NewField { kind: "text" | "check" | "combo"; name: string; rect: [number, number, number, number]; options: string[] }
 /** Änderung an Absatz `para`; `size`/`font` nur, wenn gewählt (erzwingt Ersatzschrift). */
 export interface TextEdit {
@@ -158,8 +184,8 @@ export interface PageProps {
   doc: number; index: number; size: [number, number]; zoom: number; version: number;
   /** `tool` = Maus-Werkzeug, `penTool` = Stift-Werkzeug (gleich, wenn „Automatisch wechseln" aus ist) */
   items: Item[]; selected: number[]; tool: Tool; penTool: Tool; preset: Preset; marker: Preset; textSize: number; settings: Settings;
-  /** Koordinatensystem-Werkzeug: Art fürs nächste Aufziehen */
-  axes: { xyz: boolean; grid: boolean };
+  /** Formen-/Koordinatensystem-Optionen fürs nächste Aufziehen */
+  opts: ShapeOpts;
   /** aktive Ebene: nur deren Objekte sind wähl-/radierbar; 1 = PDF-Inhalt (Bilder, Text, Absätze) */
   layer: Layer;
   /** Ebenen-Sperre: gesperrte Ebene lässt sich nicht wählen, ändern oder radieren (`layers.ts`) */
@@ -175,6 +201,8 @@ export interface PageProps {
   /** Tippen bei ausgewähltem Textfeld: DocView ruft je Seite `(id, Zeichen)` */
   typers: Map<number, (id: number, ch: string) => void>;
   onRemove: (ids: number[]) => void;
+  /** Teil-Radierer: Objekt-id → Ersatzteile an derselben Stelle der Reihenfolge ([] = entfernen), ein Undo-Schritt */
+  onCut: (parts: Map<number, Item[]>) => void;
   onReplace: (items: Item[]) => void;
   /** Bild zuschneiden (Doppelklick → Zuschnitt-Modus → ✓/Enter) */
   onCrop: (id: number, f: Crop) => void;
@@ -195,17 +223,24 @@ export interface PageProps {
   onUnlink: (n: number) => void;
   /** Formularfeld (Widget) löschen */
   onDeleteField: (xref: number) => void;
+  onPlaceField: (xref: number, rect: Rect4) => void;
   /** Mini-Leiste/Rechtsklick-Menü; `at` = Stelle in pt (Einfügen/Bild hier) */
   onCmd: (cmd: Cmd, at?: [number, number]) => void;
   /** Platz einfügen fertig: verschobene Objekte (leer = nichts verschoben), ein Schritt */
-  onSpace: (moved: Item[]) => void;
+  /** Seite bei `y` zerschneiden, `dy` weiße Fläche einfügen (`dy` = 0: abgebrochen) */
+  onSpace: (y: number, dy: number) => void;
+  /** Schwärzen: Rechteck in App-Koordinaten, `null` = abgebrochen */
+  onRedact: (r: [number, number, number, number] | null) => void;
+  /** Unterschrift/Initialen per Klick an (x, y) platzieren */
+  onSign: (kind: "sign" | "initials", x: number, y: number) => void;
 }
 
 /** PDF-Absätze (Indizes wie `text_paragraphs`) um dx/dy verschieben bzw. löschen – gemeinsam mit Original-Objekten ein Schritt */
 export interface ParaMove { i: number[]; dx: number; dy: number; del?: boolean }
 export interface OrigEdit { index: number; matrix?: number[] }
 /** Aktionen aus Mini-Leiste/Rechtsklick-Menü, die DocView ausführt; `notes` = auf Ebene 3 wechseln (Textfeld hier auf Ebene 1) */
-export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "notes";
+export type Cmd = "cut" | "copy" | "paste" | "delete" | "front" | "back" | "image" | "space" | "redact" | "notes" | Tag;
+export const TAG_ICON: Record<Tag, LucideIcon> = { important: CircleAlert, question: CircleHelp, task: ListTodo };
 
 /** Griffleiste oben (verschieben, Klick wählt als Objekt) + Breitengriff rechts; Attributwert = Id/Absatz */
 const grips = (grip: string, width: string, id: number) => (
@@ -315,6 +350,8 @@ export function PageView(p: PageProps) {
   const [newf, setNewf] = useState<NewField["rect"]>();
   /** Feld mit Fokus/Rechtsklick: zeigt die Mini-Leiste zum Löschen */
   const [selF, setSelF] = useState<number>();
+  /** Feld per Klick statt Ziehen angelegt → Größe folgt der Feldart */
+  const newClick = useRef(false);
   const formOn = tool === "form" && visible;
   useEffect(() => {
     if (!formOn) return;
@@ -379,16 +416,12 @@ export function PageView(p: PageProps) {
   const cropIt = items.find((it) => it.id === crop && it.kind === "image");
   // Rechtsklick-Menü an Stelle (pt); `on` = worauf geklickt wurde
   const [menu, setMenu] = useState<{ x: number; y: number; on: "sel" | "empty" | "text" }>();
+  useOutside(!!menu, (t) => !!t.closest("[data-menu]"), () => setMenu(undefined));
   useEffect(() => {
     if (!menu) return;
-    const close = (e: Event) => void (!(e.target instanceof Element && e.target.closest("[data-menu]")) && setMenu(undefined));
     const key = (e: KeyboardEvent) => void (e.key === "Escape" && setMenu(undefined));
-    addEventListener("pointerdown", close, true);
     addEventListener("keydown", key);
-    return () => {
-      removeEventListener("pointerdown", close, true);
-      removeEventListener("keydown", key);
-    };
+    return () => removeEventListener("keydown", key);
   }, [menu]);
   // Zahnrad der Mini-Leiste: zu, sobald sich die Auswahl ändert
   const [gear, setGear] = useState(false);
@@ -400,7 +433,7 @@ export function PageView(p: PageProps) {
     setGear(false);
     setPrev(undefined);
   }
-  const spaced = gs?.t === "space" ? makeSpace(items, index, gs.y, gs.dy, size[1]) : [];
+  const spaced = gs?.t === "space" ? makeSpace(items, index, gs.y, gs.dy) : [];
   const transform = (it: Item) =>
     spaced.find((s) => s.id === it.id) ?? (gs?.t === "tmove" && gs.id === it.id ? moveItem(it, gs.dx, gs.dy)
     : gs?.t === "twidth" && gs.id === it.id ? (({ x0, y0, y1 }) => ({ ...it, points: [[x0, y0, 0.5], [x0 + gs.w, y1, 0.5]] as InkPoint[] }))(box(it))
@@ -412,7 +445,8 @@ export function PageView(p: PageProps) {
   const shown = () => {
     const c = g.current;
     const out = items
-      .filter((it) => !(c?.t === "erase" && c.ids.has(it.id)) && it.id !== edit?.item.id)
+      .flatMap((it) => (c?.t !== "erase" ? [it] : c.ids.has(it.id) ? [] : c.cut?.get(it.id) ?? [it]))
+      .filter((it) => it.id !== edit?.item.id)
       .map(transform)
       .map((it) => (prev && selected.includes(it.id) ? { ...it, ...prev } : it));
     return c?.t === "shape" || c?.t === "hl" ? [...out, c.item] : out;
@@ -452,33 +486,63 @@ export function PageView(p: PageProps) {
     };
   });
 
-  // flat = Preset mit „Druck aus“: immer gleiche Breite
-  const pt = (e: PointerEvent | React.PointerEvent, flat = false): InkPoint => {
+  // Druck immer 0,5: Strichbreite konstant (B6, wie Freihand in Edge)
+  const pt = (e: PointerEvent | React.PointerEvent): InkPoint => {
     const r = ref.current?.getBoundingClientRect() ?? new DOMRect();
-    const pr = e.pointerType === "pen" && !flat ? normPressure(e.pressure, settings.pressureMax) : 0.5;
-    return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, pr];
+    return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0.5];
   };
 
-  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Rechteck, Dreieck, Kreis/Ellipse)
+  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Wurzel, Rechteck, Dreieck, Kreis/Ellipse);
+  // sonst (Kurve) glättet erst Ruhen ≥ 1500 ms. Weiterziehen danach skaliert die Form (dragShape).
   const armHold = (x: number, y: number) => {
     const c = g.current;
     const hd = c?.t === "draw" ? c.hold : null;
     if (!hd || !c || c.t !== "draw") return;
     clearTimeout(hd.timer);
+    const apply = (kind: ShapeKind, points: InkPoint[]) => {
+      Object.assign(hd, { shape: kind, raw: { ...c.item, points: c.item.points.slice() }, base: points });
+      Object.assign(c.item, { points: points.slice(), simulated: false });
+      setSnap({ x: hd.x, y: hd.y, kind });
+      redraw();
+    };
     Object.assign(hd, { x, y, timer: setTimeout(() => {
       if (c.item.points.length < 3) return;
       const f = recognize(c.item.points);
-      Object.assign(hd, { shape: f.kind, raw: { ...c.item, points: c.item.points.slice() } });
-      Object.assign(c.item, { points: f.points, simulated: false });
-      setSnap({ x: hd.x, y: hd.y, kind: f.kind });
-      redraw();
+      if (f) apply(f.kind, f.points);
+      else hd.timer = setTimeout(() => apply("curve", smoothCurve(c.item.points)), HOLD_LONG_MS - HOLD_MS);
     }, HOLD_MS) });
   };
 
   const eraseAt = (x: number, y: number) => {
     const c = g.current;
     if (c?.t !== "erase") return;
-    for (const it of items) if (layerOf(it) === c.l && hitTest(it, x, y, ERASER_PX / zoom)) c.ids.add(it.id);
+    const r = ERASER_PX / zoom;
+    // Zwischenpositionen alle r/2: schnelle Bewegung lässt sonst Lücken (Teil-Radierer: stehengebliebene Strichstücke)
+    const [x0, y0] = c.at, n = Math.max(1, Math.ceil(Math.hypot(x - x0, y - y0) / (r / 2)));
+    c.at = [x, y];
+    for (let k = 1; k <= n; k++) {
+      const ex = x0 + ((x - x0) * k) / n, ey = y0 + ((y - y0) * k) / n;
+      for (const it of items) {
+        if (layerOf(it) !== c.l || c.ids.has(it.id)) continue;
+        const cut = c.cut;
+        if (!cut || (it.kind !== "ink" && it.kind !== "marker")) {
+          // ganzer Strich bzw. Form/Text; im Teil-Modus als leere Restliste → ein Undo-Schritt mit den Teilstücken
+          if (cut?.get(it.id) || !hitTest(it, ex, ey, r)) continue;
+          if (cut) cut.set(it.id, []);
+          else c.ids.add(it.id);
+          continue;
+        }
+        const parts = cut.get(it.id) ?? [it];
+        let hit = false;
+        const next = parts.flatMap((s) => {
+          const f = cutStroke(s.points, ex, ey, r + s.size / 2);
+          if (!f) return [s];
+          hit = true;
+          return f.map((points) => ({ ...s, id: newId(), points }));
+        });
+        if (hit) cut.set(it.id, next);
+      }
+    }
   };
 
   const make = (kind: Item["kind"], pr: Preset, q: InkPoint, simulated: boolean): Item => ({
@@ -549,9 +613,21 @@ export function PageView(p: PageProps) {
         return openLink(hit);
       }
     }
+    const fg = tgt.closest<HTMLElement>("[data-fgrip]")?.dataset.fgrip;
+    const ff = fg && flist.find((f) => f.xref === selF);
+    if (ff && e.button === 0) {
+      const [x, y] = pt(e);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      owner.current = e.pointerId;
+      g.current = { t: "fbox", xref: ff.xref, h: fg, r: ff.rect, x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
     const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
-    const t = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
+    const t0 = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
+    // Stift am linken/rechten Seitenrand ansetzen und nach unten ziehen: Platz einfügen
+    const px = e.pointerType === "pen" ? pt(e)[0] : NaN;
+    const t = t0 && t0 !== "redact" && (px < SPACE_EDGE_PX / zoom || px > size[0] - SPACE_EDGE_PX / zoom) ? "space" : t0;
     if (!t || g.current) return;
     // Stift zeichnet, markiert, radiert und wählt nur auf Ebene 3 – unabhängig von der gewählten Ebene
     const pen3 = e.pointerType === "pen" && (t === "pen" || t === "marker" || t === "eraser" || t === "lasso");
@@ -599,7 +675,9 @@ export function PageView(p: PageProps) {
     // Maus mit Strg/Umschalt: Auswahl erweitern/verkleinern (bleibt in der Ebene)
     const mouse = e.pointerType !== "pen";
     const add = mouse && (e.ctrlKey || e.shiftKey) && t === "lasso" && !tgt.closest("[data-handle]");
-    if (sl.length && !add) {
+    // Platz einfügen schneidet die Seite – ein Zug innerhalb der Auswahl verschiebt sie nicht
+    const sign = t === "sign" || t === "initials";
+    if (sl.length && !add && t !== "space" && t !== "redact" && !sign) {
       const b = unionBox(sl);
       const h = tgt.closest<HTMLElement>("[data-handle]")?.dataset.handle;
       // ausgewähltes Textfeld: Klick in den Text setzt den Cursor (Verschieben über die Griffleiste)
@@ -623,8 +701,8 @@ export function PageView(p: PageProps) {
     // Maus-Klick wählt die Ebene selbst; der Stift fasst Text nie an und behält die Ebene
     let L: Layer = pen3 ? 3 : p.layer;
     if (t === "lasso" && mouse && !add && fresh) {
-      const onPdf = !!posAt(clist, x, y) || paraAt(x, y) >= 0 || !!smallestAt(origs, x, y);
-      const auto = autoLayerFor(items, x, y, 4 / zoom + 1, onPdf, (l) => !p.locked?.(l));
+      const onPdf = !!posAt(clist, x, y) || !!smallestAt(origs, x, y);
+      const auto = autoLayerFor(items, x, y, HIT / zoom, onPdf, (l) => !p.locked?.(l));
       if (auto && auto !== L) {
         L = auto;
         p.onLayer(auto);
@@ -637,10 +715,15 @@ export function PageView(p: PageProps) {
       ta.current?.blur();
       return openText(e, hitT, x, y);
     }
+    if (sign) return p.onSign(t, x, y);
     e.currentTarget.setPointerCapture(e.pointerId);
     if (t === "form") {
       setNewf(undefined);
       g.current = { t: "field", x, y, dx: 0, dy: 0 };
+      return rerender();
+    }
+    if (t === "redact") {
+      g.current = { t: "redact", x, y, dx: 0, dy: 0 };
       return rerender();
     }
     if (t === "link") {
@@ -652,14 +735,13 @@ export function PageView(p: PageProps) {
     if (at) {
       g.current = { t: "hl", a: at, b: at, item: { ...make("highlight", marker, q, false), points: [], ...(pen3 && { layer: 3 as const }) } };
     } else if (t === "pen" || t === "marker") {
-      const flat = t === "pen" && !settings.pressure;
-      const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, flat ? [q[0], q[1], 0.5] : q, e.pointerType !== "pen" && !flat);
+      const item = make(t === "pen" ? "ink" : "marker", t === "pen" ? preset : marker, q, e.pointerType !== "pen");
       if (pen3) item.layer = 3;
       lastTs.current = e.timeStamp;
-      g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null } };
+      g.current = { t: "draw", item, hold: { x, y, timer: 0, shape: null, raw: null, base: null } };
       armHold(x, y);
     } else if (t === "eraser") {
-      g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L };
+      g.current = { t: "erase", ids: new Set(), l: L === 1 ? 3 : L, cut: p.opts.partial ? new Map() : null, at: [x, y] };
       eraseAt(x, y);
       redraw();
     } else if (t === "lasso") {
@@ -671,7 +753,7 @@ export function PageView(p: PageProps) {
       g.current = { t: "space", y, dy: 0 };
       rerender();
     } else {
-      g.current = { t: "shape", item: { ...make(t, preset, q, false), ...(t === "axes" ? p.axes : {}), points: [q, q] } };
+      g.current = { t: "shape", item: { ...make(t, preset, q, false), ...shapeProps(t, p.opts), points: [q, q] } };
     }
   };
 
@@ -707,14 +789,14 @@ export function PageView(p: PageProps) {
     const evs = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
     const q = pt(e);
     const [x, y] = q;
-    const flat = c.t === "draw" && c.item.kind === "ink" && !settings.pressure;
     switch (c.t) {
       case "draw":
         lastTs.current = e.timeStamp;
         for (const ev of evs) {
-          const r = pt(ev, flat), hd = c.hold;
-          // Linie folgt weiter dem Stift, andere Formen bleiben stehen
+          const r = pt(ev), hd = c.hold;
+          // Linie folgt weiter dem Stift, andere Formen wachsen/schrumpfen mit ihm
           if (hd?.shape === "line") straighten(c.item, r[0], r[1]);
+          else if (hd?.shape && hd.base) c.item.points = dragShape(hd.shape, hd.base, [hd.x, hd.y], [r[0], r[1]]);
           else if (!hd?.shape) {
             // Glättung schon beim Aufnehmen: live = gespeichert, beim Loslassen springt nichts
             c.item.points.push(smoothPt(c.item.points.at(-1), r, settings.smooth));
@@ -723,7 +805,7 @@ export function PageView(p: PageProps) {
         }
         return schedule(drawLive);
       case "shape":
-        c.item.points[1] = q;
+        c.item.points[1] = constrain(c.item.kind, p.opts, c.item.points[0] ?? q, q);
         return schedule();
       case "erase":
         for (const ev of evs) eraseAt(...(pt(ev).slice(0, 2) as [number, number]));
@@ -742,7 +824,9 @@ export function PageView(p: PageProps) {
       case "para":
       case "tmove":
       case "field":
+      case "fbox":
       case "link":
+      case "redact":
         Object.assign(c, { dx: x - c.x, dy: y - c.y });
         break;
       case "twidth":
@@ -750,7 +834,7 @@ export function PageView(p: PageProps) {
         c.w = Math.max(20, c.w0 + x - c.x);
         break;
       case "space":
-        c.dy = y - c.y;
+        c.dy = Math.min(Math.max(0, y - c.y), MAX_PAGE_H - size[1]);
         break;
       case "fsel": {
         const { x0, y0, x1 } = box(c.it);
@@ -801,7 +885,8 @@ export function PageView(p: PageProps) {
         break;
       }
       case "erase":
-        if (c.ids.size) p.onRemove([...c.ids]);
+        if (c.cut?.size) p.onCut(c.cut);
+        else if (c.ids.size) p.onRemove([...c.ids]);
         break;
       case "lasso": {
         const [x0, y0] = c.poly[0] ?? [0, 0];
@@ -810,7 +895,7 @@ export function PageView(p: PageProps) {
         const cand = c.l === 1 ? [...origs, ...pitems] : items.filter((it) => layerOf(it) === c.l);
         const ids = far
           ? cand.filter((it) => c.l === 1 ? touches(box(it), c.poly, c.rect) : inPolygon((box(it).x0 + box(it).x1) / 2, (box(it).y0 + box(it).y1) / 2, c.poly)).map((it) => it.id)
-          : (c.l === 1 ? smallestAt(cand, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, 4 / zoom + 1))?.id) ?? [];
+          : (c.l === 1 ? smallestAt(posAt(clist, x0, y0) ? cand : origs, x0, y0)?.id : cand.findLast((it) => hitTest(it, x0, y0, HIT / zoom))?.id) ?? [];
         const hit = Array.isArray(ids) ? ids : [ids];
         const base = c.add ?? [];
         p.onSelect(index, !c.add ? hit : far ? [...new Set([...base, ...hit])] : hit.some((i) => base.includes(i)) ? base.filter((i) => !hit.includes(i)) : [...base, ...hit]);
@@ -864,9 +949,14 @@ export function PageView(p: PageProps) {
         if (pedit) setPedit({ ...pedit, dx: pedit.dx + c.dx, dy: pedit.dy + c.dy });
         break;
       case "field":
-        if (Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3) {
-          setNewf([Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
-        }
+        newClick.current = !(Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3);
+        // Klick: Textfeld-Größe (60 × 8 mm), in der Seite gehalten
+        setNewf(newClick.current
+          ? dragRect([c.x, c.y, c.x + 60 * MM, c.y + 8 * MM], "move", 0, 0, size)
+          : [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)]);
+        break;
+      case "fbox":
+        if (Math.hypot(c.dx, c.dy) * zoom > 1) p.onPlaceField(c.xref, dragRect(c.r, c.h, c.dx, c.dy, size));
         break;
       case "link": {
         const r: [number, number, number, number] = [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)];
@@ -887,8 +977,13 @@ export function PageView(p: PageProps) {
       case "hl":
         if (c.item.points.length) p.onAdd(c.item);
         break;
+      case "redact":
+        p.onRedact(e.type !== "pointercancel" && Math.abs(c.dx) * zoom > 3 && Math.abs(c.dy) * zoom > 3
+          ? [Math.min(c.x, c.x + c.dx), Math.min(c.y, c.y + c.dy), Math.max(c.x, c.x + c.dx), Math.max(c.y, c.y + c.dy)] : null);
+        break;
       case "space":
-        p.onSpace(e.type === "pointercancel" ? [] : makeSpace(items, index, c.y, c.dy, size[1]));
+        if (e.type !== "pointercancel" && c.dy >= 1) p.onSpace(c.y, c.dy);
+        else p.onSpace(0, 0);
         break;
     }
     rerender();
@@ -956,9 +1051,11 @@ export function PageView(p: PageProps) {
     const d = new FormData(f);
     const kind = String(d.get("kind"));
     const options = String(d.get("options") ?? "").split("\n").map((o) => o.trim()).filter(Boolean);
-    if (newf && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect: newf, options });
+    // Checkbox per Klick: 5 × 5 mm statt Textfeld-Größe
+    const rect = newf && newClick.current && kind === "check" ? dragRect([newf[0], newf[1], newf[0] + 5 * MM, newf[1] + 5 * MM], "move", 0, 0, size) : newf;
+    if (rect && (kind === "text" || kind === "check" || kind === "combo")) p.onNewField({ kind, name: String(d.get("name") ?? "").trim(), rect, options });
   };
-  const fieldBox = gs?.t === "field" || gs?.t === "link" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
+  const fieldBox = gs?.t === "field" || gs?.t === "link" || gs?.t === "redact" ? { left: Math.min(gs.x, gs.x + gs.dx) * zoom, top: Math.min(gs.y, gs.y + gs.dy) * zoom, width: Math.abs(gs.dx) * zoom, height: Math.abs(gs.dy) * zoom } : null;
 
   const sb = sel.length ? unionBox(sel.map(transform)) : null;
   const lasso = gs?.t === "lasso" ? gs.poly : null;
@@ -1047,7 +1144,7 @@ export function PageView(p: PageProps) {
         const [x, y] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
         if (tsRects.some(([x0, y0, x1, y1]) => inBox({ x0, y0, x1, y1 }, x, y))) return setMenu({ x, y, on: "text" });
         if (sel.length && (!e.isTrusted || inBox(unionBox(sel), x, y))) return setMenu({ x, y, on: "sel" });
-        const hit = p.layer === 1 ? smallestAt([...origs, ...pitems], x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, 4 / zoom + 1));
+        const hit = p.layer === 1 ? smallestAt(posAt(clist, x, y) ? [...origs, ...pitems] : origs, x, y) : items.findLast((it) => layerOf(it) === p.layer && hitTest(it, x, y, HIT / zoom));
         if (hit) p.onSelect(index, [hit.id]);
         setMenu({ x, y, on: hit ? "sel" : "empty" });
       }}
@@ -1162,11 +1259,14 @@ export function PageView(p: PageProps) {
             }} />
             <IconBtn icon={ImagePlus} label={T.imageHere} role="menuitem" className={ICON} onClick={cmd("image", [menu.x, menu.y])} />
             <IconBtn icon={BetweenHorizontalStart} label={T.space} role="menuitem" className={ICON} onClick={cmd("space")} />
+            <IconBtn icon={SquareX} label={T.redact} role="menuitem" className={ICON} onClick={cmd("redact")} />
+            {TAGS.map((t) => <IconBtn key={t} icon={TAG_ICON[t]} label={T.tagSet(T.tag[t])} role="menuitem" className={ICON} onClick={cmd(t, [menu.x, menu.y])} />)}
           </>}
         </div>
       )}
       {gs?.t === "space" && (
         <svg className="pointer-events-none absolute inset-0" width={w} height={h}>
+          <rect x={0} width={w} y={gs.y * zoom} height={gs.dy * zoom} fill="var(--accent)" fillOpacity={0.12} />
           <line x1={0} x2={w} y1={gs.y * zoom} y2={gs.y * zoom} stroke="var(--accent)" strokeDasharray="4 3" />
           <line x1={0} x2={w} y1={(gs.y + gs.dy) * zoom} y2={(gs.y + gs.dy) * zoom} stroke="var(--accent)" />
         </svg>
@@ -1280,11 +1380,29 @@ export function PageView(p: PageProps) {
             }} />
         );
       })}
-      {flist.filter((f) => f.xref === selF && !f.readonly).map((f) => (
-        <IconBtn key={`d${f.xref}`} data-pedit icon={Trash} label={T.del} keys="Entf" className={`${ICON} absolute z-10 border border-line bg-surface shadow-raised`}
-          style={{ left: f.rect[2] * zoom + 4, top: f.rect[1] * zoom }}
-          onMouseDown={(e) => e.preventDefault()} onClick={() => p.onDeleteField(f.xref)} />
-      ))}
+      {/* gewähltes Feld: 8 Griffe + Verschiebe-Griff; mousedown abgefangen, sonst verliert das Feld den Fokus (und die Auswahl) */}
+      {flist.filter((f) => f.xref === selF && !f.readonly).map((f) => {
+        const [x0, y0, x1, y1] = gs?.t === "fbox" && gs.xref === f.xref ? dragRect(gs.r, gs.h, gs.dx, gs.dy, size) : f.rect;
+        return (
+          <div key={`d${f.xref}`} onMouseDown={(e) => e.preventDefault()}>
+            <div className="pointer-events-none absolute z-10 border border-dashed border-accent"
+              style={{ left: x0 * zoom - 3, top: y0 * zoom - 3, width: (x1 - x0) * zoom + 6, height: (y1 - y0) * zoom + 6 }}>
+              {HANDLES.map((k) => (
+                <span key={k} data-fgrip={k}
+                  className="pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-xs border border-white bg-accent"
+                  style={{
+                    left: k.includes("w") ? 0 : k.includes("e") ? "100%" : "50%", top: k.includes("n") ? 0 : k.includes("s") ? "100%" : "50%",
+                    cursor: `${HANDLE_CURSOR[k]}-resize`, touchAction: "none",
+                  }} />
+              ))}
+            </div>
+            <div className="absolute z-10 flex flex-col rounded-xs border border-line bg-surface shadow-raised" style={{ left: x1 * zoom + 8, top: y0 * zoom }}>
+              <span data-fgrip="move" title={T.move} aria-label={T.move} className={`${ICON} cursor-move`} style={{ touchAction: "none" }}><Move size={16} aria-hidden /></span>
+              <IconBtn data-pedit icon={Trash} label={T.del} keys="Entf" className={ICON} onClick={() => p.onDeleteField(f.xref)} />
+            </div>
+          </div>
+        );
+      })}
       {snap && (
         <div role="status" className="pointer-events-none absolute z-30 rounded-xs bg-accent px-1.5 py-0.5 text-xs text-white shadow-raised"
           style={{ left: snap.x * zoom + 12, top: snap.y * zoom - 28 }}>{T[snap.kind]}</div>
@@ -1306,7 +1424,7 @@ export function PageView(p: PageProps) {
         </div>
       ))}
       {fieldBox && (
-        <div className="pointer-events-none absolute border border-dashed border-accent"
+        <div className={`pointer-events-none absolute border border-dashed ${gs?.t === "redact" ? "border-black bg-black/50" : "border-accent"}`}
           style={fieldBox} />
       )}
       {newf && (

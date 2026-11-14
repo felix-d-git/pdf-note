@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { DEFAULT_PENS, PRESSURE_MAX, TEXT_SIZE, type Pen, type Preset } from "./ink";
+import { DEFAULT_PENS, TEXT_SIZE, type Pen, type Preset } from "./ink";
+import { samePath } from "./tabs";
 
 /** `lasso` = Auswahl/Text (Klick setzt Cursor, Ziehen wählt aus); `space` = Platz einfügen (waagrechte Linie ziehen) */
-export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "form", "link", "space"] as const;
+export const TOOLS = ["pen", "marker", "eraser", "lasso", "line", "arrow", "rect", "ellipse", "axes", "solid", "form", "link", "space", "redact", "sign", "initials"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Stifttaste: Zeigerart + Bitmaske aus PointerEvent.buttons (2 = Seitentaste, 32 = Radierer-Ende). */
@@ -12,9 +13,6 @@ export type Binding = z.infer<typeof Binding>;
 export const Settings = z.object({
   lasso: Binding,
   eraser: Binding,
-  pressureMax: z.number().min(0.3).max(1),
-  /** Stiftdruck für alle Stifte (aus = konstante Breite); fehlt → aus alten Presets übernommen */
-  pressure: z.boolean().default(true),
   /** Glättung 0–0,9 für alle Stifte; 0 = exakt wie gezeichnet */
   smooth: z.number().min(0).max(0.9).default(0),
   /** Gerät bestimmt das Werkzeug: Stift → Stift-Werkzeug, Maus → Auswahl/Text (fehlt in alten Einstellungen → an) */
@@ -33,8 +31,6 @@ export type Settings = z.infer<typeof Settings>;
 export const DEFAULT_SETTINGS: Settings = {
   lasso: { pointerType: "pen", buttons: 2 },
   eraser: { pointerType: "pen", buttons: 32 },
-  pressureMax: PRESSURE_MAX,
-  pressure: true,
   smooth: 0,
   auto: true,
   theme: "dark",
@@ -58,13 +54,7 @@ const PKEY = "pdfnote.presets";
 // localStorage kann in WebView2 fehlen/werfen → Standardwerte
 export function loadSettings(): Settings {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    // v1.1: Druck hing am Stift-Preset → aus, wenn ein altes Stift-Preset ihn abgeschaltet hatte
-    if (raw?.pressure !== undefined) return Settings.parse(raw);
-    // gleich sichern: die Leiste schreibt die Presets beim ersten Öffnen im neuen Format
-    const s = Settings.parse({ ...raw, pressure: !legacyPressureOff() });
-    storeSettings(s);
-    return s;
+    return Settings.parse(JSON.parse(localStorage.getItem(KEY) ?? "null"));
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -82,7 +72,7 @@ export function storeSettings(s: Settings) {
 const Rgb = z.tuple([z.number(), z.number(), z.number()]);
 const PenData = z.object({ kind: z.enum(["pen", "marker"]), color: Rgb, size: z.number().positive() });
 /** v1.1: Punkt-Presets + sechs Farbfelder → Farbfelder und eigene Presets werden Stifte; kaputte Daten → Standard */
-const Old = z.object({ name: z.string(), color: Rgb, size: z.number().positive(), pressure: z.boolean().optional() });
+const Old = z.object({ name: z.string(), color: Rgb, size: z.number().positive() });
 const Legacy = z.object({
   pen: z.array(Old), marker: z.array(Old), text: z.number().positive(),
   quick: z.object({ pen: z.array(Old), marker: z.array(Old) }).optional(),
@@ -103,15 +93,6 @@ const Palettes = z.union([
 export interface Palettes { pens: Pen[]; text: number; last?: Pen }
 export const DEFAULT_PALETTES: Palettes = { pens: DEFAULT_PENS, text: TEXT_SIZE };
 
-function legacyPressureOff() {
-  try {
-    const o = Legacy.safeParse(JSON.parse(localStorage.getItem(PKEY) ?? "null"));
-    return o.success && [...o.data.pen, ...(o.data.quick?.pen ?? [])].some((p) => p.pressure === false);
-  } catch {
-    return false; // kaputte Presets dürfen die übrigen Einstellungen nicht verwerfen
-  }
-}
-
 export function loadPalettes(): Palettes {
   try {
     return Palettes.parse(JSON.parse(localStorage.getItem(PKEY) ?? "null"));
@@ -127,6 +108,47 @@ export function storePalettes(p: Palettes) {
     /* nur Komfort */
   }
 }
+
+/** Unterschrift/Initialen als PNG (Base64, transparent, auf die Tinte zugeschnitten), gerätelokal */
+const SKEY = "pdfnote.sign";
+const Sign = z.object({ sign: z.string().optional(), initials: z.string().optional() });
+export type Sign = z.infer<typeof Sign>;
+export function loadSign(): Sign {
+  try {
+    return Sign.parse(JSON.parse(localStorage.getItem(SKEY) ?? "{}"));
+  } catch {
+    return {};
+  }
+}
+export function storeSign(s: Sign) {
+  try {
+    localStorage.setItem(SKEY, JSON.stringify(s));
+  } catch {
+    /* nur Komfort */
+  }
+}
+
+/** Zuletzt geöffnet (neueste zuerst, höchstens 10) + Favoriten, gerätelokal; fehlende Dateien blendet die Liste nur aus */
+const RKEY = "pdfnote.recent";
+const Recent = z.object({ recent: z.array(z.string()).default([]), fav: z.array(z.string()).default([]) });
+export type Recent = z.infer<typeof Recent>;
+export function loadRecent(): Recent {
+  try {
+    return Recent.parse(JSON.parse(localStorage.getItem(RKEY) ?? "{}"));
+  } catch {
+    return { recent: [], fav: [] };
+  }
+}
+export function storeRecent(r: Recent) {
+  try {
+    localStorage.setItem(RKEY, JSON.stringify(r));
+  } catch {
+    /* nur Komfort */
+  }
+}
+export const addRecent = (r: Recent, p: string): Recent => ({ ...r, recent: [p, ...r.recent.filter((x) => !samePath(x, p))].slice(0, 10) });
+export const toggleFav = (r: Recent, p: string): Recent =>
+  ({ ...r, fav: r.fav.some((x) => samePath(x, p)) ? r.fav.filter((x) => !samePath(x, p)) : [...r.fav, p] });
 
 const matches = (b: Binding, e: { pointerType: string; buttons: number }) =>
   e.pointerType === b.pointerType && (e.buttons & b.buttons) === b.buttons;
@@ -144,7 +166,7 @@ export function toolFor(e: { pointerType: string; buttons: number }, tool: Tool,
  */
 export interface Tools { mouse: Tool; pen: Tool; prev: { mouse: Tool; pen: Tool }; locked: boolean }
 /** Einmal-Werkzeuge: danach zurück zum vorherigen (Platz einfügen wie eine Form) */
-export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "space"];
+export const SHAPE_TOOLS: readonly Tool[] = ["line", "arrow", "rect", "ellipse", "axes", "solid", "space", "redact", "sign", "initials"];
 export const initTools = (auto: boolean): Tools => ({ mouse: auto ? "lasso" : "pen", pen: "pen", prev: { mouse: "lasso", pen: "pen" }, locked: false });
 
 /** Werkzeug wählen; `dev` = womit. Bei `auto` setzt der Stift nur seins, die Maus ihres – Zeichenwerkzeuge gelten auch für den Stift. */
@@ -181,9 +203,9 @@ export const movePen = (list: Pen[], from: number, to: number) => {
 /** n-ter Stift bzw. Marker (Q W E / Umschalt+Q W E) */
 export const nthPen = (list: Pen[], kind: Pen["kind"], n: number) => list.filter((p) => p.kind === kind)[n];
 
-/** Gerätewechsel (bei `auto`): Stift → zuletzt genutzter Stift/Marker (nie Radierer/Auswahl/Form), Maus → Auswahl. */
+/** Gerätewechsel (bei `auto`): Stift → zuletzt genutzter Stift/Marker (nie Radierer/Auswahl/Form); Maus behält ihr Werkzeug (Standard Auswahl, gezeichnet nur nach Wahl bis zum Wechsel). */
 export const deviceTools = (s: Tools, dev: "pen" | "mouse", last: Pen["kind"]): Tools =>
-  dev === "pen" ? { ...s, pen: s.pen === "pen" || s.pen === "marker" ? s.pen : last, locked: false } : { ...s, mouse: "lasso", locked: false };
+  dev === "pen" ? { ...s, pen: s.pen === "pen" || s.pen === "marker" ? s.pen : last, locked: false } : s;
 
 /** Nach dem Zeichnen einer Form: zurück zum vorherigen Werkzeug, außer mit Schloss. */
 export const afterShape = (s: Tools): Tools => s.locked ? s : {

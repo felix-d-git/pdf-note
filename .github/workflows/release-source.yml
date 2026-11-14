@@ -1,5 +1,6 @@
 # AGPL-3.0 §6 (Issue #8): jedes Release verweist auf seinen Quellstand und trägt SOURCE.md + die MuPDF-C-Quellen
-# (mupdf-sys-Crate) als Asset. Releases aus auto-release.yml (GITHUB_TOKEN) lösen "release" nicht aus -> workflow_dispatch.
+# (mupdf-sys-Crate) als Asset. Bricht ab, wenn Tag und App-Version abweichen (#24). Kein Auto-Release: Releases nur
+# manuell nach Versionssprung in package.json + src-tauri/Cargo.toml (standard-a-exclude: no-release).
 name: Release-Quellcode
 on:
   release:
@@ -17,7 +18,7 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ env.TAG }}
       - env:

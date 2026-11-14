@@ -18,8 +18,8 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}\target
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -37,7 +37,7 @@ jobs:
         run: cargo rustc --release --locked --manifest-path src-tauri/Cargo.toml --bin pdf-note -- -C link-arg=/MAP:%GITHUB_WORKSPACE%\pdf-note.map
       - shell: bash
         run: node scripts/linkmap.mjs pdf-note.map | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: linkmap

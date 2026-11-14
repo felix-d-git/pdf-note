@@ -282,6 +282,12 @@ fn new_pdf(path: PathBuf) -> Result<(), String> {
     notebook::new_pdf(&path)
 }
 
+/// Zuletzt geöffnet/Favoriten: welche Pfade noch als Datei existieren (fehlende blendet das Frontend aus).
+#[tauri::command]
+fn existing(paths: Vec<PathBuf>) -> Vec<bool> {
+    paths.iter().map(|p| p.is_file()).collect()
+}
+
 /// Lesezeichen (flach, mit Ebene).
 #[tauri::command]
 async fn outline(w: tauri::State<'_, Worker>, id: u32) -> Result<Vec<notebook::Mark>, String> {
@@ -367,7 +373,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, copy_pages, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, markdown_preview, goto_rev, read_image, crop_image, startup_path, search, links, open_url])
+        .invoke_handler(tauri::generate_handler![open_pdf, close_pdf, render_page, save_pdf, page_op, copy_pages, orig_objects, text_paragraphs, text_chars, form_fields, new_pdf, outline, page_markdown, markdown_preview, goto_rev, read_image, crop_image, startup_path, search, links, open_url, existing])
         .run(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen");
 }

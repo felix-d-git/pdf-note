@@ -342,6 +342,121 @@ pub fn edit(doc: &mut PdfDocument, index: i32, edits: &[Edit]) -> Result<(), Str
     Ok(())
 }
 
+/// Seite bei App-Höhe `y` zerschneiden und um `dy` weiße Fläche verlängern: Inhalt unterhalb und fremde Annotationen
+/// darunter rücken mit. Originalinhalt wird ein Formular-XObject, zweimal gezeichnet (oben geklippt, unten verschoben).
+// ponytail: danach ist Ebene 1 ein Block (Objekte/Text nicht mehr einzeln bearbeitbar), Link-Ziele in den verschobenen
+// Bereich bleiben stehen – Upgrade: Content-Stream je Objekt teilen statt kapseln.
+pub(crate) fn space(doc: &mut PdfDocument, index: i32, y: f32, dy: f32) -> Result<(), String> {
+    let err = |e: Error| e.to_string();
+    let page = doc.load_pdf_page(index).map_err(err)?;
+    let b = page.bounds().map_err(err)?;
+    let (w, h) = (b.x1 - b.x0, b.y1 - b.y0);
+    if !(y.is_finite() && dy.is_finite() && (0.0..h).contains(&y) && dy >= 1.0 && h + dy <= 14_400.0) {
+        return Err("ungültiger Platz".into());
+    }
+    let m = mul(&page.ctm().map_err(err)?, &Matrix::new_translate(-b.x0, -b.y0));
+    let inv = m.invert().ok_or("Seite nicht umkehrbar")?;
+    let to_pdf = |x: f32, y: f32| inv.transform_xy(x, y);
+    // Verschiebung im PDF-Raum (Konjugat einer Translation ist eine Translation)
+    let (o, s) = (to_pdf(0.0, 0.0), to_pdf(0.0, dy));
+    let (tx, ty) = (s.0 - o.0, s.1 - o.1);
+    let poly = |y0: f32, y1: f32| {
+        let p: Vec<_> = [(0.0, y0), (w, y0), (w, y1), (0.0, y1)].iter().map(|&(x, y)| to_pdf(x, y)).collect();
+        format!("{} {} m {} {} l {} {} l {} {} l h W n", p[0].0, p[0].1, p[1].0, p[1].1, p[2].0, p[2].1, p[3].0, p[3].1)
+    };
+    let pdf_rect = |y1: f32| {
+        let p = [to_pdf(0.0, 0.0), to_pdf(w, y1)];
+        [p[0].0.min(p[1].0), p[0].1.min(p[1].1), p[0].0.max(p[1].0), p[0].1.max(p[1].1)]
+    };
+    let num_array = |doc: &PdfDocument, v: &[f32]| -> Result<PdfObject, Error> {
+        let mut a = doc.new_array()?;
+        for &x in v {
+            a.array_push(PdfObject::new_real(x)?)?;
+        }
+        Ok(a)
+    };
+
+    let mut obj = page.object();
+    let old = pdf_rect(h);
+    let mut form = doc.new_dict().map_err(err)?;
+    form.dict_put("Type", PdfObject::new_name("XObject").map_err(err)?).map_err(err)?;
+    form.dict_put("Subtype", PdfObject::new_name("Form").map_err(err)?).map_err(err)?;
+    form.dict_put("BBox", num_array(doc, &old).map_err(err)?).map_err(err)?;
+    if let Some(r) = obj.get_dict_inheritable("Resources").map_err(err)? {
+        form.dict_put("Resources", r).map_err(err)?;
+    }
+    let body = contents(&page).map_err(err)?;
+    let x = doc.add_stream(&mupdf::Buffer::from_bytes(&body).map_err(err)?, Some(&form), false).map_err(err)?;
+    let mut xo = doc.new_dict().map_err(err)?;
+    xo.dict_put("PNSpace", x).map_err(err)?;
+    let mut res = doc.new_dict().map_err(err)?;
+    res.dict_put("XObject", xo).map_err(err)?;
+    obj.dict_put("Resources", res).map_err(err)?;
+    let s = format!("q {} /PNSpace Do Q\nq 1 0 0 1 {tx} {ty} cm {} /PNSpace Do Q\n", poly(0.0, y), poly(y, h));
+    let stream = doc.add_stream(&mupdf::Buffer::from_bytes(s.as_bytes()).map_err(err)?, None, false).map_err(err)?;
+    obj.dict_put("Contents", stream).map_err(err)?;
+    let new = pdf_rect(h + dy);
+    for k in ["MediaBox", "CropBox"] {
+        obj.dict_put(k, num_array(doc, &new).map_err(err)?).map_err(err)?;
+    }
+    for k in ["TrimBox", "BleedBox", "ArtBox"] {
+        obj.dict_delete(k).map_err(err)?;
+    }
+
+    // Annotationen mit Oberkante ab `y` verschieben (alle Koordinaten-Arrays sind x/y-Paare)
+    let Some(annots) = obj.get_dict("Annots").map_err(err)? else { return Ok(()) };
+    let shift = |a: &mut PdfObject| -> Result<(), Error> {
+        for i in 0..a.len()? as i32 {
+            let Some(v) = a.get_array(i)? else { continue };
+            if v.is_number()? {
+                a.array_put(i, PdfObject::new_real(v.as_float()? + if i % 2 == 0 { tx } else { ty })?)?;
+            }
+        }
+        Ok(())
+    };
+    for i in 0..annots.len().map_err(err)? as i32 {
+        let Some(an) = annots.get_array(i).map_err(err)? else { continue };
+        let Some(r) = an.get_dict("Rect").map_err(err)? else { continue };
+        let v: Vec<f32> = (0..4).filter_map(|j| r.get_array(j).ok()?.and_then(|v| v.as_float().ok())).collect();
+        let [x0, y0, x1, y1] = v[..] else { continue };
+        let top = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].iter().map(|&(x, y)| m.transform_xy(x, y).1).fold(f32::MAX, f32::min);
+        if top < y {
+            continue;
+        }
+        for k in ["Rect", "QuadPoints", "Vertices", "L", "CL"] {
+            if let Some(mut a) = an.get_dict(k).map_err(err)? {
+                shift(&mut a).map_err(err)?;
+            }
+        }
+        if let Some(ink) = an.get_dict("InkList").map_err(err)? {
+            for j in 0..ink.len().map_err(err)? as i32 {
+                if let Some(mut s) = ink.get_array(j).map_err(err)? {
+                    shift(&mut s).map_err(err)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bereich `rect` (App-Koordinaten) schwärzen: MuPDF-Redaction entfernt Text, Bildpixel und ganz überdeckte Vektorgrafik
+/// darunter aus dem Seiteninhalt und zeichnet ein schwarzes Rechteck. Beim Speichern (Vollschreiben, garbage) bleibt
+/// vom alten Inhalt nichts in der Datei; rückgängig nur per Undo vor dem Speichern.
+pub(crate) fn redact(doc: &mut PdfDocument, index: i32, rect: [f32; 4]) -> Result<(), String> {
+    let err = |e: Error| e.to_string();
+    let [x0, y0, x1, y1] = rect;
+    if !(rect.iter().all(|v| v.is_finite()) && x1 > x0 && y1 > y0) {
+        return Err("ungültiger Bereich".into());
+    }
+    let mut page = doc.load_pdf_page(index).map_err(err)?;
+    // App-Koordinaten = Seitenkoordinaten (nach Drehung) minus Ursprung der Seitenbox
+    let b = page.bounds().map_err(err)?;
+    page.add_redact_annotation(Rect::new(x0 + b.x0, y0 + b.y0, x1 + b.x0, y1 + b.y0)).map_err(err)?;
+    let opts = mupdf::pdf::PdfRedactOptions { black_boxes: true, ..mupdf::pdf::PdfRedactOptions::pymupdf_default() };
+    page.apply_redactions_with_options(opts).map_err(err)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,7 +523,7 @@ mod tests {
     }
 
     fn page_text(d: &PdfDocument) -> String {
-        d.load_page(0).unwrap().to_text_page(mupdf::TextPageFlags::empty()).unwrap().to_text().unwrap()
+        d.load_page(0).unwrap().to_text_page(mupdf::TextPageFlags::CLIP).unwrap().to_text().unwrap()
     }
 
     #[test]
@@ -427,5 +542,62 @@ mod tests {
         edit(&mut d, 0, &[Edit { index: 0, matrix: Some([1.0, 0.0, 0.0, 1.0, 3.0, 4.0]) }]).unwrap();
         let b1 = boxes(&d, 0).unwrap();
         assert!(near(b1[0], [b0[0][0] + 3.0, b0[0][1] + 4.0, b0[0][2] + 3.0, b0[0][3] + 4.0]), "{b0:?} → {b1:?}");
+    }
+
+    #[test]
+    fn platz_einfuegen_zerschneidet_seite() {
+        // Seite 200 × 100; Text „oben“ bei App-y ≈ 20, „unten“ bei App-y ≈ 80; Square-Annotation unten
+        let mut d = doc_with(b"BT /Helv 10 Tf 10 78 Td (oben) Tj ET BT /Helv 10 Tf 10 18 Td (unten) Tj ET 0 0 1 rg 150 10 20 20 re f");
+        let page = d.load_pdf_page(0).unwrap();
+        let mut a = d.new_dict().unwrap();
+        a.dict_put("Type", PdfObject::new_name("Annot").unwrap()).unwrap();
+        a.dict_put("Subtype", PdfObject::new_name("Square").unwrap()).unwrap();
+        let mut r = d.new_array().unwrap();
+        for v in [100.0, 5.0, 120.0, 25.0] {
+            r.array_push(PdfObject::new_real(v).unwrap()).unwrap();
+        }
+        a.dict_put("Rect", r).unwrap();
+        let a = d.add_object(&a).unwrap();
+        let mut arr = d.new_array().unwrap();
+        arr.array_push(a).unwrap();
+        page.object().dict_put("Annots", arr).unwrap();
+
+        assert!(space(&mut d, 0, 50.0, 0.0).is_err());
+        assert!(space(&mut d, 0, 50.0, 20_000.0).is_err());
+        space(&mut d, 0, 50.0, 40.0).unwrap();
+        assert_eq!(crate::pdf::page_sizes(&d).unwrap()[0], [200.0, 140.0]);
+        // Text je einmal, „unten“ 40 tiefer, „oben“ unverändert
+        let lines = crate::text::chars(&d, 0).unwrap();
+        let y_of = |t: &str| lines.iter().filter(|l| l.text.contains(t)).map(|l| l.boxes[0][1]).collect::<Vec<_>>();
+        let (o, u) = (y_of("oben"), y_of("unten"));
+        assert_eq!((o.len(), u.len()), (1, 1), "Text doppelt: {lines:?}");
+        assert!((o[0] - 12.0).abs() < 3.0 && (u[0] - 112.0).abs() < 3.0, "{o:?} {u:?}");
+        // Annotation unterhalb der Schnittlinie rückt mit
+        let r = d.load_pdf_page(0).unwrap().object().get_dict("Annots").unwrap().unwrap().get_array(0).unwrap().unwrap().get_dict("Rect").unwrap().unwrap();
+        assert_eq!(r.get_array(1).unwrap().unwrap().as_float().unwrap(), -35.0);
+        // Rechteck (Ebene 1) ist unten → rückt mit
+        let png = crate::pdf::render_png(&d, 0, 1.0).unwrap();
+        assert!(!png.is_empty());
+        // zweiter Schnitt auf der geschnittenen Seite geht ebenfalls
+        space(&mut d, 0, 10.0, 10.0).unwrap();
+        assert_eq!(crate::pdf::page_sizes(&d).unwrap()[0], [200.0, 150.0]);
+        let lines = crate::text::chars(&d, 0).unwrap();
+        assert_eq!(lines.iter().filter(|l| l.text.contains("unten")).count(), 1);
+    }
+
+    #[test]
+    fn schwaerzen_entfernt_text() {
+        // „geheim“ bei App-y ≈ 20, „offen“ bei App-y ≈ 80
+        let mut d = doc_with(b"BT /Helv 10 Tf 10 78 Td (geheim) Tj ET BT /Helv 10 Tf 10 18 Td (offen) Tj ET");
+        assert!(redact(&mut d, 0, [5.0, 5.0, 5.0, 30.0]).is_err());
+        redact(&mut d, 0, [5.0, 5.0, 150.0, 30.0]).unwrap();
+        // gespeichert und neu geöffnet: Text weg, Rest bleibt, Bytes ohne das Wort
+        let bytes = crate::pdf::to_bytes(&d).unwrap();
+        let d2 = PdfDocument::from_bytes(&bytes).unwrap();
+        let t = page_text(&d2);
+        assert!(!t.contains("geheim") && t.contains("offen"), "{t}");
+        let raw = contents(&d2.load_pdf_page(0).unwrap()).unwrap();
+        assert!(!raw.windows(6).any(|w| w == b"geheim"), "{}", String::from_utf8_lossy(&raw));
+        assert!(d2.load_pdf_page(0).unwrap().annotations().next().is_none(), "Redact-Annotation bleibt");
     }
 }

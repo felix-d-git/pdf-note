@@ -3,8 +3,8 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, PARA0, savedWidth, type Item, type Layer, type Preset } from "./ink";
-import { PageView, type OrigEdit, type ParaMove } from "./PageView";
+import { box, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset, type ShapeOpts } from "./ink";
+import { dragRect, PageView, type NewField, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
 const FELD = { xref: 9, kind: "check", name: "H", rect: [20, 60, 32, 72], value: "Off", on: "Yes", options: [], readonly: false, multiline: false };
@@ -15,6 +15,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string) => (cmd in answers ? Promise.resolve(answers[cmd]) : cmd === "form_fields" ? Promise.resolve([FELD]) : backend.reply(cmd)),
 }));
 const deleted: number[] = [];
+const placed: [number, number[]][] = [];
+const newFields: NewField[] = [];
 const draws = vi.hoisted(() => [] as Item[][]);
 vi.mock("./ink", async (orig) => {
   const m = await orig<typeof import("./ink")>();
@@ -46,10 +48,14 @@ const opened: string[] = [];
 const shapes: Item[] = [];
 const crops: [number, number[]][] = [];
 let replaces = 0;
+const spaces: [number, number][] = [];
+const redacts: ([number, number, number, number] | null)[] = [];
+const signs: [string, number, number][] = [];
 const removed: number[][] = [];
+const cuts: Map<number, Item[]>[] = [];
 
 /** `pen` = Werkzeug des Stifts (Automatik), sonst gilt `start` für alle Geräte */
-function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, settings = DEFAULT_SETTINGS, locked }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; settings?: Settings; locked?: (l: Layer) => boolean }) {
+function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEFAULT_PRESET, settings = DEFAULT_SETTINGS, locked, opts = SHAPE_OPTS }: { start: Tool; pen?: Tool; layer?: Layer; init?: Item[]; sel?: number[]; preset?: Preset; settings?: Settings; locked?: (l: Layer) => boolean; opts?: ShapeOpts }) {
   const [items, setItems] = useState<Item[]>(init);
   const [layer, setLayer] = useState<Layer>(layer0);
   const [tool, st] = useState(start);
@@ -61,12 +67,17 @@ function Page({ start, pen, layer: layer0 = 3, init = [], sel = [], preset = DEF
       preset={preset} marker={DEFAULT_PRESET} textSize={14} settings={settings}
       onAdd={(it, raw) => (lastAdd.push(it), raws.push(raw), setItems((xs) => [...xs, it]))}
       onShape={(it) => (shapes.push(it), setItems((xs) => [...xs, it]), setSel([it.id]))} onRemove={(ids) => void removed.push(ids)}
+      onCut={(parts) => (cuts.push(parts), setItems((xs) => xs.flatMap((x) => parts.get(x.id) ?? [x])))}
       onReplace={(next) => (replaces++, setItems((xs) => xs.map((x) => next.find((n) => n.id === x.id) ?? x)))} onSelect={(_, ids) => setSel(ids)}
       onCrop={(id, f) => void crops.push([id, f])}
-      onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={() => {}} hits={[]} linking={false}
-      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)}
-      onCmd={() => {}} onSpace={(moved) => setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x))}
-      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} axes={{ xyz: false, grid: false }}
+      onOrig={(edits, _n, paras) => void origs.push([edits, paras])} onText={() => {}} onField={() => {}} onNewField={(nf) => void newFields.push(nf)} hits={[]} linking={false}
+      onLinkFrom={() => {}} onLinkTo={() => {}} onJump={() => {}} onOpenUrl={(u) => void opened.push(u)} onUnlink={() => {}} onDeleteField={(x) => void deleted.push(x)} onPlaceField={(x, r) => void placed.push([x, r])}
+      onCmd={() => {}} onRedact={(r) => void redacts.push(r)} onSign={(k, x, y) => void signs.push([k, x, y])} onSpace={(y, dy) => {
+        spaces.push([y, dy]);
+        const moved = makeSpace(items, 0, y, dy);
+        setItems((xs) => xs.map((x) => moved.find((n) => n.id === x.id) ?? x));
+      }}
+      layer={layer} onLayer={setLayer} locked={locked} textSel={null} onTextSel={() => {}} opts={opts}
     />
   );
 }
@@ -86,6 +97,7 @@ beforeEach(() => {
   draws.length = 0;
   origs.length = 0;
   removed.length = 0;
+  cuts.length = 0;
   backend.reply = () => new Promise(() => {});
   host = document.createElement("div");
   document.body.append(host);
@@ -97,7 +109,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset; settings?: Settings } = {}) => {
+const mount = (tool: Tool, layer?: Layer, init?: Item[], more: { pen?: Tool; sel?: number[]; preset?: Preset; settings?: Settings; opts?: ShapeOpts } = {}) => {
   root = createRoot(host);
   act(() => root.render(<Page start={tool} layer={layer} init={init} {...more} />));
   return host.querySelector("[data-page]") as HTMLDivElement;
@@ -265,29 +277,73 @@ test("Doppelklick auf Bild: Zuschneiden, Enter übernimmt, Esc bricht ab", () =>
   expect(host.querySelector('[data-handle="se"]')).not.toBeNull();
 });
 
-test("Platz einfügen verschiebt nur Objekte unterhalb, höchstens bis zum Seitenrand", () => {
-  const page = mount("space", 3, [obj(1, "rect", 10, 10, 100, 80), obj(2, "image", 10, 200, 100, 300), obj(3, "ink", 200, 150, 260, 400)]);
+test("Platz einfügen schneidet die Seite: Objekte darunter rücken ohne Randbegrenzung mit, auch durch eine Auswahl hindurch", () => {
+  spaces.length = 0;
+  const page = mount("space", 3, [obj(1, "rect", 10, 10, 100, 80), obj(2, "image", 10, 200, 100, 300), obj(3, "ink", 200, 150, 260, 400), obj(4, "rect", 300, 500, 400, 600)], { sel: [2] });
   const tops = () => ui.added.map((it) => Math.round(box(it).y0));
-  const drag = (y0: number, y1: number) => {
-    fire(page, "pointerdown", 50, y0);
-    fire(page, "pointermove", 50, y1);
-    fire(page, "pointerup", 50, y1, 0);
+  const drag = (y0: number, y1: number, x = 50, type = "mouse") => {
+    fire(page, "pointerdown", x, y0, 1, type);
+    fire(page, "pointermove", x, y1, 1, type);
+    fire(page, "pointerup", x, y1, 0, type);
   };
-  drag(100, 150);
-  expect(tops()).toEqual([9, 250, 199]);
-  // weit nach unten: unterstes Objekt stößt an den Rand, Abstände bleiben
+  // Zug startet in der Auswahl (Bild 2) → trotzdem Platz statt Verschieben; nur Rechteck 4 liegt darunter
+  drag(250, 300);
+  expect(spaces).toEqual([[250, 50]]);
+  expect(tops()).toEqual([9, 200, 149, 549]);
+  // weit nach unten: kein Anschlag am alten Seitenrand
   drag(100, 2000);
-  expect(Math.max(...ui.added.map((it) => box(it).y1))).toBeCloseTo(800);
-  expect(tops()).toEqual([9, 599, 548]);
-  // weit nach oben: Platz entfernen, nie über den oberen Rand
-  drag(300, -1000);
-  expect(tops()).toEqual([9, 51, 0]);
+  expect(spaces[1]).toEqual([100, 1900]);
+  expect(tops()).toEqual([9, 2100, 2049, 2449]);
+  // nach oben gezogen: nichts (Platz entfernen gibt es nicht)
+  drag(300, 100);
+  expect(spaces[2]).toEqual([0, 0]);
 });
 
-test("Druck aus (global): Stift mit wechselndem Druck → alle Punkte gleiche Breite; Druck an: Werte bleiben", () => {
-  for (const [pressure, flat] of [[false, true], [true, false]] as const) {
+test("Schwärzen: Rechteck ziehen meldet den Bereich, auch über eine Auswahl; Klick bricht ab", () => {
+  redacts.length = 0;
+  const page = mount("redact", 3, [obj(1, "rect", 10, 10, 100, 80)], { sel: [1] });
+  const drag = (x0: number, y0: number, x1: number, y1: number) => {
+    fire(page, "pointerdown", x0, y0, 1, "mouse");
+    fire(page, "pointermove", x1, y1, 1, "mouse");
+    fire(page, "pointerup", x1, y1, 0, "mouse");
+  };
+  drag(90, 70, 20, 30);
+  drag(50, 50, 51, 51);
+  expect(redacts).toEqual([[20, 30, 90, 70], null]);
+  // Auswahl wurde nicht verschoben
+  expect(ui.added.map((it) => Math.round(box(it).y0))).toEqual([9]);
+});
+
+test("Unterschrift: Klick meldet die Stelle, auch in einer Auswahl (die bleibt stehen)", () => {
+  signs.length = 0;
+  const page = mount("sign", 2, [obj(1, "rect", 10, 10, 100, 80)], { sel: [1] });
+  fire(page, "pointerdown", 50, 40, 1, "mouse");
+  fire(page, "pointerup", 50, 40, 0, "mouse");
+  expect(signs).toEqual([["sign", 50, 40]]);
+  expect(ui.added.map((it) => Math.round(box(it).y0))).toEqual([9]);
+});
+
+test("Stift am Seitenrand ansetzen → Platz einfügen statt Zeichnen", () => {
+  spaces.length = 0;
+  lastAdd.length = 0;
+  const page = mount("pen", 3, []);
+  fire(page, "pointerdown", 5, 300, 1, "pen");
+  fire(page, "pointermove", 5, 360, 1, "pen");
+  fire(page, "pointerup", 5, 360, 0, "pen");
+  expect(spaces).toEqual([[300, 60]]);
+  expect(lastAdd).toEqual([]);
+  // in der Seite: normal zeichnen
+  fire(page, "pointerdown", 300, 300, 1, "pen");
+  fire(page, "pointermove", 320, 310, 1, "pen");
+  fire(page, "pointerup", 320, 310, 0, "pen");
+  expect(spaces).toHaveLength(1);
+  expect(lastAdd).toHaveLength(1);
+});
+
+test("Stift mit wechselndem Druck → konstante Breite (B6)", () => {
+  {
     lastAdd.length = 0;
-    const page = mount("pen", 3, [], { settings: { ...DEFAULT_SETTINGS, pressure } });
+    const page = mount("pen", 3, []);
     [0.1, 0.9, 0.3, 0.7].forEach((pr, i) => {
       const e = new MouseEvent(i ? "pointermove" : "pointerdown", { bubbles: true, cancelable: true, clientX: 100 + 10 * i, clientY: 100, buttons: 1 });
       Object.assign(e, { pointerId: 1, pointerType: "pen", pressure: pr });
@@ -295,10 +351,9 @@ test("Druck aus (global): Stift mit wechselndem Druck → alle Punkte gleiche Br
     });
     fire(page, "pointerup", 130, 100, 0, "pen");
     const it = lastAdd[0];
-    expect(new Set(it?.points.map((q) => q[2])).size === 1).toBe(flat);
+    expect(new Set(it?.points.map((q) => q[2]))).toEqual(new Set([0.5]));
     expect(it?.simulated).toBe(false);
-    if (flat) expect(savedWidth(it as Item)).toBe(DEFAULT_PRESET.size);
-    if (flat) act(() => root.unmount());
+    expect(savedWidth(it as Item)).toBe(DEFAULT_PRESET.size);
   }
 });
 
@@ -326,11 +381,18 @@ test("gesperrte Ebene: Auswahl und Radierer greifen nicht, Marker darüber (Eben
   expect(lastAdd.map((i) => i.kind)).toEqual(["marker"]);
   run("pen", 2, lock);
   lastAdd.length = 0;
+  const pp = host.querySelector("[data-page]") as HTMLDivElement;
+  fire(pp, "pointerdown", 300, 300);
+  fire(pp, "pointermove", 330, 305);
+  fire(pp, "pointerup", 330, 305, 0);
+  expect(lastAdd.map((i) => i.kind)).toEqual(["ink"]); // Stift-Strich geht nach Ebene 3, Sperre von 2 greift nicht
+  run("rect", 2, lock);
+  shapes.length = 0;
   const p2 = host.querySelector("[data-page]") as HTMLDivElement;
   fire(p2, "pointerdown", 300, 300);
   fire(p2, "pointermove", 330, 305);
   fire(p2, "pointerup", 330, 305, 0);
-  expect(lastAdd).toHaveLength(0); // Zeichnen in gesperrte Ebene 2 blockiert
+  expect(shapes).toHaveLength(0); // Form in gesperrte Ebene 2 blockiert
 });
 
 test("selbst angelegte Checkbox lässt sich löschen: Entf auf dem Feld und Mini-Leiste", async () => {
@@ -354,6 +416,34 @@ test("selbst angelegte Checkbox lässt sich löschen: Entf auf dem Feld und Mini
   act(() => void box?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
   expect(host.querySelector("button[data-pedit]")).not.toBeNull();
   expect(host.querySelector("[role=menu]")).toBeNull();
+});
+
+test("Formularfeld: Griffe ändern Größe/Lage (in der Seite, Mindestgröße), Klick legt Feld in Standardgröße an", async () => {
+  expect(dragRect([20, 60, 32, 72], "w", 30, 0, [600, 800])).toEqual([26, 60, 32, 72]);
+  expect(dragRect([20, 60, 32, 72], "move", -50, 1000, [600, 800])).toEqual([0, 788, 12, 800]);
+  const page = mount("form");
+  await act(async () => {});
+  const box = host.querySelector<HTMLInputElement>("input[data-field]");
+  act(() => box?.focus());
+  const se = host.querySelector("[data-fgrip=se]") as Element;
+  fire(se, "pointerdown", 32, 72);
+  fire(se, "pointermove", 52, 82);
+  fire(se, "pointerup", 52, 82, 0);
+  const mv = host.querySelector("[data-fgrip=move]") as Element;
+  fire(mv, "pointerdown", 40, 60);
+  fire(mv, "pointermove", 50, 70);
+  fire(mv, "pointerup", 50, 70, 0);
+  expect(placed).toEqual([[9, [20, 60, 52, 82]], [9, [30, 70, 42, 82]]]);
+  act(() => box?.blur());
+  expect(host.querySelector("[data-fgrip]")).toBeNull();
+  // Klick ohne Ziehen → Checkbox 5 × 5 mm
+  fire(page, "pointerdown", 100, 100);
+  fire(page, "pointerup", 100, 100, 0);
+  const form = host.querySelector("form") as HTMLFormElement;
+  (form.querySelector("[name=kind]") as HTMLSelectElement).value = "check";
+  (form.querySelector("[name=name]") as HTMLInputElement).value = "K";
+  act(() => form.requestSubmit());
+  expect(newFields.map((f) => f.rect.map((v) => Math.round(v * 10) / 10))).toEqual([[100, 100, 114.2, 114.2]]);
 });
 
 test("Links: einfacher Klick öffnet nichts, Strg+Klick meldet die Adresse (Annotation und Textfeld)", async () => {
@@ -489,9 +579,25 @@ test("Auswahl bleibt in einer Ebene: Rechteck auf Ebene 2 trifft keine Ebene-3-O
   expect(ui.selected).toEqual([1]);
 });
 
+test("Klick wählt nur bei direktem Treffer; Klick ins Leere wählt ab", () => {
+  const page = mount("lasso", 2, [obj(1, "line", 100, 100, 300, 100)]);
+  // 4 pt neben der Linie (halbe Breite 1): kein Treffer mehr
+  fire(page, "pointerdown", 200, 104);
+  fire(page, "pointerup", 200, 104, 0);
+  expect(ui.selected).toEqual([]);
+  fire(page, "pointerdown", 200, 101);
+  fire(page, "pointerup", 200, 101, 0);
+  expect(ui.selected).toEqual([1]);
+  fire(page, "pointerdown", 200, 300);
+  fire(page, "pointerup", 200, 300, 0);
+  expect(ui.selected).toEqual([]);
+});
+
 test("Rechteck über Absätze markiert alle berührten; gemeinsam verschieben = ein Aufruf mit Vorschau", async () => {
   const para = (y: number) => ({ bbox: [50, y, 250, y + 30], text: "Absatz", font: "Helvetica", size: 12, color: [0, 0, 0] });
-  backend.reply = (c) => Promise.resolve(c === "text_paragraphs" ? [para(100), para(200), para(400)] : []);
+  // Zeichen nur in Absatz 2: Klick trifft einen Absatz nur auf seinem Text, nicht im Leerraum dazwischen
+  const chars = [{ text: "Absatz", boxes: [[50, 400, 250, 430]] }];
+  backend.reply = (c) => Promise.resolve(c === "text_paragraphs" ? [para(100), para(200), para(400)] : c === "text_chars" ? chars : []);
   root = createRoot(host);
   act(() => root.render(<Page start="lasso" layer={1} />));
   await tick();
@@ -507,6 +613,10 @@ test("Rechteck über Absätze markiert alle berührten; gemeinsam verschieben = 
   expect(ui.selected).toEqual([PARA0, PARA0 - 1, PARA0 - 2]);
   fire(page, "pointerdown", 100, 410, 1, "mouse", true);
   fire(page, "pointerup", 100, 410, 0, "mouse", true);
+  expect(ui.selected).toEqual([PARA0, PARA0 - 1]);
+  // Umschalt-Klick in Absatz 1 ohne Text darunter (Leerraum) entfernt ihn nicht
+  fire(page, "pointerdown", 100, 215, 1, "mouse", true);
+  fire(page, "pointerup", 100, 215, 0, "mouse", true);
   expect(ui.selected).toEqual([PARA0, PARA0 - 1]);
   // gemeinsam ziehen: ein Aufruf mit beiden Absätzen
   fire(page, "pointerdown", 100, 125);
@@ -616,8 +726,10 @@ test("Shape-Hold: Rechteck zeichnen + halten → rastet sichtbar ein, Freihand-S
     for (const [x, y] of pts.slice(1)) fire(el, "pointermove", x, y, 1, "pen");
     act(() => void vi.advanceTimersByTime(600));
     expect(el.querySelector("[role=status]")?.textContent).toMatch(/^(Rechteck|Rectangle)$/);
-    fire(el, "pointermove", 300, 300, 1, "pen"); // nach dem Einrasten bleibt das Rechteck stehen
-    fire(el, "pointerup", 300, 300, 0, "pen");
+    const [hx, hy] = pts.at(-1) as [number, number];
+    fire(el, "pointermove", 300, 300, 1, "pen"); // Weiterziehen skaliert die erkannte Form …
+    fire(el, "pointermove", hx, hy, 1, "pen"); // … zurück zum Haltepunkt = Originalgröße
+    fire(el, "pointerup", hx, hy, 0, "pen");
     const it = lastAdd.at(-1) as Item, raw = raws.at(-1) as Item;
     expect(it.kind).toBe("ink");
     expect(it.points.map(([x, y]) => [Math.round(x), Math.round(y)])).toEqual([[50, 50], [151, 50], [151, 120], [50, 120], [50, 50]]);
@@ -640,4 +752,25 @@ test("Canvas-Inhalt verworfen (contextlost) → nach contextrestored wird die Ha
   const cv = page.querySelector("canvas[style*='multiply']") as HTMLCanvasElement;
   act(() => void cv.dispatchEvent(new Event("contextrestored")));
   expect(draws.at(-1)).toHaveLength(1);
+});
+
+test("B1 Teil-Radierer: teilt den Strich, Form daneben ganz weg – ein onCut; Standard bleibt ganzer Strich", () => {
+  const init = [obj(1, "ink", 100, 100, 300, 100), obj(2, "rect", 190, 140, 210, 160)];
+  const page = mount("eraser", 3, init, { opts: { ...SHAPE_OPTS, partial: true } });
+  fire(page, "pointerdown", 200, 80);
+  fire(page, "pointermove", 200, 120); // überquert den Strich (Zwischenpositionen, kein Ereignis direkt auf y = 100)
+  fire(page, "pointerup", 200, 120, 0);
+  expect(cuts).toHaveLength(1);
+  const parts = cuts[0]?.get(1) ?? [];
+  expect(parts.map((it) => [it.points[0]?.[0], it.points.at(-1)?.[0]].map((v) => Math.round(v ?? NaN)))).toEqual([[100, 191], [209, 300]]); // r = 8 + Breite/2
+  expect(parts.every((it) => it.id !== 1 && it.kind === "ink")).toBe(true);
+  expect(ui.added.map((it) => it.id)).toEqual([...parts.map((it) => it.id), 2]); // Reihenfolge bleibt, Rechteck auf Ebene 2 unberührt
+  expect(removed).toEqual([]);
+  act(() => root.unmount());
+  const whole = mount("eraser", 3, init);
+  fire(whole, "pointerdown", 200, 80);
+  fire(whole, "pointermove", 200, 120);
+  fire(whole, "pointerup", 200, 120, 0);
+  expect(removed).toEqual([[1]]);
+  expect(cuts).toHaveLength(1);
 });
