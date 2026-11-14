@@ -1,6 +1,6 @@
 # Lizenz-Audit PDF Note
 
-Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“
+Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“ · Nachtrag 2026-11-14: Copyleft-Übersicht (#20), RY1–RY5 behoben
 Ziel der Veröffentlichung: Repo öffentlich + Windows-Installer (NSIS) als GitHub-Release.
 
 > Dies ist eine technische Compliance-Analyse, keine Rechtsberatung. Punkte mit **UNKLAR** brauchen eine manuelle (ggf. juristische) Prüfung.
@@ -282,7 +282,7 @@ Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 in
 | G1 | 🟡 YELLOW | `LICENSE-ADDITIONAL-PERMISSION.md` wurde nicht ausgeliefert und im Über-Dialog nicht genannt. | behoben: `licenses.mjs`, LIESMICH, Über-Dialog + Test |
 | N1 | 🟡 YELLOW | Tailwind (devDependency) steckt im ausgelieferten CSS; Copyright und Lizenztext fehlten (Vites Lizenzliste erfasst nur JS). | behoben: `tailwindcss-LICENSE.txt` |
 | N2–N4 | 🟡 YELLOW | `@tauri-apps/plugin-dialog` nur mit `LICENSE.spdx`; Rechteinhaber von `@tauri-apps/api` und MathJax fehlen in `npm-bundle.md`. | in NOTICES ergänzt |
-| RY1–RY5 | 🟡 YELLOW | cargo-about gibt für `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys` nur Mustertexte ohne Rechteinhaber aus; `regex-syntax` `LICENSE-UNICODE` fehlt (über ICU4X gedeckt). | offen: `clarify`-Einträge in `src-tauri/about.toml` |
+| RY1–RY5 | 🟡 YELLOW | cargo-about gibt für `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys` nur Mustertexte ohne Rechteinhaber aus; `regex-syntax` `LICENSE-UNICODE` fehlt (über ICU4X gedeckt). | behoben 2026-11-14: `clarify` in `src-tauri/about.toml` für diese vier plus `webview2-com-macros` und `dpi` (Lizenzdatei aus dem Crate bzw. aus dem Quell-Repo zum Commit in `.cargo_vcs_info.json`, mit SHA-256); cargo-about 0.9.3 gibt danach außer im AGPL-Anwendungshinweis keinen Mustertext mehr aus. `regex-syntax` 0.8.11 enthält keine `LICENSE-UNICODE` mehr, die Unicode-Daten deckt der Unicode-3.0-Text von ICU4X |
 | G4 | 🟡 YELLOW | Dependabot-PRs werden automatisch gemergt; für npm gibt es keine Lizenz-Positivliste (Rust: `about.toml`). | erledigt: `NPM_OK` in `scripts/licenses.mjs` stoppt den Build bei neuer Lizenz |
 | L1 | 🟡 YELLOW | (#24) Auto-Release zählte nur den Tag hoch; `package.json`-Version und damit `licenses/SOURCE.md` im Installer verwiesen auf den vorigen Quellstand. | behoben: kein Auto-Release (`standard-a-exclude.txt`: `no-release`), `scripts/release-source.sh` bricht ab, wenn Tag ≠ Version in `package.json`/`Cargo.toml`/`Cargo.lock` |
 | L2 | 🟢 GREEN | (#25) Kennungen präzisiert, am Original `mupdf-sys` 0.8.0 geprüft: MuPDF-C-Code 222/234 `.c`-Dateien „version 3 … or (at your option) any later version“ (Rest: Fremdteile aus M3) → `AGPL-3.0-or-later`; jbig2dec `thirdparty/jbig2dec/LICENSE` ebenso „or later“ → `AGPL-3.0-or-later` (nicht -only wie im Issue vermutet); extract nur mit AGPL-Text ohne Versionsvermerk → `AGPL-3.0`; Crates `mupdf`/`mupdf-sys` tragen die Altkennung `AGPL-3.0`. Mit dem Projekt (`AGPL-3.0-only`) kompatibel; für proprietären Vertrieb ändert sich nichts. | erledigt |
@@ -293,6 +293,42 @@ Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 in
 | G | 🟢 GREEN | Lizenzfeld = Lizenzdatei bei allen Paketen; gelinktes Copyleft nur MuPDF/jbig2dec (AGPL-3.0-or-later) und `option-ext` (MPL-2.0); `cssparser`/`selectors`/`dtoa-short` nur Compile-Zeit. `cargo about`/`cargo deny` ok für Windows und macOS. `vendor/mupdf` = Crate + `PATCH.md`. tessdata bitidentisch mit tessdata_fast 4.1.0. Eigener Code ohne Fremdcode; `LICENSE` unverändert; einziger menschlicher Rechteinhaber felix-d-git. | – |
 
 **Nach dem Ändern von `.cargo/config.toml`** lokal einmal `cargo clean -p mupdf-sys --release` (der Build-Script von `mupdf-sys` merkt Umgebungsänderungen nicht); im CI erzwingt der neue `prefix-key` von `rust-cache` einen frischen Build.
+
+## Copyleft-Übersicht und Bewertung für proprietären Vertrieb (#20)
+
+Stand 2026-11-14, Version 1.4.0, aus `package-lock.json` und `src-tauri/Cargo.lock` (Ziel `x86_64-pc-windows-msvc`). Vollständige Tabellen mit SPDX-Kennung: Anhang A (Rust, ausgeliefert), B (Rust, nur Build), C (npm ohne `dev`), D (npm-Entwicklung, nach Lizenz gezählt). Werkzeuge: `cargo about` mit Positivliste `src-tauri/about.toml`, npm-Positivliste `NPM_OK` in `scripts/licenses.mjs`; `license-checker` ist überflüssig, weil das Lockfile das Lizenzfeld jedes Pakets enthält.
+
+**Starkes Copyleft (⚠️ blockiert proprietären Vertrieb)**
+
+| Komponente | Lizenz | ausgeliefert? | Problem bei proprietärem Vertrieb | Alternative |
+|---|---|---|---|---|
+| ⚠️ `mupdf` 0.8.0 (vendor), `mupdf-sys` 0.8.0 | AGPL-3.0 (Crate-Kennung) | ja, statisch gelinkt | ja: das ganze Programm müsste unter AGPL mit Quellcode weitergegeben werden | kommerzielle MuPDF-Lizenz von Artifex, oder Wechsel auf PDFium (`pdfium-render`, Apache-2.0/BSD-3; als Spike in `spikes/` erprobt) |
+| ⚠️ MuPDF-C-Code, jbig2dec | AGPL-3.0-or-later | ja (in `mupdf-sys`) | ja, wie oben | in der kommerziellen MuPDF-Lizenz enthalten; PDFium bringt eigenen JBIG2-Decoder (BSD) |
+| ⚠️ extract (in `mupdf-sys`) | AGPL-3.0 | gebaut, nicht aufgerufen | ja, solange gelinkt; fällt mit MuPDF weg | – |
+| ⚠️ FreeType (in `mupdf-sys`) | FTL OR GPL-2.0-or-later, gewählt GPL | ja | nein: unter der FTL (BSD-artig mit Nennungspflicht) proprietär nutzbar | FTL wählen |
+| eigener Code `pdf-note` | AGPL-3.0-only | ja | eigene Entscheidung des Rechteinhabers | Relizenzierung durch felix-d-git (nur eigener Code) |
+
+Kein GPL-/AGPL-Paket unter den npm-Abhängigkeiten, weder ausgeliefert noch in der Entwicklung.
+
+**Schwaches Copyleft (Bedingungen beachten, proprietär nutzbar)**
+
+| Komponente | Lizenz | ausgeliefert? | Bedingung |
+|---|---|---|---|
+| `option-ext` 0.2.0 (über `dirs`) | MPL-2.0 | ja, gelinkt | MPL §3: Änderungen an MPL-Dateien offenlegen; Hinweis, wo der Quellcode zu bekommen ist (steht im Kopf von `rust-crates.html`); Rest des Programms bleibt frei lizenzierbar |
+| `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` | MPL-2.0 | nein, nur Compile-Zeit (Proc-Macros von Tauri) | keine Pflicht für die Binary |
+| `lightningcss` 1.33.0 + 12 Plattform-Binaries (npm, dev) | MPL-2.0 | nein, nur Build-Werkzeug von Tailwind/Vite | keine Pflicht für das Bundle |
+| LGPL, EPL, CDDL | – | – | nicht vorhanden; die LGPL-Silbentrennungsmuster von MuPDF sind seit M1 abgeschaltet |
+
+**Sonstige Bedingungen**
+- OFL-1.1 (Manrope, IBM Plex Mono, URW-Base-14): Schriften dürfen mit proprietärer Software gebündelt, aber nicht einzeln verkauft werden; Lizenztext beilegen. URW ist zusätzlich AGPL mit Font-Ausnahme verfügbar – OFL wählen.
+- CC-BY-4.0 (`caniuse-lite`) und BlueOak-1.0.0 (`lru-cache`, `minimatch`, `@isaacs/nonrecursive-glob-match`): nur Entwicklung, nicht im Bundle.
+- `WebView2LoaderStatic.lib` (Microsoft, BSD-artig, nur Binär): bei proprietärem Vertrieb unproblematisch; das Quellcode-Problem besteht nur gegenüber der AGPL (R3).
+
+**Ohne oder mit unklarer Lizenz:** keine. Alle 217 Crates und 309 npm-Einträge haben ein SPDX-Feld. Ohne erkannte Lizenzdatei waren `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys`, `webview2-com-macros`, `dpi` (Lizenzfeld eindeutig, nur der Rechteinhaber fehlte) – behoben durch `clarify` (RY1–RY5). Die Silbentrennung `ro` ohne Lizenz (M1) wird nicht mehr gebaut.
+
+**Ergebnis:** Für einen proprietären, kommerziellen Vertrieb ist MuPDF (samt jbig2dec und extract) der einzige Blocker. Mit kommerzieller MuPDF-Lizenz oder PDFium wären alle übrigen ausgelieferten Komponenten permissiv bzw. dateibasiert (MPL) nutzbar; die Hinweispflichten (Lizenztexte, IJG-Satz, MPL-Quellhinweis) erfüllt die bestehende Lizenzsammlung schon.
+
+**Abgleich `THIRD-PARTY-NOTICES.md` / `THIRD-PARTY-LICENSES/`:** vollständig. Rust-Crates nennt die NOTICES zusammengefasst mit Verweis auf Anhang A; die Volltexte erzeugt `scripts/licenses.mjs` (cargo-about) beim Build. npm-Bundle: alle zehn Pakete aus Anhang C mit „ja“ stehen in den NOTICES; Tailwind (CSS) und die Schriften kopiert `licenses.mjs` eigens. MuPDF-Drittbibliotheken: Texte aus `mupdf-sys/thirdparty` plus `mupdf-core-NOTICES.txt` und `mupdf-harfbuzz-ms-use-COPYING.txt`.
 
 ## Anhang – vollständige Listen
 
