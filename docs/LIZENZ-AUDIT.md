@@ -1,6 +1,6 @@
 # Lizenz-Audit PDF Note
 
-Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“ · Nachtrag 2026-11-14: Copyleft-Übersicht (#20), RY1–RY5 behoben
+Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“ · Nachtrag 2026-11-14: Copyleft-Übersicht (#20), RY1–RY5 behoben, Lizenz-Kurzfassungen und kommerzielle Bewertung (#21, #32)
 Ziel der Veröffentlichung: Repo öffentlich + Windows-Installer (NSIS) als GitHub-Release.
 
 > Dies ist eine technische Compliance-Analyse, keine Rechtsberatung. Punkte mit **UNKLAR** brauchen eine manuelle (ggf. juristische) Prüfung.
@@ -329,6 +329,124 @@ Kein GPL-/AGPL-Paket unter den npm-Abhängigkeiten, weder ausgeliefert noch in d
 **Ergebnis:** Für einen proprietären, kommerziellen Vertrieb ist MuPDF (samt jbig2dec und extract) der einzige Blocker. Mit kommerzieller MuPDF-Lizenz oder PDFium wären alle übrigen ausgelieferten Komponenten permissiv bzw. dateibasiert (MPL) nutzbar; die Hinweispflichten (Lizenztexte, IJG-Satz, MPL-Quellhinweis) erfüllt die bestehende Lizenzsammlung schon.
 
 **Abgleich `THIRD-PARTY-NOTICES.md` / `THIRD-PARTY-LICENSES/`:** vollständig. Rust-Crates nennt die NOTICES zusammengefasst mit Verweis auf Anhang A; die Volltexte erzeugt `scripts/licenses.mjs` (cargo-about) beim Build. npm-Bundle: alle zehn Pakete aus Anhang C mit „ja“ stehen in den NOTICES; Tailwind (CSS) und die Schriften kopiert `licenses.mjs` eigens. MuPDF-Drittbibliotheken: Texte aus `mupdf-sys/thirdparty` plus `mupdf-core-NOTICES.txt` und `mupdf-harfbuzz-ms-use-COPYING.txt`.
+
+## Lizenzbedingungen in Kurzfassung und kommerzielle Nutzung (#21, #32)
+
+Stand 2026-11-14, Version 1.4.0. Jede Kurzfassung ist am Text in `THIRD-PARTY-LICENSES/` (bzw. `rust-crates.html`) geprüft. Die Spalte „Ja/Nein“ beantwortet: **Darf man die Software kommerziell nutzen und verändern, ohne den eigenen Quellcode offenzulegen?**
+
+> Keine Rechtsberatung, nur eine Zusammenfassung der Lizenztexte. Für eine verbindliche Einschätzung eine Fachanwältin oder einen Fachanwalt für IT-Recht fragen. Unsichere Punkte stehen unten unter „Offene Fragen“ und als Kommentar in #21/#32.
+
+### Kernfrage für PDF Note
+
+| Frage | Antwort |
+|---|---|
+| Kommerziell nutzen (verkaufen, gewerblich einsetzen)? | **Ja.** Die AGPL-3.0 verbietet keinen Verkauf und keine gewerbliche Nutzung. |
+| Verändern? | **Ja.** |
+| Eigenen Quellcode offenlegen? | **Unter Bedingungen.** Interne Nutzung ohne Weitergabe: keine Pflicht. Wer die App oder eine veränderte Fassung **weitergibt** (verkauft, verschenkt, als Download anbietet), muss den vollständigen Quellcode des Gesamtwerks, also auch den eigenen hinzugefügten Code, unter AGPL-3.0 beilegen oder anbieten. §13 (Netzwerknutzung) betrifft nur Fassungen, die anderen über ein Netzwerk zur Interaktion bereitgestellt werden – für die Offline-Desktop-App praktisch ohne Bedeutung. |
+| Geschlossenes, proprietäres Produkt? | **Nein, solange MuPDF enthalten ist.** felix-d-git kann nur den eigenen Code zusätzlich anders lizenzieren; MuPDF, jbig2dec und extract bleiben AGPL (Artifex). Nötig wäre eine kommerzielle MuPDF-Lizenz oder ein Wechsel auf PDFium (siehe „Copyleft-Übersicht“). Alle übrigen ausgelieferten Lizenzen lassen proprietäre Nutzung zu (FreeType dann unter FTL). |
+
+### Ausgelieferte Komponenten
+
+**GNU AGPL-3.0 (`LICENSE`; PDF Note `-only`, MuPDF/jbig2dec `-or-later`, extract ohne Versionsangabe) – Nein bei Weitergabe**
+- Nutzen, kopieren, verändern und verkaufen ist erlaubt, auch gewerblich; keine Gewährleistung (§15/§16).
+- Bei Weitergabe der Binary muss das Gesamtwerk unter AGPL stehen und der Corresponding Source (inkl. Build-Skripten) beiliegen oder mindestens drei Jahre angeboten werden (§6, umgesetzt in `SOURCE.md`); geänderte Dateien mit Vermerk und Datum (§5a), Appropriate Legal Notices in der Oberfläche (§5d, Über-Dialog).
+- Wer eine veränderte Fassung über ein Netzwerk für andere bereitstellt, muss ihnen den Quellcode anbieten (§13) – der Unterschied zur GPL.
+
+**Zusatzerlaubnis nach §7 (`LICENSE-ADDITIONAL-PERMISSION.md`) – ändert die Antwort nicht**
+- Gilt nur für den Code von felix-d-git; MuPDF und andere Drittkomponenten deckt sie nicht ab.
+- Erlaubt die Weitergabe zusammen mit dem nur binär verfügbaren Microsoft WebView2 Loader, ohne dass dessen Quellcode zum Corresponding Source gehört (Absicherung zu R3).
+- Empfänger dürfen sie entfernen (§7 Abs. 2). Ein Recht, eigenen Code geschlossen zu halten, gibt sie **nicht**.
+
+**Microsoft WebView2 SDK (`webview2-sdk-LICENSE.txt`) – Ja**
+- Weitergabe in Quell- und Binärform, mit oder ohne Änderungen, ist erlaubt; Text entspricht inhaltlich BSD-3-Clause.
+- Bei Binärweitergabe müssen Copyright-Vermerk, Bedingungen und Haftungsausschluss in der Dokumentation stehen (erfüllt: Datei in der Lizenzsammlung des Installers).
+- Keine Werbung mit dem Namen Microsoft ohne schriftliche Erlaubnis; kein Copyleft. Das Problem gegenüber der AGPL ist nicht diese Lizenz, sondern der fehlende Quellcode (R3, #9). `webview2-sdk-NOTICE.txt` nennt nur zwei BSD-3-Clause-Komponenten (Antlr3, StringTemplate4).
+
+**IJG-Lizenz, libjpeg (`libjpeg-IJG-README.txt`) – Ja**
+- Nutzen, ändern und weitergeben für jeden Zweck ohne Gebühr; kommerzielle Produkte ausdrücklich erwünscht, sofern der Anbieter Gewährleistung und Haftung übernimmt.
+- Nur Binärweitergabe: Die Dokumentation muss „this software is based in part on the work of the Independent JPEG Group“ enthalten (erfüllt, NOTICES/LIESMICH).
+- Quellweitergabe: README unverändert beilegen, Änderungen kennzeichnen; keine Werbung mit IJG-Namen. Kein Copyleft.
+
+**FreeType: FTL oder GPL-2.0-or-later (`freetype-FTL.TXT`, `freetype-GPLv2.TXT`; gewählt: GPL)**
+- *GPL-2.0-or-later – Nein bei Weitergabe:* nutzen, ändern, verkaufen erlaubt; bei Weitergabe Gesamtwerk unter GPL mit Quellcode. Über „or later“ (GPLv3) mit AGPL-3.0 kombinierbar; die Pflichten erfüllt die AGPL-Quellweitergabe ohnehin.
+- *FTL – Ja:* BSD-artig, auch proprietär. Binärweitergabe verlangt in der Dokumentation den Hinweis, dass die Software teilweise auf der Arbeit des FreeType-Teams beruht; Quellweitergabe `FTL.TXT` unverändert, Änderungen kennzeichnen.
+- Keine Werbung mit dem Namen des jeweils anderen. Die FTL ist die Option für ein proprietäres Produkt; mit GPLv2 ist sie unvereinbar, mit GPLv3/AGPLv3 laut FreeType vereinbar.
+
+**MPL-2.0 (`option-ext`, gelinkt) – Ja**
+- Kommerziell nutzen und verändern erlaubt; Copyleft gilt nur **je Datei**.
+- Wer MPL-Dateien selbst ändert, muss diese Dateien unter MPL offenlegen; eigener Code in getrennten Dateien bleibt frei, auch proprietär.
+- Bei Binärweitergabe angeben, wo die Quellform der MPL-Teile zu bekommen ist (erfüllt, Kopf von `rust-crates.html`).
+
+**SIL OFL-1.1 (Manrope, IBM Plex Mono, URW-Base-14) – Ja**
+- Schriften dürfen frei genutzt, mit Software gebündelt und mitverkauft werden, nur nicht **einzeln** verkauft.
+- Abgewandelte Schriften müssen unter OFL bleiben und dürfen keinen Reserved Font Name tragen; Copyright und Lizenztext bei jeder Kopie.
+- Mit den Schriften erzeugte Dokumente (PDFs mit eingebetteter Schrift) fallen **nicht** unter die OFL.
+
+**URW-Schriften: AGPL-3.0 mit PS/PDF-Font-Ausnahme (`URW-Base35-AGPL-Font-Exception.txt`) – Ja für erzeugte PDFs, Nein für die Schriftprogramme**
+- Die Schriftprogramme selbst stehen unter AGPL-3.0; wer sie ändert und weitergibt, muss das unter AGPL tun.
+- Ausnahme: Einbetten in ein PostScript- oder PDF-Dokument, dessen Text damit angezeigt oder gedruckt wird, ist unabhängig von der Lizenz des Dokuments erlaubt.
+- Alternativ gilt OFL-1.1, die Dokumente ohnehin ausnimmt und auch den unsichtbaren OCR-Text abdeckt (Y4, #11) – bei proprietärem Vertrieb OFL wählen.
+
+**Apache-2.0 (`tao`, MathJax, Tesseract-Daten, zxing-cpp, gumbo …) – Ja**
+- Kommerzielle Nutzung, Veränderung und proprietäre Weitergabe erlaubt; kein Copyleft.
+- Lizenztext und vorhandene `NOTICE`-Dateien mitliefern, geänderte Dateien als geändert kennzeichnen.
+- Enthält eine ausdrückliche Patentlizenz; sie erlischt für den, der wegen dieser Patente klagt.
+
+**Unicode License v3 (ICU4X-Crates, `unicode-ident`, Unicode-Daten/Bidi-Code in MuPDF) – Ja**
+- Daten und Software dürfen ohne Einschränkung genutzt, geändert, zusammengeführt, veröffentlicht, weitergegeben und verkauft werden.
+- Bedingung: Copyright- und Erlaubnisvermerk bei allen Kopien **oder** in der zugehörigen Dokumentation (erfüllt, `rust-crates.html`, `mupdf-core-NOTICES.txt`).
+- Keine Werbung mit dem Namen des Rechteinhabers ohne schriftliche Erlaubnis; kein Copyleft.
+
+**Zlib-Lizenz (zlib in MuPDF, `foldhash`; NSIS-Stub: zlib/libpng-Variante) – Ja**
+- Freie Nutzung für jeden Zweck, auch kommerziell und proprietär; Änderung und Weitergabe erlaubt.
+- Die Herkunft darf nicht falsch dargestellt werden; geänderte Quellfassungen müssen als geändert gekennzeichnet sein.
+- Der Hinweis darf aus Quellweitergaben nicht entfernt werden; für Binärweitergabe gibt es keine Hinweispflicht (Nennung in der Doku nur erbeten).
+
+**MIT / ISC / BSD-2/3-Clause / 0BSD / CC0 / MIT-0 / Unlicense (React, Zod, Tauri, lucide-react, die meisten Crates, MuJS, zint, lcms2, OpenJPEG, HarfBuzz) – Ja**
+- Kommerzielle, auch proprietäre Nutzung und Veränderung erlaubt.
+- Pflicht: Copyright-Vermerk und Lizenztext beilegen (bei 0BSD, CC0, MIT-0, Unlicense nicht einmal das); BSD-3-Clause verbietet zusätzlich Werbung mit den Namen der Urheber.
+- Keine Gewährleistung, keine Pflicht zur Offenlegung von Quellcode.
+
+### Nur Entwicklung, nicht ausgeliefert (keine Pflichten aus der Weitergabe der App)
+
+| Lizenz | Pakete | Kurzfassung | Ja/Nein |
+|---|---|---|---|
+| BlueOak-1.0.0 | `lru-cache`, `minimatch`, `@isaacs/nonrecursive-glob-match` | permissiv; bei Weitergabe Lizenztext oder Link beilegen; enthält Patentlizenz | Ja |
+| CC-BY-4.0 | `caniuse-lite` (reine Daten) | Nutzung und Bearbeitung auch kommerziell bei Namensnennung, Hinweis auf Änderungen, Link zur Lizenz | Ja |
+| MPL-2.0 | `lightningcss` (+ Plattform-Binaries); Rust-Compile-Zeit: `cssparser`, `selectors`, `dtoa-short` | Copyleft nur je Datei, wie oben | Ja |
+| Apache-2.0 | TypeScript 7 u. a. | wie oben | Ja |
+
+Entfallen seit M1 (Silbentrennung abgeschaltet): LPPL-1.3, LGPL und das unlizenzierte rumänische Muster werden nicht mehr gebaut.
+
+### Pflichten bei Weitergabe des Installers
+
+| Pflicht | Grundlage | Umsetzung |
+|---|---|---|
+| AGPL-Text beilegen | AGPL §4/§6 | `PDF-Note-LICENSE-AGPL-3.0.txt` ✅ |
+| §7-Zusatzerlaubnis sichtbar machen | AGPL §7 | `PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md`, Über-Dialog ✅ (G1) |
+| Corresponding Source mind. 3 Jahre anbieten, zum exakten Release-Stand | AGPL §6 | `SOURCE.md`, Release-Assets inkl. MuPDF-Quellen und `vendor/mupdf`-Patch ✅ (R2, L1) |
+| Änderungsvermerk mit Datum | AGPL §5a | `vendor/mupdf/PATCH.md`, Vermerk an der Änderung in `native.rs` ✅ |
+| Appropriate Legal Notices in der UI | AGPL §5d | Über-Dialog ✅ (Y5) |
+| Copyright + Lizenztext aller permissiven Komponenten | MIT/BSD/ISC/Apache/Unicode/OFL/WebView2 | `THIRD-PARTY-LICENSES/` (beim Build erzeugt), `THIRD-PARTY-NOTICES.md` ✅ (R1) |
+| `NOTICE`-Dateien weitergeben | Apache-2.0 §4d | keine in Crates, `mupdf-sys/thirdparty`, `mathjax-full` ✅; tessdata siehe offene Frage 1 |
+| Bezugsquelle der MPL-Quellform | MPL-2.0 §3.2 | Kopf von `rust-crates.html` ✅ |
+| IJG-Satz in der Doku | IJG (2) | NOTICES/LIESMICH ✅ |
+| Schriften nicht einzeln verkaufen | OFL-1.1 | nur gebündelt ✅ |
+
+### Bewertung kommerzielle Nutzung
+
+- **Kommerzieller Vertrieb als AGPL-Software (Ist-Zustand):** zulässig. Verkauf, Support-Verträge oder Firmeneinsatz sind erlaubt, solange jede weitergegebene Binary mit Quellcode-Angebot und Lizenzsammlung kommt. Käufer dürfen die App ihrerseits frei (auch kostenlos) weitergeben – das Geschäftsmodell kann also nicht auf dem Verkauf der Kopie allein beruhen.
+- **Proprietärer Vertrieb:** nur ohne AGPL-Teile. MuPDF-AGPL ist der einzige Blocker; Artifex vergibt kommerzielle Lizenzen (Bedingungen und Kosten nur auf Anfrage, siehe offene Frage 2), alternativ PDFium. Zusätzlich müsste felix-d-git den eigenen Code relizenzieren (alleiniger Rechteinhaber, möglich), FreeType unter FTL und URW-Schriften unter OFL nehmen.
+- **Interne Nutzung in einer Firma ohne Weitergabe:** keine Offenlegungspflicht, auch bei eigenen Änderungen (Weitergabe an Konzerngesellschaften oder Auftragnehmer kann bereits „conveying“ sein – im Einzelfall prüfen).
+- **Erzeugte PDFs:** unterliegen weder der AGPL noch der OFL; eingebettete URW-Schriften sind über OFL bzw. Font-Ausnahme gedeckt.
+
+### Offene Fragen (nicht am Text klärbar, in #21/#32 kommentiert)
+
+1. **tessdata_fast `NOTICE`:** Upstream-Repo `tesseract-ocr/tessdata_fast` auf eine `NOTICE`-Datei prüfen (Apache §4d); bisher nur `LICENSE` übernommen.
+2. **Kommerzielle MuPDF-Lizenz:** Umfang (deckt sie jbig2dec, extract und die URW-AGPL-Schriften ab?) und Kosten nur über Artifex zu klären.
+3. **NSIS-Stub:** Die zlib/libpng-Einordnung stammt aus `THIRD-PARTY-NOTICES.md`; der NSIS-Lizenztext (`COPYING`, u. a. Teile für LZMA/bzip2) liegt nicht im Repo und ist nicht am Original geprüft.
+4. **WebView2 Loader:** Ob die Einordnung als System Library (R3) trägt, bleibt eine Rechtsfrage; technisch gelöst ist nur der eigene Code (§7-Erlaubnis).
+5. **Unternehmensinterne Weitergabe:** Ab wann die Weitergabe an verbundene Unternehmen oder Dienstleister als „convey“ gilt, ist nicht eindeutig und nur juristisch zu beantworten.
 
 ## Anhang – vollständige Listen
 
