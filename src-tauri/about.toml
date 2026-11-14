@@ -20,3 +20,52 @@ accepted = [
 targets = ["x86_64-pc-windows-msvc"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+
+# RY1–RY5 (#20): Crates ohne erkannte Lizenzdatei bekämen nur den SPDX-Mustertext ohne Rechteinhaber.
+# Prüfsumme = SHA-256 der Datei; ändert sie sich nach einem Update, bricht cargo-about ab → Text neu prüfen.
+[brotli-decompressor.clarify]
+license = "BSD-3-Clause" # Feld "BSD-3-Clause/MIT" = wahlweise; nur der BSD-Text (Dropbox) liegt bei
+[[brotli-decompressor.clarify.files]]
+path = "LICENSE"
+license = "BSD-3-Clause"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+[dpi.clarify]
+license = "Apache-2.0 AND MIT"
+[[dpi.clarify.files]]
+path = "LICENSE"
+license = "Apache-2.0"
+checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+[[dpi.clarify.files]]
+path = "LICENSE-LIBM-MIT"
+license = "MIT"
+checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997"
+
+# Ohne Lizenzdatei im Crate: Text aus dem Quell-Repo zum Commit in .cargo_vcs_info.json (cargo-about lädt ihn beim Erzeugen)
+[alloc-stdlib.clarify]
+license = "BSD-3-Clause"
+[[alloc-stdlib.clarify.git]]
+path = "LICENSE"
+license = "BSD-3-Clause"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+[webview2-com.clarify]
+license = "MIT"
+[[webview2-com.clarify.git]]
+path = "LICENSE"
+license = "MIT"
+checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+
+[webview2-com-sys.clarify]
+license = "MIT"
+[[webview2-com-sys.clarify.git]]
+path = "LICENSE"
+license = "MIT"
+checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+
+[webview2-com-macros.clarify]
+license = "MIT"
+[[webview2-com-macros.clarify.git]]
+path = "LICENSE"
+license = "MIT"
+checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
