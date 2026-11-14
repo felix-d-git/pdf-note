@@ -13,7 +13,7 @@
 | serde_json | 1.0 | MIT OR Apache-2.0 | eigene Objekte als JSON in der Annotation (`/PDFNote`) |
 | base64 | 0.23 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
 | React, React DOM | 19.3 | MIT | UI |
-| lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.64 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
+| lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.x | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
 | Zod | 4.6 | MIT | Validierung an Grenzen |
 | MathJax (`mathjax-full`, MathJax Consortium), inkl. MathJax-TeX-Schriftdaten | 3.2.2 | Apache-2.0 | Formeln auf Markdown-Seiten: TeX → SVG → PDF-Pfade, lokal gebündelt (nur TeX-Eingabe, SVG-Ausgabe, base+ams; Abhängigkeiten speech-rule-engine/mhchemparser/mj-context-menu nicht gebündelt) |
 | Tailwind CSS (Tailwind Labs, Inc.) | 4.3 | MIT | Styles; Preflight- und Utility-CSS steckt im ausgelieferten Stylesheet (Lizenztext `tailwindcss-LICENSE.txt`) |
@@ -73,7 +73,7 @@ Die App bettet Nimbus Sans/Roman/Mono PS vollständig in PDFs ein: als Ersatzsch
 
 ### Weitere ausgelieferte Rust-Crates (transitiv)
 
-Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Version 1.2.0, 219 Crates für `x86_64-pc-windows-msvc`, davon 139 in der Binary gelinkt, der Rest nur Proc-Macros und deren Abhängigkeiten zur Compile-Zeit). Lizenzen dort: MIT OR Apache-2.0 (überwiegend), MIT, Apache-2.0 (`tao`), Unicode-3.0 (ICU4X: `icu_*`, `zerovec`, `yoke`, `tinystr`, … über `url`/`idna`), BSD-3-Clause (`alloc-no-stdlib`, `alloc-stdlib`, `brotli`), Zlib (`foldhash`), 0BSD/CC0-1.0/MIT-0/Unlicense als Wahlmöglichkeit, ISC.
+Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Version 1.4.0, 217 Crates für `x86_64-pc-windows-msvc`, davon 139 in der Binary gelinkt, der Rest nur Proc-Macros und deren Abhängigkeiten zur Compile-Zeit). Lizenzen dort: MIT OR Apache-2.0 (überwiegend), MIT, Apache-2.0 (`tao`), Unicode-3.0 (ICU4X: `icu_*`, `zerovec`, `yoke`, `tinystr`, … über `url`/`idna`), BSD-3-Clause (`alloc-no-stdlib`, `alloc-stdlib`), BSD-3-Clause AND MIT (`brotli`, `brotli-decompressor`), Zlib (`foldhash`), 0BSD/CC0-1.0/MIT-0/Unlicense als Wahlmöglichkeit, ISC.
 
 **MPL-2.0:** `option-ext` (über `dirs`, gelinkt) sowie `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` (über `tauri-utils`, nur zur Compile-Zeit in `tauri-codegen`/`tauri-macros`) stehen unter der Mozilla Public License 2.0. Ihr Quellcode ist unverändert auf https://crates.io erhältlich (jeweilige Version laut `src-tauri/Cargo.lock`).
 

@@ -40,8 +40,8 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 **Paketmanager**
 | Quelle | Umfang |
 |---|---|
-| `src-tauri/Cargo.lock` | 219 Crates (Windows/MSVC, normal; davon 139 gelinkt, 80 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
-| `package-lock.json` | 309 Einträge (Stand 2026-11-12, Anhang D), davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
+| `src-tauri/Cargo.lock` | 217 Crates (Stand 2026-11-14; Windows/MSVC, normal; davon 139 gelinkt, 78 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
+| `package-lock.json` | 309 Einträge (Stand 2026-11-12, Anhang D), davon 19 ohne `dev`-Flag, 10 tatsächlich im `dist`-Bundle – Anhang C/D |
 | `spikes/*/Cargo.lock` | Wegwerf-Spikes, nicht ausgeliefert |
 
 **Vendor / inline / native Bibliotheken**
@@ -61,7 +61,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 | Manrope (Variable), IBM Plex Mono 400/500 (woff/woff2 im `dist`) | Fontsource | OFL-1.1 – Lizenztext muss mitgeliefert werden | 🟡 → R1 |
 | URW Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) – Lizenztext muss mitgeliefert werden | 🟢 Y4 → R1 |
 | MathJax-TeX-Fontdaten | `mathjax-full` 3.2.2 | Apache-2.0 | 🟢 → R1 |
-| Lucide-Icons (Tree-Shaking) | `lucide-react` 1.64 | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
+| Lucide-Icons (Tree-Shaking) | `lucide-react` 1.x | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
 | App-Icon `src-tauri/icons/*` | eigenes Werk (KI-generiert mit Gemini) | AGPL-3.0-only | 🟢 Y9 |
 
 ## Phase 2 – Kategorisierung (ausgelieferte Komponenten)
@@ -86,7 +86,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 - **Dual-/Multi-Lizenzen** (`MIT OR Apache-2.0` usw.): es darf eine gewählt werden; Empfehlung: beide Texte mitliefern.
 - **Microsoft WebView2 Loader:** die Lizenz selbst ist GPL-kompatibel, es fehlt nur der Quellcode. Einzige Stelle, an der eine Unvereinbarkeit mit der AGPL denkbar ist – eingeordnet als System Library, siehe „Entscheidung R3“.
 - **URW-Schriften in erzeugten PDFs:** OFL-1.1 bzw. die PS/PDF-Font-Ausnahme lassen eingebettete Schriften nicht auf das Dokument übergreifen (Y4).
-- **Unlizenzierter Code:** keiner gefunden; alle 219 Crates und alle npm-Pakete haben ein SPDX-Feld (7 Windows-Crates, u. a. `webview2-com*`, ohne Lizenzdatei auf oberster Ebene).
+- **Unlizenzierter Code:** keiner gefunden; alle 217 Crates und alle npm-Pakete haben ein SPDX-Feld (7 Windows-Crates, u. a. `webview2-com*`, ohne Lizenzdatei auf oberster Ebene).
 
 ## Phase 4 – Pflichten-Check
 
@@ -94,7 +94,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 |---|---|---|
 | AGPL-3.0 (MuPDF, eigenes Werk) | Lizenztext beilegen; Corresponding Source anbieten (§6); geänderte Dateien kennzeichnen mit Datum (§5a); Appropriate Legal Notices in UI (§5d) | Text ✅ · Quelle ❌ R2 · Vermerk ✅ (PR) · UI ❌ Y5 |
 | MIT / ISC / BSD / Zlib / Unicode-3.0 / 0BSD | Copyright + Lizenztext in Kopien/Doku | ❌ R1 |
-| Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 219 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
+| Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 217 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
 | MPL-2.0 | Hinweis auf Bezugsquelle der Quellform + Lizenztext | ❌ R1 (Hinweis im PR) |
 | OFL-1.1 (Manrope, IBM Plex Mono, URW) | Copyright + Lizenz bei jeder Kopie der Fonts | ❌ R1 (URW-Text liegt in `THIRD-PARTY-LICENSES/`) |
 | IJG (libjpeg) | Satz „based in part on the work of the Independent JPEG Group“ in der Doku | ✅ (PR) |
@@ -139,7 +139,7 @@ Vollständige Listen: Anhang A–D.
 | React, React DOM, scheduler | 19.3 / 0.28 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | Zod | 4.6.7 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | perfect-freehand | 1.2.3 | MIT | Permissiv | seit v1.3.0 nicht mehr im Bundle (B6), nur inline in Spike | 🔴 R1, Spike Y7 (PR) |
-| lucide-react | 1.64 | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
+| lucide-react | 1.x | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
 | mathjax-full | 3.2.2 | Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | @tauri-apps/api, plugin-dialog | 2.12 / 2.8 | MIT OR Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | Manrope | 5.3.0 (Fontsource) | OFL-1.1 | Schrift | npm, im Bundle | 🔴 R1 |
@@ -287,6 +287,8 @@ Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 in
 | L1 | 🟡 YELLOW | (#24) Auto-Release zählte nur den Tag hoch; `package.json`-Version und damit `licenses/SOURCE.md` im Installer verwiesen auf den vorigen Quellstand. | behoben: kein Auto-Release (`standard-a-exclude.txt`: `no-release`), `scripts/release-source.sh` bricht ab, wenn Tag ≠ Version in `package.json`/`Cargo.toml`/`Cargo.lock` |
 | L2 | 🟢 GREEN | (#25) Kennungen präzisiert, am Original `mupdf-sys` 0.8.0 geprüft: MuPDF-C-Code 222/234 `.c`-Dateien „version 3 … or (at your option) any later version“ (Rest: Fremdteile aus M3) → `AGPL-3.0-or-later`; jbig2dec `thirdparty/jbig2dec/LICENSE` ebenso „or later“ → `AGPL-3.0-or-later` (nicht -only wie im Issue vermutet); extract nur mit AGPL-Text ohne Versionsvermerk → `AGPL-3.0`; Crates `mupdf`/`mupdf-sys` tragen die Altkennung `AGPL-3.0`. Mit dem Projekt (`AGPL-3.0-only`) kompatibel; für proprietären Vertrieb ändert sich nichts. | erledigt |
 | L3 | 🟢 GREEN | (#26) npm-Zahlen nach TypeScript 7 (+22 Apache-2.0, dev) und jsdom 31 veraltet. | aktualisiert, Erzeugungsbefehl in Anhang D |
+
+| L4 | 🟢 GREEN | (#30, #31) Nach den Updates vom 2026-11-12: Rust 217 statt 219 Crates (neu `utf_types` 1.0.0, Apache-2.0 OR MIT; entfallen `base64` 0.22, `bitflags` 1.3, `png` 0.17), 139 gelinkt / 78 Compile-Zeit; kein Lizenzfeld geändert, kein neues Copyleft. npm: `perfect-freehand` stand noch in `LIESMICH.txt`, `lucide-react` 1.64 veraltet. | Anhang A neu erzeugt (Befehl dort), LIESMICH korrigiert, `lucide-react` ohne Patch-Stand (1.x) |
 | G6 | 🟡 YELLOW | `bundle.copyright` fehlt in `tauri.conf.json`; NSIS verlangt „Annehmen“ der AGPL (§9: nicht nötig); Spike-`Cargo.toml` ohne `license`. | erledigt bis auf NSIS-Annehmen (bleibt, harmlos) |
 | G | 🟢 GREEN | Lizenzfeld = Lizenzdatei bei allen Paketen; gelinktes Copyleft nur MuPDF/jbig2dec (AGPL-3.0-or-later) und `option-ext` (MPL-2.0); `cssparser`/`selectors`/`dtoa-short` nur Compile-Zeit. `cargo about`/`cargo deny` ok für Windows und macOS. `vendor/mupdf` = Crate + `PATCH.md`. tessdata bitidentisch mit tessdata_fast 4.1.0. Eigener Code ohne Fremdcode; `LICENSE` unverändert; einziger menschlicher Rechteinhaber felix-d-git. | – |
 
@@ -296,7 +298,7 @@ Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 in
 
 ### A. Rust-Crates (ausgeliefert, Ziel `x86_64-pc-windows-msvc`, nur normale Abhängigkeiten)
 
-Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Cargo.lock` – 219 Crates (Stand 2026-11-03). Proc-Macro-Crates (z. B. `serde_derive`, `*-derive`, `*-macros`) laufen nur beim Kompilieren, sind aber zur Vorsicht mit aufgeführt.
+Quelle: `src-tauri/Cargo.lock` – 217 Crates ohne `pdf-note` selbst (Stand 2026-11-14, Version 1.4.0). Neu erzeugen mit `cargo tree --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc -e normal --prefix none -f '{p}|{l}' | sort -u`; gelinkt (139) zählt dasselbe mit `-e normal,no-proc-macro -f '{p}'`. Proc-Macro-Crates (z. B. `serde_derive`, `*-derive`, `*-macros`) laufen nur beim Kompilieren, sind aber zur Vorsicht mit aufgeführt.
 
 | Crate | Version | Lizenz (SPDX laut Cargo.toml) | Typ |
 |---|---|---|---|
@@ -305,15 +307,13 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `alloc-no-stdlib` | 3.0.0 | BSD-3-Clause | Permissiv |
 | `alloc-stdlib` | 0.3.0 | BSD-3-Clause | Permissiv |
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | Permissiv |
-| `base64` | 0.22.1 | MIT OR Apache-2.0 | Permissiv |
 | `base64` | 0.23.1 | MIT OR Apache-2.0 | Permissiv |
 | `bit-set` | 0.8.0 | Apache-2.0 OR MIT | Permissiv |
 | `bit-vec` | 0.8.0 | Apache-2.0 OR MIT | Permissiv |
-| `bitflags` | 1.3.2 | MIT/Apache-2.0 | Permissiv |
 | `bitflags` | 2.13.2 | MIT OR Apache-2.0 | Permissiv |
 | `block-buffer` | 0.10.4 | MIT OR Apache-2.0 | Permissiv |
-| `brotli` | 9.0.0 | BSD-3-Clause AND MIT | Permissiv |
-| `brotli-decompressor` | 6.0.1 | BSD-3-Clause/MIT | Permissiv |
+| `brotli` | 9.1.1 | BSD-3-Clause AND MIT | Permissiv |
+| `brotli-decompressor` | 6.3.1 | BSD-3-Clause/MIT | Permissiv |
 | `byteorder` | 1.5.0 | Unlicense OR MIT | Permissiv |
 | `bytes` | 1.12.1 | MIT | Permissiv |
 | `camino` | 1.2.6 | MIT OR Apache-2.0 | Permissiv |
@@ -323,7 +323,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `cfg-if` | 1.0.5 | MIT OR Apache-2.0 | Permissiv |
 | `cookie` | 0.18.2 | MIT OR Apache-2.0 | Permissiv |
 | `cpufeatures` | 0.2.17 | MIT OR Apache-2.0 | Permissiv |
-| `crc32fast` | 1.5.2 | MIT OR Apache-2.0 | Permissiv |
+| `crc32fast` | 1.5.5 | MIT OR Apache-2.0 | Permissiv |
 | `crossbeam-channel` | 0.5.17 | MIT OR Apache-2.0 | Permissiv |
 | `crossbeam-utils` | 0.8.23 | MIT OR Apache-2.0 | Permissiv |
 | `crypto-common` | 0.1.7 | MIT OR Apache-2.0 | Permissiv |
@@ -347,10 +347,10 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `dunce` | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | Permissiv |
 | `dyn-clone` | 1.0.20 | MIT OR Apache-2.0 | Permissiv |
 | `equivalent` | 1.0.3 | Apache-2.0 OR MIT | Permissiv |
-| `erased-serde` | 0.4.10 | MIT OR Apache-2.0 | Permissiv |
+| `erased-serde` | 0.4.11 | MIT OR Apache-2.0 | Permissiv |
 | `fastrand` | 2.5.0 | Apache-2.0 OR MIT | Permissiv |
 | `fdeflate` | 0.3.7 | MIT OR Apache-2.0 | Permissiv |
-| `flate2` | 1.1.10 | MIT OR Apache-2.0 | Permissiv |
+| `flate2` | 1.1.11 | MIT OR Apache-2.0 | Permissiv |
 | `fnv` | 1.0.7 | Apache-2.0 / MIT | Permissiv |
 | `foldhash` | 0.2.0 | Zlib | Permissiv |
 | `form_urlencoded` | 1.2.2 | MIT OR Apache-2.0 | Permissiv |
@@ -363,31 +363,31 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `heck` | 0.5.0 | MIT OR Apache-2.0 | Permissiv |
 | `html5ever` | 0.39.0 | MIT OR Apache-2.0 | Permissiv |
 | `http` | 1.5.0 | MIT OR Apache-2.0 | Permissiv |
-| `ico` | 0.5.0 | MIT | Permissiv |
-| `icu_collections` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_locale_core` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_normalizer` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_normalizer_data` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_properties` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_properties_data` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_provider` | 2.3.1 | Unicode-3.0 | Permissiv |
+| `ico` | 0.6.0 | MIT | Permissiv |
+| `icu_collections` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_locale_core` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_normalizer` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_normalizer_data` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_properties` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_properties_data` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_provider` | 2.4.0 | Unicode-3.0 | Permissiv |
 | `ident_case` | 1.0.1 | MIT/Apache-2.0 | Permissiv |
 | `idna` | 1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `idna_adapter` | 1.2.2 | Apache-2.0 OR MIT | Permissiv |
 | `indexmap` | 1.9.3 | Apache-2.0 OR MIT | Permissiv |
 | `indexmap` | 2.14.2 | Apache-2.0 OR MIT | Permissiv |
 | `infer` | 0.22.0 | MIT | Permissiv |
-| `itoa` | 1.0.18 | MIT OR Apache-2.0 | Permissiv |
+| `itoa` | 1.0.19 | MIT OR Apache-2.0 | Permissiv |
 | `json-patch` | 4.2.0 | MIT/Apache-2.0 | Permissiv |
 | `jsonptr` | 0.7.1 | MIT OR Apache-2.0 | Permissiv |
 | `keyboard-types` | 0.8.3 | MIT OR Apache-2.0 | Permissiv |
-| `libc` | 0.2.190 | MIT OR Apache-2.0 | Permissiv |
+| `libc` | 0.2.191 | MIT OR Apache-2.0 | Permissiv |
 | `litemap` | 0.8.3 | Unicode-3.0 | Permissiv |
 | `lock_api` | 0.4.14 | MIT OR Apache-2.0 | Permissiv |
-| `log` | 0.4.34 | MIT OR Apache-2.0 | Permissiv |
+| `log` | 0.4.35 | MIT OR Apache-2.0 | Permissiv |
 | `markup5ever` | 0.39.0 | MIT OR Apache-2.0 | Permissiv |
 | `memchr` | 2.8.3 | Unlicense OR MIT | Permissiv |
-| `mime` | 0.3.17 | MIT OR Apache-2.0 | Permissiv |
+| `mime` | 0.3.18 | MIT OR Apache-2.0 | Permissiv |
 | `miniz_oxide` | 0.8.9 | MIT OR Zlib OR Apache-2.0 | Permissiv |
 | `miniz_oxide` | 0.9.1 | MIT OR Zlib OR Apache-2.0 | Permissiv |
 | `mio` | 1.2.4 | MIT | Permissiv |
@@ -406,8 +406,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `phf_macros` | 0.13.1 | MIT | Permissiv |
 | `phf_shared` | 0.13.1 | MIT | Permissiv |
 | `pin-project-lite` | 0.2.17 | Apache-2.0 OR MIT | Permissiv |
-| `plist` | 1.10.1 | MIT | Permissiv |
-| `png` | 0.17.16 | MIT OR Apache-2.0 | Permissiv |
+| `plist` | 1.10.3 | MIT | Permissiv |
 | `png` | 0.18.1 | MIT OR Apache-2.0 | Permissiv |
 | `potential_utf` | 0.1.6 | Unicode-3.0 | Permissiv |
 | `powerfmt` | 0.2.1 | MIT OR Apache-2.0 | Permissiv |
@@ -434,7 +433,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `serde_derive_internals` | 0.29.1 | MIT OR Apache-2.0 | Permissiv |
 | `serde_json` | 1.0.154 | MIT OR Apache-2.0 | Permissiv |
 | `serde_repr` | 0.1.21 | MIT OR Apache-2.0 | Permissiv |
-| `serde_spanned` | 1.1.2 | MIT OR Apache-2.0 | Permissiv |
+| `serde_spanned` | 1.1.3 | MIT OR Apache-2.0 | Permissiv |
 | `serde_with` | 3.24.0 | MIT OR Apache-2.0 | Permissiv |
 | `serde_with_macros` | 3.24.0 | MIT OR Apache-2.0 | Permissiv |
 | `serialize-to-javascript` | 0.1.2 | MIT OR Apache-2.0 | Permissiv |
@@ -443,37 +442,37 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `sha2` | 0.10.9 | MIT OR Apache-2.0 | Permissiv |
 | `simd-adler32` | 0.3.10 | MIT | Permissiv |
 | `siphasher` | 1.0.4 | MIT OR Apache-2.0 | Permissiv |
-| `smallvec` | 1.16.3 | MIT OR Apache-2.0 | Permissiv |
+| `smallvec` | 1.16.5 | MIT OR Apache-2.0 | Permissiv |
 | `socket2` | 0.6.5 | MIT OR Apache-2.0 | Permissiv |
 | `softbuffer` | 0.4.8 | MIT OR Apache-2.0 | Permissiv |
 | `stable_deref_trait` | 1.2.1 | MIT OR Apache-2.0 | Permissiv |
 | `string_cache` | 0.9.0 | MIT OR Apache-2.0 | Permissiv |
 | `strsim` | 0.11.1 | MIT | Permissiv |
 | `syn` | 2.0.119 | MIT OR Apache-2.0 | Permissiv |
-| `syn` | 3.0.9 | MIT OR Apache-2.0 | Permissiv |
+| `syn` | 3.0.10 | MIT OR Apache-2.0 | Permissiv |
 | `synstructure` | 0.14.0 | MIT | Permissiv |
-| `tao` | 0.37.1 | Apache-2.0 | Permissiv |
-| `tauri` | 2.12.3 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-codegen` | 2.7.2 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-macros` | 2.7.2 | Apache-2.0 OR MIT | Permissiv |
+| `tao` | 0.37.2 | Apache-2.0 | Permissiv |
+| `tauri` | 2.12.5 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-codegen` | 2.7.4 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-macros` | 2.7.4 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-dialog` | 2.8.4 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-single-instance` | 2.5.5 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-runtime` | 2.12.1 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-runtime-wry` | 2.12.1 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-utils` | 2.10.1 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-runtime` | 2.12.2 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-runtime-wry` | 2.12.3 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-utils` | 2.10.2 | Apache-2.0 OR MIT | Permissiv |
 | `tendril` | 0.5.1 | MIT OR Apache-2.0 | Permissiv |
 | `thiserror` | 2.0.21 | MIT OR Apache-2.0 | Permissiv |
 | `thiserror-impl` | 2.0.21 | MIT OR Apache-2.0 | Permissiv |
 | `time` | 0.3.55 | MIT OR Apache-2.0 | Permissiv |
 | `time-core` | 0.1.9 | MIT OR Apache-2.0 | Permissiv |
 | `time-macros` | 0.2.32 | MIT OR Apache-2.0 | Permissiv |
-| `tinystr` | 0.8.4 | Unicode-3.0 | Permissiv |
-| `tokio` | 1.53.3 | MIT | Permissiv |
-| `toml` | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
-| `toml_datetime` | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
+| `tinystr` | 0.8.5 | Unicode-3.0 | Permissiv |
+| `tokio` | 1.54.1 | MIT | Permissiv |
+| `toml` | 1.2.1+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
+| `toml_datetime` | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `toml_parser` | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
-| `toml_writer` | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
+| `toml_writer` | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `tracing` | 0.1.44 | MIT | Permissiv |
 | `tracing-attributes` | 0.1.31 | MIT | Permissiv |
 | `tracing-core` | 0.1.36 | MIT | Permissiv |
@@ -483,8 +482,9 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `unicode-segmentation` | 1.13.3 | MIT OR Apache-2.0 | Permissiv |
 | `url` | 2.5.8 | MIT OR Apache-2.0 | Permissiv |
 | `urlpattern` | 0.6.0 | MIT | Permissiv |
-| `utf8_iter` | 1.0.4 | Apache-2.0 OR MIT | Permissiv |
-| `uuid` | 1.28.0 | Apache-2.0 OR MIT | Permissiv |
+| `utf8_iter` | 1.1.0 | Apache-2.0 OR MIT | Permissiv |
+| `utf_types` | 1.0.0 | Apache-2.0 OR MIT | Permissiv |
+| `uuid` | 1.29.2 | Apache-2.0 OR MIT | Permissiv |
 | `walkdir` | 2.5.0 | Unlicense/MIT | Permissiv |
 | `web-time` | 1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `web_atoms` | 0.2.6 | MIT OR Apache-2.0 | Permissiv |
@@ -506,18 +506,18 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Permissiv |
 | `windows-threading` | 0.2.1 | MIT OR Apache-2.0 | Permissiv |
 | `windows-version` | 0.1.7 | MIT OR Apache-2.0 | Permissiv |
-| `winnow` | 1.0.4 | MIT | Permissiv |
+| `winnow` | 1.0.5 | MIT | Permissiv |
 | `writeable` | 0.6.4 | Unicode-3.0 | Permissiv |
-| `wry` | 0.57.0 | Apache-2.0 OR MIT | Permissiv |
-| `yoke` | 0.8.3 | Unicode-3.0 | Permissiv |
+| `wry` | 0.57.2 | Apache-2.0 OR MIT | Permissiv |
+| `yoke` | 0.8.4 | Unicode-3.0 | Permissiv |
 | `yoke-derive` | 0.8.4 | Unicode-3.0 | Permissiv |
 | `zerocopy` | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | Permissiv |
 | `zerocopy-derive` | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | Permissiv |
 | `zerofrom` | 0.1.8 | Unicode-3.0 | Permissiv |
 | `zerofrom-derive` | 0.1.8 | Unicode-3.0 | Permissiv |
 | `zerotrie` | 0.2.5 | Unicode-3.0 | Permissiv |
-| `zerovec` | 0.11.8 | Unicode-3.0 | Permissiv |
-| `zerovec-derive` | 0.11.6 | Unicode-3.0 | Permissiv |
+| `zerovec` | 0.11.9 | Unicode-3.0 | Permissiv |
+| `zerovec-derive` | 0.11.7 | Unicode-3.0 | Permissiv |
 | `zmij` | 1.0.23 | MIT | Permissiv |
 
 ### B. Rust-Build-Abhängigkeiten (nur Build, nicht in der Binary) – 23 Crates
@@ -561,7 +561,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `commander` | 13.1.0 | MIT | nein |
 | `csstype` | 3.2.3 | MIT | nein (nur Typen) |
 | `esm` | 3.2.25 | MIT | nein |
-| `lucide-react` | 1.64.0 | ISC | ja |
+| `lucide-react` | 1.72.0 | ISC | ja |
 | `mathjax-full` | 3.2.2 | Apache-2.0 | ja |
 | `mhchemparser` | 4.2.1 | Apache-2.0 | nein |
 | `mj-context-menu` | 0.6.1 | Apache-2.0 | nein |
