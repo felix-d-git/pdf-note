@@ -289,10 +289,12 @@ test("Form-Erkennung: Linie, Pfeil, Dreieck, Rechteck, Kreis, Ellipse aus wackli
     return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.4 + (i % 3) * 0.1]);
   }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
   const ring = (rx: number, ry: number): InkPoint[] => Array.from({ length: 80 }, (_, i): InkPoint => [100 + rx * Math.cos(i / 12.6 + 0.3) + wob(i), 100 + ry * Math.sin(i / 12.6 + 0.3), 0.5]);
-  const kind = (p: InkPoint[]) => recognize(p)?.kind ?? null;
-  const rec = (p: InkPoint[]) => recognize(p) ?? { kind: null, points: [] };
+  const kind = (p: InkPoint[]) => recognize(p).kind;
+  const rec = recognize;
   expect(kind(path([0, 0], [100, 30]))).toBe("line");
-  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe(null); // offener Haken → keine Form (langes Halten glättet)
+  expect(kind(path([0, 0], [50, 40], [100, 0]))).toBe("curve"); // offener Haken → geglättete Kurve
+  // Linie bevorzugt: zwei kleine Wellen (±9 pt auf 120 pt) sind Zittern, keine Kurve
+  expect(kind(Array.from({ length: 60 }, (_, i): InkPoint => [i * 2, Math.sin((i / 59) * 4 * Math.PI) * 9, 0.5]))).toBe("line");
   expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow");
   expect(kind(path([0, 0], [100, 0], [50, 80], [2, 3]))).toBe("triangle");
   expect(kind(path([50, 0], [100, 0], [100, 60], [0, 60], [0, 0], [48, 2]))).toBe("rect"); // Start mitten auf der Kante
@@ -312,7 +314,7 @@ test("Form-Erkennung: gerader Pfeil in Varianten, gebogener Pfeil nicht", () => 
     const a = c[k] ?? b;
     return Array.from({ length: 20 }, (_, i): InkPoint => [a[0] + ((b[0] - a[0]) * i) / 20 + wob(i + k), a[1] + ((b[1] - a[1]) * i) / 20 - wob(i), 0.5]);
   }).concat([[...(c.at(-1) ?? [0, 0]), 0.5]]);
-  const kind = (p: InkPoint[]) => recognize(p)?.kind ?? null;
+  const kind = (p: InkPoint[]) => recognize(p).kind;
   expect(kind(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))).toBe("arrow"); // Haken hin und zurück
   expect(kind(path([0, 0], [100, 0], [88, -8]))).toBe("arrow"); // nur ein Haken
   expect(kind(path([0, 0], [100, 0], [86, -9], [86, 9], [100, 0]))).toBe("arrow"); // Dreieck-Spitze
@@ -343,15 +345,15 @@ test("Form-Erkennung: Wurzelzeichen mit und ohne Anstrich, Dach waagrecht", () =
   }
   expect(r1?.points).toHaveLength(5);
   // ✓-Haken (kein Dach) und Funktionsgraphen sind keine Wurzel
-  expect(recognize(path([0, 40], [15, 60], [50, 0]))?.kind ?? null).toBe(null);
+  expect(recognize(path([0, 40], [15, 60], [50, 0])).kind).toBe("curve");
 });
 
-test("Funktionsgraphen: keine Form beim kurzen Halten, langes Halten glättet nur", () => {
+test("Funktionsgraphen: werden zur geglätteten Kurve, keine Linie", () => {
   const graph = (f: (x: number) => number) => Array.from({ length: 120 }, (_, i): InkPoint => [i, f(i) + Math.sin(i * 2.1) * 1.2, 0.5]);
   const para = (x: number) => 20 + ((x - 60) ** 2) / 50, ex = (x: number) => 100 - (Math.exp(x / 26) - 1), ln = (x: number) => 100 - 18 * Math.log(1 + x);
   for (const f of [para, ex, ln]) {
     const raw = graph(f);
-    expect(recognize(raw)).toBe(null);
+    expect(recognize(raw).kind).toBe("curve");
     // Abstand zur echten Kurve (nicht senkrecht: am steilen Rand zählt sonst jede Querverschiebung vielfach)
     const ideal = Array.from({ length: 1191 }, (_, i) => [i / 10, f(i / 10)] as const);
     const sm = smoothCurve(raw), dev = (p: InkPoint[]) => Math.max(...p.slice(4, -4).map(([x, y]) => Math.min(...ideal.map(([u, v]) => Math.hypot(x - u, y - v)))));

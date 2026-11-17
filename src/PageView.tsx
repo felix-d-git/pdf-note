@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } fro
 import { imageOf, pageKey, subscribe, thumbKey, THUMB_W } from "./render";
 import { z } from "zod";
 import {
-  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, smoothCurve, dragShape,
+  autoLayerFor, box, caretAt, drawItems, fixedWidth, FONT, hitTest, IMAGE_LOADED, inPolygon, isPara, lineHeight, makeSpace, MARKER_OPACITY, moveItem, newId, PARA0, recognize, rotateItem, dragShape,
   constrain, cutStroke, rotMatrix, scaleItem, shapeProps, scaleMatrix, smoothPt, layerOf, TAGS, textRect, unionBox, type Crop, type InkPoint, type Item, type Layer, type Preset, type Rgb, type ShapeKind, type ShapeOpts, type Tag,
 } from "./ink";
 import { BetweenHorizontalStart, Check, CircleAlert, CircleHelp, ListTodo, ClipboardPaste, Copy, Crop as CropIcon, ImagePlus, RotateCw, Scissors, SendToBack, BringToFront, Move, SlidersHorizontal, SquareX, Trash, Type, X, type LucideIcon } from "lucide-react";
@@ -65,7 +65,6 @@ export function Thumb({ doc, index, size, active, selected, dropMark, onPointerD
 }
 
 const HOLD_MS = 500;
-const HOLD_LONG_MS = 1500; // Kurve (Funktionsgraph) glätten: deutlich länger als die Formerkennung
 const straighten = (s: Item, x: number, y: number) => {
   s.points = s.points.slice(0, 1).flatMap((a) => [a, [x, y, a[2]] as InkPoint]);
 };
@@ -73,7 +72,7 @@ const straighten = (s: Item, x: number, y: number) => {
 const HIT = 1;
 const HOLD_TOL = 2; // pt Bewegung, die das Ruhen nicht unterbricht
 const ERASER_PX = 8; // Radierer-Radius in Bildschirmpixeln
-const SPACE_EDGE_PX = 16; // Stift so nah am linken/rechten Seitenrand → Platz einfügen
+const SPACE_EDGE_PX = 16; // Stift/Maus so nah am linken Seitenrand → Platz einfügen
 const MAX_PAGE_H = 14_400; // PDF-Grenze (Backend prüft gleich)
 const css = (c: [number, number, number]) => `rgb(${c.map((v) => Math.round(v * 255)).join(",")})`;
 const hex = (c: [number, number, number]) => `#${c.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`;
@@ -492,8 +491,8 @@ export function PageView(p: PageProps) {
     return [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom, 0.5];
   };
 
-  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird zur erkannten Form (Linie, Pfeil, Wurzel, Rechteck, Dreieck, Kreis/Ellipse);
-  // sonst (Kurve) glättet erst Ruhen ≥ 1500 ms. Weiterziehen danach skaliert die Form (dragShape).
+  // Shape-Hold: Stift ruht ≥ 500 ms → Strich wird immer zu einer Form (Linie, Pfeil, Wurzel, Rechteck, Dreieck,
+  // Kreis/Ellipse, sonst geglättete Kurve). Weiterziehen danach skaliert die Form (dragShape).
   const armHold = (x: number, y: number) => {
     const c = g.current;
     const hd = c?.t === "draw" ? c.hold : null;
@@ -508,8 +507,7 @@ export function PageView(p: PageProps) {
     Object.assign(hd, { x, y, timer: setTimeout(() => {
       if (c.item.points.length < 3) return;
       const f = recognize(c.item.points);
-      if (f) apply(f.kind, f.points);
-      else hd.timer = setTimeout(() => apply("curve", smoothCurve(c.item.points)), HOLD_LONG_MS - HOLD_MS);
+      apply(f.kind, f.points);
     }, HOLD_MS) });
   };
 
@@ -625,9 +623,9 @@ export function PageView(p: PageProps) {
     const grip = tgt.closest<HTMLElement>("[data-tgrip], [data-twidth], [data-grip], [data-pwidth]");
     if (e.pointerType === "touch" || (!grip && tgt.closest("textarea, [data-pedit], [data-field]"))) return;
     const t0 = toolFor(e, e.pointerType === "pen" ? p.penTool : tool, settings);
-    // Stift am linken/rechten Seitenrand ansetzen und nach unten ziehen: Platz einfügen
-    const px = e.pointerType === "pen" ? pt(e)[0] : NaN;
-    const t = t0 && t0 !== "redact" && (px < SPACE_EDGE_PX / zoom || px > size[0] - SPACE_EDGE_PX / zoom) ? "space" : t0;
+    // Stift/Maus am linken Seitenrand ansetzen und nach unten ziehen: Platz einfügen (rechts nicht: dort wird oft geschrieben)
+    const px = pt(e)[0];
+    const t = t0 && t0 !== "redact" && px < SPACE_EDGE_PX / zoom ? "space" : t0;
     if (!t || g.current) return;
     // Stift zeichnet, markiert, radiert und wählt nur auf Ebene 3 – unabhängig von der gewählten Ebene
     const pen3 = e.pointerType === "pen" && (t === "pen" || t === "marker" || t === "eraser" || t === "lasso");

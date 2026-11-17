@@ -47,7 +47,7 @@ const DE: Chapter[] = [
     "Pfeiltasten schieben die Auswahl um 1 pt, mit Umschalt um 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Platz einfügen", lines: [
-    [BetweenHorizontalStart, "Platz einfügen: an der gewünschten Stelle ansetzen und nach unten ziehen – die Seite wird dort zerschnitten und um eine weiße Fläche verlängert; PDF-Inhalt, Anmerkungen und eigene Objekte darunter rücken mit. Mit dem Stift geht das auch ohne Werkzeugwechsel: am linken oder rechten Seitenrand ansetzen. Nach oben ziehen bricht ab. Danach ist Ebene 1 dieser Seite ein Block (einzelne Absätze nicht mehr verschiebbar)."],
+    [BetweenHorizontalStart, "Platz einfügen: an der gewünschten Stelle ansetzen und nach unten ziehen – die Seite wird dort zerschnitten und um eine weiße Fläche verlängert; PDF-Inhalt, Anmerkungen und eigene Objekte darunter rücken mit. Mit Stift oder Maus geht das auch ohne Werkzeugwechsel: am linken Seitenrand ansetzen. Nach oben ziehen bricht ab. Danach ist Ebene 1 dieser Seite ein Block (einzelne Absätze nicht mehr verschiebbar)."],
   ] },
   { id: "redact", icon: SquareX, title: "Schwärzen", lines: [
     [SquareX, "Schwärzen (Plus-Menü oder Rechtsklick): Rechteck über den Bereich ziehen und bestätigen – Text, Bilder und Grafik darunter werden echt aus der PDF entfernt (nicht nur überdeckt) und durch einen schwarzen Kasten ersetzt; eigene Objekte im Bereich werden gelöscht. Strg+Z geht nur bis zum Speichern, danach ist der Inhalt endgültig weg."],
@@ -117,7 +117,7 @@ const DE: Chapter[] = [
   ] },
   { id: "pen", icon: Hand, title: "Stifttasten und Handballen", lines: [
     "Stifttasten: obere = Auswahl, untere/Radierer-Ende = Radierer; in den Einstellungen neu lernen.",
-    "Form-Erkennung: Stift am Ende des Strichs 0,5 s ruhen lassen → Linie, gerader Pfeil, Wurzelzeichen, Dreieck, Rechteck oder Kreis. Weiterziehen ohne Abheben macht die Form größer/kleiner, Abheben schließt ab; Strg+Z holt die Freihand-Linie zurück. Kurven (Parabel, e-Funktion …) 1,5 s ruhen lassen → nur geglättet, Verlauf bleibt.",
+    "Form-Erkennung: Stift am Ende des Strichs 0,5 s ruhen lassen → Linie, gerader Pfeil, Wurzelzeichen, Dreieck, Rechteck oder Kreis. Weiterziehen ohne Abheben macht die Form größer/kleiner, Abheben schließt ab; Strg+Z holt die Freihand-Linie zurück. Fast gerade Striche werden zur Linie; echte Kurven (Parabel, e-Funktion …) werden nur geglättet, Verlauf bleibt.",
     "Handballen: Finger zählt nicht, solange der Stift aufliegt und 0,5 s danach, oder wenn die Berührung breiter als 40 px ist.",
     [Wrench, "Einstellungen: Ansicht Hell/Dunkel/System, Stifttasten, Glättung (aus = exakt wie gezeichnet) – gilt für alle Stifte."],
   ] },
@@ -156,7 +156,7 @@ const EN: Chapter[] = [
     "Arrow keys move the selection by 1 pt, with Shift by 10 pt.",
   ] },
   { id: "space", icon: BetweenHorizontalStart, title: "Insert space", lines: [
-    [BetweenHorizontalStart, "Insert space: start at the desired spot and drag down – the page is cut there and extended by a white area; PDF content, annotations and your own objects below move along. With the pen this works without switching tools: start at the left or right page edge. Dragging up cancels. Afterwards layer 1 of that page is one block (single paragraphs can no longer be moved)."],
+    [BetweenHorizontalStart, "Insert space: start at the desired spot and drag down – the page is cut there and extended by a white area; PDF content, annotations and your own objects below move along. With pen or mouse this works without switching tools: start at the left page edge. Dragging up cancels. Afterwards layer 1 of that page is one block (single paragraphs can no longer be moved)."],
   ] },
   { id: "redact", icon: SquareX, title: "Redact", lines: [
     [SquareX, "Redact (plus menu or right-click): drag a rectangle over the area and confirm – text, images and graphics underneath are really removed from the PDF (not just covered) and replaced by a black box; your own objects in the area are deleted. Ctrl+Z works only until you save, afterwards the content is gone for good."],
@@ -226,7 +226,7 @@ const EN: Chapter[] = [
   ] },
   { id: "pen", icon: Hand, title: "Pen buttons and palm rejection", lines: [
     "Pen buttons: upper = select, lower/eraser end = eraser; re-learn them in the settings.",
-    "Shape recognition: rest the pen 0.5 s at the end of a stroke → line, straight arrow, root sign, triangle, rectangle or circle. Keep moving without lifting to resize it, lifting finishes; Ctrl+Z brings back the freehand stroke. Curves (parabola, exponential …): rest 1.5 s → smoothed only, the course stays.",
+    "Shape recognition: rest the pen 0.5 s at the end of a stroke → line, straight arrow, root sign, triangle, rectangle or circle. Keep moving without lifting to resize it, lifting finishes; Ctrl+Z brings back the freehand stroke. Nearly straight strokes become a line; real curves (parabola, exponential …) are only smoothed, the course stays.",
     "Palm: a finger is ignored while the pen is down and 0.5 s after, or if the touch is wider than 40 px.",
     [Wrench, "Settings: view light/dark/system, pen buttons, smoothing (off = exactly as drawn) – applies to all pens."],
   ] },
