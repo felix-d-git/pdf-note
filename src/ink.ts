@@ -745,7 +745,12 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
   // ponytail: Ecken-Zählung per Douglas-Peucker statt trainiertem Erkenner; reicht für die fünf Grundformen
   const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1);
   const p = raw.map(([x, y]): Pt => [x, y]);
-  const out = (kind: ShapeKind, q: Pt[]) => ({ kind, points: q.map(([x, y]): InkPoint => [x, y, pr]) });
+  // Ecken doppelt: `curve` zeichnet Striche als Bézier durch die Punkt-Mittelpunkte (Kontrollpunkt = Punkt) und
+  // rundete ein Rechteck aus 5 Punkten zum krummen Kringel ab; mit doppeltem Punkt wird jedes Stück gerade, die Ecke spitz.
+  // Ellipse nicht: ihre 49 Punkte sollen rund bleiben.
+  const out = (kind: ShapeKind, q: Pt[]) => ({
+    kind, points: q.flatMap(([x, y], i): InkPoint[] => (kind !== "ellipse" && i > 0 && i < q.length - 1 ? [[x, y, pr], [x, y, pr]] : [[x, y, pr]])),
+  });
   const a = p[0] ?? [0, 0], z = p.at(-1) ?? a;
   const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
   const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
