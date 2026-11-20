@@ -88,6 +88,14 @@ $dateien = @(Get-ChildItem -Force $dir | ForEach-Object Name)
 if ($dateien.Count -ne 1) { $fehler += "Zusatzdatei neben der PDF: $($dateien -join ', ')" }
 if ((Get-FileHash $kopie).Hash -ne $hash) { $fehler += 'PDF ohne Speichern verändert' }
 
+# Build-Pfade: der Windows-Benutzername darf nicht in der exe stehen (ASCII + UTF-16LE, ohne Groß/Klein)
+$bytes = [IO.File]::ReadAllBytes($Exe)
+foreach ($enc in 'Latin1', 'Unicode') {
+    $text = if ($enc -eq 'Unicode') { [Text.Encoding]::Unicode.GetString($bytes, 0, $bytes.Length - ($bytes.Length % 2)) + [Text.Encoding]::Unicode.GetString($bytes, 1, $bytes.Length - 1 - (($bytes.Length - 1) % 2)) } else { [Text.Encoding]::GetEncoding(28591).GetString($bytes) }
+    $n = [regex]::Matches($text, [regex]::Escape("Users\$env:USERNAME"), 'IgnoreCase').Count
+    if ($n) { $fehler += "exe enthält Benutzernamen-Pfad (Users\<Benutzer>) $n x ($enc) – nur CI-Builds verteilen" }
+}
+
 Write-Host "Prozesse im Baum (max): $maxProz, Laufzeit: $Sekunden s, PDF: $(Split-Path $Pdf -Leaf)"
 $fehler = $fehler | Select-Object -Unique
 if ($fehler) { $fehler | ForEach-Object { Write-Host "FEHLER $_" }; exit 1 }

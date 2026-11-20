@@ -19,7 +19,11 @@ fn err(e: Error) -> String {
 }
 
 fn datadir() -> PathBuf {
-    TESSDATA.get().cloned().unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/tessdata"))
+    // Release: nur der Laufzeitpfad (setup in lib.rs); der Build-Pfad (CARGO_MANIFEST_DIR) bliebe sonst als Text in der exe
+    #[cfg(debug_assertions)]
+    return TESSDATA.get().cloned().unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/tessdata"));
+    #[cfg(not(debug_assertions))]
+    TESSDATA.get().cloned().unwrap_or_default()
 }
 
 /// Erkanntes Wort in App-Koordinaten: Grundlinie links (`x`, `base`), Breite, Schriftgröße.
