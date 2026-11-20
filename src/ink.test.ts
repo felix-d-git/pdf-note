@@ -300,7 +300,7 @@ test("Form-Erkennung: Linie, Pfeil, Dreieck, Rechteck, Kreis, Ellipse aus wackli
   expect(kind(path([50, 0], [100, 0], [100, 60], [0, 60], [0, 0], [48, 2]))).toBe("rect"); // Start mitten auf der Kante
   expect(kind(ring(50, 50))).toBe("ellipse");
   const r = rec(path([0, 0], [100, 0], [100, 60], [0, 60], [1, 2])).points;
-  expect([new Set(r.map((q) => q[0])).size, new Set(r.map((q) => q[1])).size, r.length]).toEqual([2, 2, 5]); // achsparallel, geschlossen
+  expect([new Set(r.map((q) => q[0])).size, new Set(r.map((q) => q[1])).size, r.length]).toEqual([2, 2, 8]); // achsparallel, geschlossen (Ecken doppelt → spitz)
   const c = rec(ring(50, 50)).points, e = rec(ring(60, 30)).points;
   const radii = (q: InkPoint[]) => q.map(([x, y]) => Math.hypot(x - 100, y - 100));
   expect(Math.max(...radii(c)) - Math.min(...radii(c))).toBeLessThan(1.5); // Kreis bleibt rund
@@ -323,7 +323,7 @@ test("Form-Erkennung: gerader Pfeil in Varianten, gebogener Pfeil nicht", () => 
   const shaky: InkPoint[] = Array.from({ length: 60 }, (_, i): InkPoint => [i * 2, Math.sin(i * 0.9) * 3, 0.5]);
   expect(kind([...shaky, ...path([118, 0], [104, -10], [118, 0], [104, 10]).slice(1)])).toBe("arrow");
   const a = recognize(path([0, 0], [100, 0], [85, -10], [100, 0], [85, 10]))?.points ?? [];
-  expect(a).toHaveLength(5);
+  expect(a).toHaveLength(8); // Spitze und Haken-Enden doppelt → spitz
   expect(a[1]?.[0]).toBeCloseTo(100, -1); // Spitze vorn
   // gebogener Schaft (Viertelkreis) + Spitze → kein Pfeil
   const arc: InkPoint[] = Array.from({ length: 40 }, (_, i): InkPoint => [100 * Math.sin((i / 39) * 1.57), 100 - 100 * Math.cos((i / 39) * 1.57), 0.5]);
@@ -343,7 +343,7 @@ test("Form-Erkennung: Wurzelzeichen mit und ohne Anstrich, Dach waagrecht", () =
     const q = r?.points ?? [];
     expect(q.at(-1)?.[1]).toBe(q.at(-2)?.[1]); // Dach exakt waagrecht
   }
-  expect(r1?.points).toHaveLength(5);
+  expect(r1?.points).toHaveLength(8);
   // ✓-Haken (kein Dach) und Funktionsgraphen sind keine Wurzel
   expect(recognize(path([0, 40], [15, 60], [50, 0])).kind).toBe("curve");
 });

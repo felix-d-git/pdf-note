@@ -3,7 +3,7 @@
 import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { box, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset, type ShapeOpts } from "./ink";
+import { box, curve, DEFAULT_PRESET, makeSpace, PARA0, savedWidth, SHAPE_OPTS, type Item, type Layer, type Preset, type ShapeOpts } from "./ink";
 import { dragRect, PageView, type NewField, type OrigEdit, type ParaMove } from "./PageView";
 import { DEFAULT_SETTINGS, type Settings, type Tool } from "./settings";
 
@@ -732,7 +732,7 @@ test("Shape-Hold: Rechteck zeichnen + halten → rastet sichtbar ein, Freihand-S
     fire(el, "pointerup", hx, hy, 0, "pen");
     const it = lastAdd.at(-1) as Item, raw = raws.at(-1) as Item;
     expect(it.kind).toBe("ink");
-    expect(it.points.map(([x, y]) => [Math.round(x), Math.round(y)])).toEqual([[50, 50], [151, 50], [151, 120], [50, 120], [50, 50]]);
+    expect(it.points.map(([x, y]) => [Math.round(x), Math.round(y)])).toEqual([[50, 50], [151, 50], [151, 50], [151, 120], [151, 120], [50, 120], [50, 120], [50, 50]]);
     expect(raw.id).toBe(it.id);
     expect(raw.points.length).toBe(pts.length);
     expect(el.querySelector("[role=status]")).toBeNull();
@@ -741,6 +741,67 @@ test("Shape-Hold: Rechteck zeichnen + halten → rastet sichtbar ein, Freihand-S
     fire(el, "pointermove", 320, 340, 1, "pen");
     fire(el, "pointerup", 320, 340, 0, "pen");
     expect(raws.at(-1)).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+/** Gezeichneter Pfad (wie drawItem/MuPDF): nur gerade Stücke, d. h. jeder Kontrollpunkt liegt auf Anfang oder Ende */
+const polyline = (it: Item) => {
+  const { start, segs } = curve(it.points);
+  let a = start;
+  return segs.every(([c, e]) => {
+    const ok = (c[0] === a[0] && c[1] === a[1]) || (c[0] === e[0] && c[1] === e[1]);
+    a = e;
+    return ok;
+  });
+};
+/** Strich zeichnen, `hold` ms halten, optional weiterziehen, abheben → gespeicherter Strich */
+const holdStroke = (el: Element, pts: [number, number][], drag?: [number, number]) => {
+  const [x0, y0] = pts[0] as [number, number], [hx, hy] = pts.at(-1) as [number, number];
+  fire(el, "pointerdown", x0, y0, 1, "pen");
+  for (const [x, y] of pts.slice(1)) fire(el, "pointermove", x, y, 1, "pen");
+  act(() => void vi.advanceTimersByTime(600));
+  const kind = el.querySelector("[role=status]")?.textContent;
+  if (drag) fire(el, "pointermove", ...drag, 1, "pen");
+  const [ux, uy] = drag ?? [hx, hy];
+  fire(el, "pointerup", ux, uy, 0, "pen");
+  return { kind, it: lastAdd.at(-1) as Item, raw: raws.at(-1) as Item };
+};
+const edges = (...c: [number, number][]) => c.slice(1).flatMap((b, k) => {
+  const a = c[k] ?? b;
+  return Array.from({ length: 10 }, (_, i): [number, number] => [a[0] + ((b[0] - a[0]) * i) / 10 + (i % 2), a[1] + ((b[1] - a[1]) * i) / 10]);
+}).concat([c.at(-1) as [number, number]]);
+
+test("Shape-Hold: gespeichert wird die erkannte Form (Rechteck spitz, mit/ohne Weiterziehen), nicht der krumme Freihand-Strich", () => {
+  vi.useFakeTimers();
+  try {
+    const el = mount("pen");
+    const rect = edges([50, 50], [150, 50], [150, 120], [50, 120], [52, 53]);
+    for (const drag of [undefined, [250, 190] as [number, number]]) {
+      const { kind, it, raw } = holdStroke(el, rect, drag);
+      expect(kind).toMatch(/^(Rechteck|Rectangle)$/);
+      expect(raw.points.length).toBe(rect.length);
+      expect(it.points.length).toBeLessThan(10);
+      // Bézier durch Mittelpunkte rundete die 5 Eckpunkte zum Kringel ab → jetzt gerade Kanten, Ecken liegen auf dem Pfad
+      expect(polyline(it)).toBe(true);
+      const ends = curve(it.points).segs.map(([, e]) => `${Math.round(e[0])},${Math.round(e[1])}`);
+      const xs = it.points.map((q) => q[0]), ys = it.points.map((q) => q[1]);
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+      for (const c of [[x1, y0], [x1, y1], [x0, y1]]) expect(ends).toContain(c.map((v) => Math.round(v)).join(","));
+      if (drag) expect(x1 - x0).toBeGreaterThan(150); // Weiterziehen vergrößert um die Mitte
+    }
+    // Linie: zwei Punkte, auch nach Weiterziehen
+    const line = holdStroke(el, edges([300, 300], [400, 340]), [450, 360]);
+    expect(line.kind).toMatch(/^(Linie|Line)$/);
+    expect(line.it.points.map(([x, y]) => [x, y])).toEqual([[300, 300], [450, 360]]);
+    // Kreis: bleibt rund (keine Ecken), Abstand des gezeichneten Pfads zur Mitte fast konstant
+    const ring = Array.from({ length: 60 }, (_, i): [number, number] => [200 + 40 * Math.cos(i / 9), 200 + 40 * Math.sin(i / 9)]);
+    const circ = holdStroke(el, ring);
+    expect(circ.kind).toMatch(/^(Kreis|Circle|Ellipse)/);
+    expect(circ.it.points.length).toBe(49);
+    const r = curve(circ.it.points).segs.map(([, e]) => Math.hypot(e[0] - 200, e[1] - 200));
+    expect(Math.max(...r) - Math.min(...r)).toBeLessThan(2);
   } finally {
     vi.useRealTimers();
   }
