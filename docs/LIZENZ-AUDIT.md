@@ -40,7 +40,7 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 **Paketmanager**
 | Quelle | Umfang |
 |---|---|
-| `src-tauri/Cargo.lock` | 217 Crates (Stand 2026-11-14; Windows/MSVC, normal; davon 139 gelinkt, 78 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
+| `src-tauri/Cargo.lock` | 217 Crates (Stand 2026-11-14; Windows/MSVC, normal; davon 139 gelinkt, 78 nur Proc-Macros und deren Abhängigkeiten) + 24 reine Build-Crates – Anhang A/B |
 | `package-lock.json` | 309 Einträge (Stand 2026-11-12, Anhang D), davon 19 ohne `dev`-Flag, 10 tatsächlich im `dist`-Bundle – Anhang C/D |
 | `spikes/*/Cargo.lock` | Wegwerf-Spikes, nicht ausgeliefert |
 
@@ -226,6 +226,8 @@ Entschieden 2026-10-27: **Option 1 – den Loader als System Library behandeln u
 | (a) in der üblichen Verpackung der Komponente enthalten | **Schwachpunkt:** er kommt mit dem SDK, nicht mit der Laufzeit. Das Gegenargument: Mit statischen Bibliotheken aus Windows-SDK und MSVC ist es genauso, und GPL-Programme linken sie üblicherweise, ohne dass das als Verstoß gilt. |
 
 Die Freiheit, die das Copyleft schützt, bleibt erhalten: Jeder kann den Quellcode ändern und mit demselben frei erhältlichen SDK (automatisch über crates.io) neu bauen. Eine eindeutige Rechtslage gibt es trotzdem nicht.
+
+Die MSVC-Laufzeit (VC-Runtime) ist über `static_vcruntime` 3.0.0 (MIT OR Apache-2.0 OR Zlib, Build-Crate) statisch gelinkt; die Laufzeit selbst stammt von Microsoft (Visual-Studio-Build-Tools), die Crate steuert nur den Linker-Schalter. Sie wird wie der Loader behandelt (Microsoft-Komponente, kein Quellcode).
 
 ### Verworfene Alternativen
 
@@ -674,7 +676,7 @@ Quelle: `src-tauri/Cargo.lock` – 217 Crates ohne `pdf-note` selbst (Stand 2026
 | `zerovec-derive` | 0.11.7 | Unicode-3.0 | Permissiv |
 | `zmij` | 1.0.23 | MIT | Permissiv |
 
-### B. Rust-Build-Abhängigkeiten (nur Build, nicht in der Binary) – 23 Crates
+### B. Rust-Build-Abhängigkeiten (nur Build, nicht in der Binary) – 24 Crates
 
 | Crate | Version | Lizenz |
 |---|---|---|
@@ -696,6 +698,7 @@ Quelle: `src-tauri/Cargo.lock` – 217 Crates ohne `pdf-note` selbst (Stand 2026
 | `rustc_version` | 0.4.1 | MIT OR Apache-2.0 |
 | `shlex` | 1.3.0 | MIT OR Apache-2.0 |
 | `shlex` | 2.0.1 | MIT OR Apache-2.0 |
+| `static_vcruntime` | 3.0.0 | MIT OR Apache-2.0 OR Zlib |
 | `string_cache_codegen` | 0.6.1 | MIT OR Apache-2.0 |
 | `tauri-build` | 2.7.2 | Apache-2.0 OR MIT |
 | `tauri-plugin` | 2.7.1 | Apache-2.0 OR MIT |

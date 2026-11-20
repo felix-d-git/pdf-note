@@ -5,7 +5,8 @@
 | Komponente | Version | Lizenz | Verwendung |
 |---|---|---|---|
 | MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex; Rust-Bindings: messense) | 0.8.0 | MuPDF-C-Code: AGPL-3.0-or-later (Dateiköpfe „version 3 … or (at your option) any later version“); Rust-Crates: `AGPL-3.0` laut `Cargo.toml` (Altkennung) | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Feature `base14-fonts`: URW-Base-14-Schriften, Lizenz siehe Abschnitt „URW-Schriften“ unten. Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/` siehe nächste Tabelle |
-| Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`) |
+| Rust-Standardbibliothek (`std`, `core`, `alloc`; The Rust Project Developers) | Toolchain | MIT OR Apache-2.0 | in der Binary enthalten; Copyright-Hinweise samt Fremdcode: `THIRD-PARTY-LICENSES/rust-std-COPYRIGHT.html` |
+| Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`). Quelle: `https://github.com/tesseract-ocr/tessdata_fast` (Tag `4.1.0`, `deu.traineddata` SHA-256 `19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d`, `eng.traineddata` SHA-256 `7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2`) |
 | Tauri (`tauri`, `tauri-build`, `@tauri-apps/api`, `@tauri-apps/cli`; Tauri Apps Contributors) | 2.x | MIT OR Apache-2.0 | Desktop-Shell (WebView2) |
 | Tauri Dialog-Plugin (`tauri-plugin-dialog`, `@tauri-apps/plugin-dialog`), darunter `rfd` 0.17 (MIT) | 2.8 | MIT OR Apache-2.0 | Datei-Öffnen-Dialog, Nachfrage beim Schließen |
 | Tauri Single-Instance-Plugin (`tauri-plugin-single-instance`) | 2.5 | MIT OR Apache-2.0 | eine Instanz: zweiter Start reicht den PDF-Pfad lokal an die laufende App |
