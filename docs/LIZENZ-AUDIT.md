@@ -1,6 +1,6 @@
 # Lizenz-Audit PDF Note
 
-Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“
+Stand: 2026-10-27 · Issues: #4 (Sammel-Issue) mit #7–#14 · geprüfter Commit: `9e3b436` (`master` = `second`) · Version 1.2.0 · Nachtrag 2026-10-27: R3 entschieden (#9), Y4 geklärt (#11) · Nachtrag 2026-11-03: Voll-Audit (#20, #21), siehe „Nachtrag 2026-11 – Voll-Audit“ · Nachtrag 2026-11-14: Copyleft-Übersicht (#20), RY1–RY5 behoben, Lizenz-Kurzfassungen und kommerzielle Bewertung (#21, #32)
 Ziel der Veröffentlichung: Repo öffentlich + Windows-Installer (NSIS) als GitHub-Release.
 
 > Dies ist eine technische Compliance-Analyse, keine Rechtsberatung. Punkte mit **UNKLAR** brauchen eine manuelle (ggf. juristische) Prüfung.
@@ -40,8 +40,8 @@ Die Projektlizenz **AGPL-3.0-only** ist mit allen gefundenen Komponenten kompati
 **Paketmanager**
 | Quelle | Umfang |
 |---|---|
-| `src-tauri/Cargo.lock` | 219 Crates (Windows/MSVC, normal; davon 139 gelinkt, 80 nur Proc-Macros und deren Abhängigkeiten) + 23 reine Build-Crates – Anhang A/B |
-| `package-lock.json` | 309 Einträge (Stand 2026-11-12, Anhang D), davon 20 ohne `dev`-Flag, 11 tatsächlich im `dist`-Bundle – Anhang C/D |
+| `src-tauri/Cargo.lock` | 217 Crates (Stand 2026-11-14; Windows/MSVC, normal; davon 139 gelinkt, 78 nur Proc-Macros und deren Abhängigkeiten) + 24 reine Build-Crates – Anhang A/B |
+| `package-lock.json` | 309 Einträge (Stand 2026-11-12, Anhang D), davon 19 ohne `dev`-Flag, 10 tatsächlich im `dist`-Bundle – Anhang C/D |
 | `spikes/*/Cargo.lock` | Wegwerf-Spikes, nicht ausgeliefert |
 
 **Vendor / inline / native Bibliotheken**
@@ -61,7 +61,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 | Manrope (Variable), IBM Plex Mono 400/500 (woff/woff2 im `dist`) | Fontsource | OFL-1.1 – Lizenztext muss mitgeliefert werden | 🟡 → R1 |
 | URW Nimbus Sans/Roman/Mono PS, Standard Symbols PS, Dingbats, NimbusBoxes | MuPDF `resources/fonts/urw` | OFL-1.1 OR (AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817) – Lizenztext muss mitgeliefert werden | 🟢 Y4 → R1 |
 | MathJax-TeX-Fontdaten | `mathjax-full` 3.2.2 | Apache-2.0 | 🟢 → R1 |
-| Lucide-Icons (Tree-Shaking) | `lucide-react` 1.64 | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
+| Lucide-Icons (Tree-Shaking) | `lucide-react` 1.x | ISC; ein Teil aus Feather (MIT) | 🟢 → R1 |
 | App-Icon `src-tauri/icons/*` | eigenes Werk (KI-generiert mit Gemini) | AGPL-3.0-only | 🟢 Y9 |
 
 ## Phase 2 – Kategorisierung (ausgelieferte Komponenten)
@@ -86,7 +86,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 - **Dual-/Multi-Lizenzen** (`MIT OR Apache-2.0` usw.): es darf eine gewählt werden; Empfehlung: beide Texte mitliefern.
 - **Microsoft WebView2 Loader:** die Lizenz selbst ist GPL-kompatibel, es fehlt nur der Quellcode. Einzige Stelle, an der eine Unvereinbarkeit mit der AGPL denkbar ist – eingeordnet als System Library, siehe „Entscheidung R3“.
 - **URW-Schriften in erzeugten PDFs:** OFL-1.1 bzw. die PS/PDF-Font-Ausnahme lassen eingebettete Schriften nicht auf das Dokument übergreifen (Y4).
-- **Unlizenzierter Code:** keiner gefunden; alle 219 Crates und alle npm-Pakete haben ein SPDX-Feld (7 Windows-Crates, u. a. `webview2-com*`, ohne Lizenzdatei auf oberster Ebene).
+- **Unlizenzierter Code:** keiner gefunden; alle 217 Crates und alle npm-Pakete haben ein SPDX-Feld (7 Windows-Crates, u. a. `webview2-com*`, ohne Lizenzdatei auf oberster Ebene).
 
 ## Phase 4 – Pflichten-Check
 
@@ -94,7 +94,7 @@ Gebaute MuPDF-Drittbibliotheken unter MSVC (`platform/win32/libmupdf.vcxproj` + 
 |---|---|---|
 | AGPL-3.0 (MuPDF, eigenes Werk) | Lizenztext beilegen; Corresponding Source anbieten (§6); geänderte Dateien kennzeichnen mit Datum (§5a); Appropriate Legal Notices in UI (§5d) | Text ✅ · Quelle ❌ R2 · Vermerk ✅ (PR) · UI ❌ Y5 |
 | MIT / ISC / BSD / Zlib / Unicode-3.0 / 0BSD | Copyright + Lizenztext in Kopien/Doku | ❌ R1 |
-| Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 219 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
+| Apache-2.0 | Lizenztext beilegen; vorhandene `NOTICE`-Dateien weitergeben (§4d); Änderungen kennzeichnen | Text ❌ R1 · Upstream-`NOTICE`-Dateien: in keinem der 217 Crates, in `mupdf-sys/thirdparty` und in `mathjax-full` keine gefunden ✅ (tessdata_fast: nur `LICENSE` übernommen, Upstream-Repo gegenprüfen) · keine Änderungen ✅ |
 | MPL-2.0 | Hinweis auf Bezugsquelle der Quellform + Lizenztext | ❌ R1 (Hinweis im PR) |
 | OFL-1.1 (Manrope, IBM Plex Mono, URW) | Copyright + Lizenz bei jeder Kopie der Fonts | ❌ R1 (URW-Text liegt in `THIRD-PARTY-LICENSES/`) |
 | IJG (libjpeg) | Satz „based in part on the work of the Independent JPEG Group“ in der Doku | ✅ (PR) |
@@ -139,7 +139,7 @@ Vollständige Listen: Anhang A–D.
 | React, React DOM, scheduler | 19.3 / 0.28 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | Zod | 4.6.7 | MIT | Permissiv | npm, im Bundle | 🔴 R1 |
 | perfect-freehand | 1.2.3 | MIT | Permissiv | seit v1.3.0 nicht mehr im Bundle (B6), nur inline in Spike | 🔴 R1, Spike Y7 (PR) |
-| lucide-react | 1.64 | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
+| lucide-react | 1.x | ISC (+ MIT Feather) | Permissiv | npm, im Bundle | 🔴 R1 |
 | mathjax-full | 3.2.2 | Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | @tauri-apps/api, plugin-dialog | 2.12 / 2.8 | MIT OR Apache-2.0 | Permissiv | npm, im Bundle | 🔴 R1 |
 | Manrope | 5.3.0 (Fontsource) | OFL-1.1 | Schrift | npm, im Bundle | 🔴 R1 |
@@ -227,6 +227,8 @@ Entschieden 2026-10-27: **Option 1 – den Loader als System Library behandeln u
 
 Die Freiheit, die das Copyleft schützt, bleibt erhalten: Jeder kann den Quellcode ändern und mit demselben frei erhältlichen SDK (automatisch über crates.io) neu bauen. Eine eindeutige Rechtslage gibt es trotzdem nicht.
 
+Die MSVC-Laufzeit (VC-Runtime) ist über `static_vcruntime` 3.0.0 (MIT OR Apache-2.0 OR Zlib, Build-Crate) statisch gelinkt; die Laufzeit selbst stammt von Microsoft (Visual-Studio-Build-Tools), die Crate steuert nur den Linker-Schalter. Sie wird wie der Loader behandelt (Microsoft-Komponente, kein Quellcode).
+
 ### Verworfene Alternativen
 
 - **Quelloffener Loader** (`jchv/OpenWebView2Loader`, ISC, 9 Commits, der Autor empfiehlt selbst den offiziellen Loader; der eingebaute Loader von `webview/webview`, MIT): Es gibt keine fertige Rust-Crate. Nötig wären ein Patch von `webview2-com-sys` und ein eigener Nachbau. Das widerspricht `GRUNDSAETZE.md` §4 („eine Bibliothek nachzubilden nicht“, „kein übernommener Fremdcode“). Außerdem hinge er an der **undokumentierten** internen Funktion `CreateWebViewEnvironmentWithOptionsInternal` von `EmbeddedBrowserWebView.dll`.
@@ -282,21 +284,177 @@ Geprüft 2026-11-03 auf Commit `074b997`: Lizenzdateien aller npm-Pakete (240 in
 | G1 | 🟡 YELLOW | `LICENSE-ADDITIONAL-PERMISSION.md` wurde nicht ausgeliefert und im Über-Dialog nicht genannt. | behoben: `licenses.mjs`, LIESMICH, Über-Dialog + Test |
 | N1 | 🟡 YELLOW | Tailwind (devDependency) steckt im ausgelieferten CSS; Copyright und Lizenztext fehlten (Vites Lizenzliste erfasst nur JS). | behoben: `tailwindcss-LICENSE.txt` |
 | N2–N4 | 🟡 YELLOW | `@tauri-apps/plugin-dialog` nur mit `LICENSE.spdx`; Rechteinhaber von `@tauri-apps/api` und MathJax fehlen in `npm-bundle.md`. | in NOTICES ergänzt |
-| RY1–RY5 | 🟡 YELLOW | cargo-about gibt für `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys` nur Mustertexte ohne Rechteinhaber aus; `regex-syntax` `LICENSE-UNICODE` fehlt (über ICU4X gedeckt). | offen: `clarify`-Einträge in `src-tauri/about.toml` |
+| RY1–RY5 | 🟡 YELLOW | cargo-about gibt für `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys` nur Mustertexte ohne Rechteinhaber aus; `regex-syntax` `LICENSE-UNICODE` fehlt (über ICU4X gedeckt). | behoben 2026-11-14: `clarify` in `src-tauri/about.toml` für diese vier plus `webview2-com-macros` und `dpi` (Lizenzdatei aus dem Crate bzw. aus dem Quell-Repo zum Commit in `.cargo_vcs_info.json`, mit SHA-256); cargo-about 0.9.3 gibt danach außer im AGPL-Anwendungshinweis keinen Mustertext mehr aus. `regex-syntax` 0.8.11 enthält keine `LICENSE-UNICODE` mehr, die Unicode-Daten deckt der Unicode-3.0-Text von ICU4X |
 | G4 | 🟡 YELLOW | Dependabot-PRs werden automatisch gemergt; für npm gibt es keine Lizenz-Positivliste (Rust: `about.toml`). | erledigt: `NPM_OK` in `scripts/licenses.mjs` stoppt den Build bei neuer Lizenz |
 | L1 | 🟡 YELLOW | (#24) Auto-Release zählte nur den Tag hoch; `package.json`-Version und damit `licenses/SOURCE.md` im Installer verwiesen auf den vorigen Quellstand. | behoben: kein Auto-Release (`standard-a-exclude.txt`: `no-release`), `scripts/release-source.sh` bricht ab, wenn Tag ≠ Version in `package.json`/`Cargo.toml`/`Cargo.lock` |
 | L2 | 🟢 GREEN | (#25) Kennungen präzisiert, am Original `mupdf-sys` 0.8.0 geprüft: MuPDF-C-Code 222/234 `.c`-Dateien „version 3 … or (at your option) any later version“ (Rest: Fremdteile aus M3) → `AGPL-3.0-or-later`; jbig2dec `thirdparty/jbig2dec/LICENSE` ebenso „or later“ → `AGPL-3.0-or-later` (nicht -only wie im Issue vermutet); extract nur mit AGPL-Text ohne Versionsvermerk → `AGPL-3.0`; Crates `mupdf`/`mupdf-sys` tragen die Altkennung `AGPL-3.0`. Mit dem Projekt (`AGPL-3.0-only`) kompatibel; für proprietären Vertrieb ändert sich nichts. | erledigt |
 | L3 | 🟢 GREEN | (#26) npm-Zahlen nach TypeScript 7 (+22 Apache-2.0, dev) und jsdom 31 veraltet. | aktualisiert, Erzeugungsbefehl in Anhang D |
+
+| L4 | 🟢 GREEN | (#30, #31) Nach den Updates vom 2026-11-12: Rust 217 statt 219 Crates (neu `utf_types` 1.0.0, Apache-2.0 OR MIT; entfallen `base64` 0.22, `bitflags` 1.3, `png` 0.17), 139 gelinkt / 78 Compile-Zeit; kein Lizenzfeld geändert, kein neues Copyleft. npm: `perfect-freehand` stand noch in `LIESMICH.txt`, `lucide-react` 1.64 veraltet. | Anhang A neu erzeugt (Befehl dort), LIESMICH korrigiert, `lucide-react` ohne Patch-Stand (1.x) |
 | G6 | 🟡 YELLOW | `bundle.copyright` fehlt in `tauri.conf.json`; NSIS verlangt „Annehmen“ der AGPL (§9: nicht nötig); Spike-`Cargo.toml` ohne `license`. | erledigt bis auf NSIS-Annehmen (bleibt, harmlos) |
 | G | 🟢 GREEN | Lizenzfeld = Lizenzdatei bei allen Paketen; gelinktes Copyleft nur MuPDF/jbig2dec (AGPL-3.0-or-later) und `option-ext` (MPL-2.0); `cssparser`/`selectors`/`dtoa-short` nur Compile-Zeit. `cargo about`/`cargo deny` ok für Windows und macOS. `vendor/mupdf` = Crate + `PATCH.md`. tessdata bitidentisch mit tessdata_fast 4.1.0. Eigener Code ohne Fremdcode; `LICENSE` unverändert; einziger menschlicher Rechteinhaber felix-d-git. | – |
 
 **Nach dem Ändern von `.cargo/config.toml`** lokal einmal `cargo clean -p mupdf-sys --release` (der Build-Script von `mupdf-sys` merkt Umgebungsänderungen nicht); im CI erzwingt der neue `prefix-key` von `rust-cache` einen frischen Build.
 
+## Copyleft-Übersicht und Bewertung für proprietären Vertrieb (#20)
+
+Stand 2026-11-14, Version 1.4.0, aus `package-lock.json` und `src-tauri/Cargo.lock` (Ziel `x86_64-pc-windows-msvc`). Vollständige Tabellen mit SPDX-Kennung: Anhang A (Rust, ausgeliefert), B (Rust, nur Build), C (npm ohne `dev`), D (npm-Entwicklung, nach Lizenz gezählt). Werkzeuge: `cargo about` mit Positivliste `src-tauri/about.toml`, npm-Positivliste `NPM_OK` in `scripts/licenses.mjs`; `license-checker` ist überflüssig, weil das Lockfile das Lizenzfeld jedes Pakets enthält.
+
+**Starkes Copyleft (⚠️ blockiert proprietären Vertrieb)**
+
+| Komponente | Lizenz | ausgeliefert? | Problem bei proprietärem Vertrieb | Alternative |
+|---|---|---|---|---|
+| ⚠️ `mupdf` 0.8.0 (vendor), `mupdf-sys` 0.8.0 | AGPL-3.0 (Crate-Kennung) | ja, statisch gelinkt | ja: das ganze Programm müsste unter AGPL mit Quellcode weitergegeben werden | kommerzielle MuPDF-Lizenz von Artifex, oder Wechsel auf PDFium (`pdfium-render`, Apache-2.0/BSD-3; als Spike in `spikes/` erprobt) |
+| ⚠️ MuPDF-C-Code, jbig2dec | AGPL-3.0-or-later | ja (in `mupdf-sys`) | ja, wie oben | in der kommerziellen MuPDF-Lizenz enthalten; PDFium bringt eigenen JBIG2-Decoder (BSD) |
+| ⚠️ extract (in `mupdf-sys`) | AGPL-3.0 | gebaut, nicht aufgerufen | ja, solange gelinkt; fällt mit MuPDF weg | – |
+| ⚠️ FreeType (in `mupdf-sys`) | FTL OR GPL-2.0-or-later, gewählt GPL | ja | nein: unter der FTL (BSD-artig mit Nennungspflicht) proprietär nutzbar | FTL wählen |
+| eigener Code `pdf-note` | AGPL-3.0-only | ja | eigene Entscheidung des Rechteinhabers | Relizenzierung durch felix-d-git (nur eigener Code) |
+
+Kein GPL-/AGPL-Paket unter den npm-Abhängigkeiten, weder ausgeliefert noch in der Entwicklung.
+
+**Schwaches Copyleft (Bedingungen beachten, proprietär nutzbar)**
+
+| Komponente | Lizenz | ausgeliefert? | Bedingung |
+|---|---|---|---|
+| `option-ext` 0.2.0 (über `dirs`) | MPL-2.0 | ja, gelinkt | MPL §3: Änderungen an MPL-Dateien offenlegen; Hinweis, wo der Quellcode zu bekommen ist (steht im Kopf von `rust-crates.html`); Rest des Programms bleibt frei lizenzierbar |
+| `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` | MPL-2.0 | nein, nur Compile-Zeit (Proc-Macros von Tauri) | keine Pflicht für die Binary |
+| `lightningcss` 1.33.0 + 12 Plattform-Binaries (npm, dev) | MPL-2.0 | nein, nur Build-Werkzeug von Tailwind/Vite | keine Pflicht für das Bundle |
+| LGPL, EPL, CDDL | – | – | nicht vorhanden; die LGPL-Silbentrennungsmuster von MuPDF sind seit M1 abgeschaltet |
+
+**Sonstige Bedingungen**
+- OFL-1.1 (Manrope, IBM Plex Mono, URW-Base-14): Schriften dürfen mit proprietärer Software gebündelt, aber nicht einzeln verkauft werden; Lizenztext beilegen. URW ist zusätzlich AGPL mit Font-Ausnahme verfügbar – OFL wählen.
+- CC-BY-4.0 (`caniuse-lite`) und BlueOak-1.0.0 (`lru-cache`, `minimatch`, `@isaacs/nonrecursive-glob-match`): nur Entwicklung, nicht im Bundle.
+- `WebView2LoaderStatic.lib` (Microsoft, BSD-artig, nur Binär): bei proprietärem Vertrieb unproblematisch; das Quellcode-Problem besteht nur gegenüber der AGPL (R3).
+
+**Ohne oder mit unklarer Lizenz:** keine. Alle 217 Crates und 309 npm-Einträge haben ein SPDX-Feld. Ohne erkannte Lizenzdatei waren `alloc-stdlib`, `brotli-decompressor`, `webview2-com`, `webview2-com-sys`, `webview2-com-macros`, `dpi` (Lizenzfeld eindeutig, nur der Rechteinhaber fehlte) – behoben durch `clarify` (RY1–RY5). Die Silbentrennung `ro` ohne Lizenz (M1) wird nicht mehr gebaut.
+
+**Ergebnis:** Für einen proprietären, kommerziellen Vertrieb ist MuPDF (samt jbig2dec und extract) der einzige Blocker. Mit kommerzieller MuPDF-Lizenz oder PDFium wären alle übrigen ausgelieferten Komponenten permissiv bzw. dateibasiert (MPL) nutzbar; die Hinweispflichten (Lizenztexte, IJG-Satz, MPL-Quellhinweis) erfüllt die bestehende Lizenzsammlung schon.
+
+**Abgleich `THIRD-PARTY-NOTICES.md` / `THIRD-PARTY-LICENSES/`:** vollständig. Rust-Crates nennt die NOTICES zusammengefasst mit Verweis auf Anhang A; die Volltexte erzeugt `scripts/licenses.mjs` (cargo-about) beim Build. npm-Bundle: alle zehn Pakete aus Anhang C mit „ja“ stehen in den NOTICES; Tailwind (CSS) und die Schriften kopiert `licenses.mjs` eigens. MuPDF-Drittbibliotheken: Texte aus `mupdf-sys/thirdparty` plus `mupdf-core-NOTICES.txt` und `mupdf-harfbuzz-ms-use-COPYING.txt`.
+
+## Lizenzbedingungen in Kurzfassung und kommerzielle Nutzung (#21, #32)
+
+Stand 2026-11-14, Version 1.4.0. Jede Kurzfassung ist am Text in `THIRD-PARTY-LICENSES/` (bzw. `rust-crates.html`) geprüft. Die Spalte „Ja/Nein“ beantwortet: **Darf man die Software kommerziell nutzen und verändern, ohne den eigenen Quellcode offenzulegen?**
+
+> Keine Rechtsberatung, nur eine Zusammenfassung der Lizenztexte. Für eine verbindliche Einschätzung eine Fachanwältin oder einen Fachanwalt für IT-Recht fragen. Unsichere Punkte stehen unten unter „Offene Fragen“ und als Kommentar in #21/#32.
+
+### Kernfrage für PDF Note
+
+| Frage | Antwort |
+|---|---|
+| Kommerziell nutzen (verkaufen, gewerblich einsetzen)? | **Ja.** Die AGPL-3.0 verbietet keinen Verkauf und keine gewerbliche Nutzung. |
+| Verändern? | **Ja.** |
+| Eigenen Quellcode offenlegen? | **Unter Bedingungen.** Interne Nutzung ohne Weitergabe: keine Pflicht. Wer die App oder eine veränderte Fassung **weitergibt** (verkauft, verschenkt, als Download anbietet), muss den vollständigen Quellcode des Gesamtwerks, also auch den eigenen hinzugefügten Code, unter AGPL-3.0 beilegen oder anbieten. §13 (Netzwerknutzung) betrifft nur Fassungen, die anderen über ein Netzwerk zur Interaktion bereitgestellt werden – für die Offline-Desktop-App praktisch ohne Bedeutung. |
+| Geschlossenes, proprietäres Produkt? | **Nein, solange MuPDF enthalten ist.** felix-d-git kann nur den eigenen Code zusätzlich anders lizenzieren; MuPDF, jbig2dec und extract bleiben AGPL (Artifex). Nötig wäre eine kommerzielle MuPDF-Lizenz oder ein Wechsel auf PDFium (siehe „Copyleft-Übersicht“). Alle übrigen ausgelieferten Lizenzen lassen proprietäre Nutzung zu (FreeType dann unter FTL). |
+
+### Ausgelieferte Komponenten
+
+**GNU AGPL-3.0 (`LICENSE`; PDF Note `-only`, MuPDF/jbig2dec `-or-later`, extract ohne Versionsangabe) – Nein bei Weitergabe**
+- Nutzen, kopieren, verändern und verkaufen ist erlaubt, auch gewerblich; keine Gewährleistung (§15/§16).
+- Bei Weitergabe der Binary muss das Gesamtwerk unter AGPL stehen und der Corresponding Source (inkl. Build-Skripten) beiliegen oder mindestens drei Jahre angeboten werden (§6, umgesetzt in `SOURCE.md`); geänderte Dateien mit Vermerk und Datum (§5a), Appropriate Legal Notices in der Oberfläche (§5d, Über-Dialog).
+- Wer eine veränderte Fassung über ein Netzwerk für andere bereitstellt, muss ihnen den Quellcode anbieten (§13) – der Unterschied zur GPL.
+
+**Zusatzerlaubnis nach §7 (`LICENSE-ADDITIONAL-PERMISSION.md`) – ändert die Antwort nicht**
+- Gilt nur für den Code von felix-d-git; MuPDF und andere Drittkomponenten deckt sie nicht ab.
+- Erlaubt die Weitergabe zusammen mit dem nur binär verfügbaren Microsoft WebView2 Loader, ohne dass dessen Quellcode zum Corresponding Source gehört (Absicherung zu R3).
+- Empfänger dürfen sie entfernen (§7 Abs. 2). Ein Recht, eigenen Code geschlossen zu halten, gibt sie **nicht**.
+
+**Microsoft WebView2 SDK (`webview2-sdk-LICENSE.txt`) – Ja**
+- Weitergabe in Quell- und Binärform, mit oder ohne Änderungen, ist erlaubt; Text entspricht inhaltlich BSD-3-Clause.
+- Bei Binärweitergabe müssen Copyright-Vermerk, Bedingungen und Haftungsausschluss in der Dokumentation stehen (erfüllt: Datei in der Lizenzsammlung des Installers).
+- Keine Werbung mit dem Namen Microsoft ohne schriftliche Erlaubnis; kein Copyleft. Das Problem gegenüber der AGPL ist nicht diese Lizenz, sondern der fehlende Quellcode (R3, #9). `webview2-sdk-NOTICE.txt` nennt nur zwei BSD-3-Clause-Komponenten (Antlr3, StringTemplate4).
+
+**IJG-Lizenz, libjpeg (`libjpeg-IJG-README.txt`) – Ja**
+- Nutzen, ändern und weitergeben für jeden Zweck ohne Gebühr; kommerzielle Produkte ausdrücklich erwünscht, sofern der Anbieter Gewährleistung und Haftung übernimmt.
+- Nur Binärweitergabe: Die Dokumentation muss „this software is based in part on the work of the Independent JPEG Group“ enthalten (erfüllt, NOTICES/LIESMICH).
+- Quellweitergabe: README unverändert beilegen, Änderungen kennzeichnen; keine Werbung mit IJG-Namen. Kein Copyleft.
+
+**FreeType: FTL oder GPL-2.0-or-later (`freetype-FTL.TXT`, `freetype-GPLv2.TXT`; gewählt: GPL)**
+- *GPL-2.0-or-later – Nein bei Weitergabe:* nutzen, ändern, verkaufen erlaubt; bei Weitergabe Gesamtwerk unter GPL mit Quellcode. Über „or later“ (GPLv3) mit AGPL-3.0 kombinierbar; die Pflichten erfüllt die AGPL-Quellweitergabe ohnehin.
+- *FTL – Ja:* BSD-artig, auch proprietär. Binärweitergabe verlangt in der Dokumentation den Hinweis, dass die Software teilweise auf der Arbeit des FreeType-Teams beruht; Quellweitergabe `FTL.TXT` unverändert, Änderungen kennzeichnen.
+- Keine Werbung mit dem Namen des jeweils anderen. Die FTL ist die Option für ein proprietäres Produkt; mit GPLv2 ist sie unvereinbar, mit GPLv3/AGPLv3 laut FreeType vereinbar.
+
+**MPL-2.0 (`option-ext`, gelinkt) – Ja**
+- Kommerziell nutzen und verändern erlaubt; Copyleft gilt nur **je Datei**.
+- Wer MPL-Dateien selbst ändert, muss diese Dateien unter MPL offenlegen; eigener Code in getrennten Dateien bleibt frei, auch proprietär.
+- Bei Binärweitergabe angeben, wo die Quellform der MPL-Teile zu bekommen ist (erfüllt, Kopf von `rust-crates.html`).
+
+**SIL OFL-1.1 (Manrope, IBM Plex Mono, URW-Base-14) – Ja**
+- Schriften dürfen frei genutzt, mit Software gebündelt und mitverkauft werden, nur nicht **einzeln** verkauft.
+- Abgewandelte Schriften müssen unter OFL bleiben und dürfen keinen Reserved Font Name tragen; Copyright und Lizenztext bei jeder Kopie.
+- Mit den Schriften erzeugte Dokumente (PDFs mit eingebetteter Schrift) fallen **nicht** unter die OFL.
+
+**URW-Schriften: AGPL-3.0 mit PS/PDF-Font-Ausnahme (`URW-Base35-AGPL-Font-Exception.txt`) – Ja für erzeugte PDFs, Nein für die Schriftprogramme**
+- Die Schriftprogramme selbst stehen unter AGPL-3.0; wer sie ändert und weitergibt, muss das unter AGPL tun.
+- Ausnahme: Einbetten in ein PostScript- oder PDF-Dokument, dessen Text damit angezeigt oder gedruckt wird, ist unabhängig von der Lizenz des Dokuments erlaubt.
+- Alternativ gilt OFL-1.1, die Dokumente ohnehin ausnimmt und auch den unsichtbaren OCR-Text abdeckt (Y4, #11) – bei proprietärem Vertrieb OFL wählen.
+
+**Apache-2.0 (`tao`, MathJax, Tesseract-Daten, zxing-cpp, gumbo …) – Ja**
+- Kommerzielle Nutzung, Veränderung und proprietäre Weitergabe erlaubt; kein Copyleft.
+- Lizenztext und vorhandene `NOTICE`-Dateien mitliefern, geänderte Dateien als geändert kennzeichnen.
+- Enthält eine ausdrückliche Patentlizenz; sie erlischt für den, der wegen dieser Patente klagt.
+
+**Unicode License v3 (ICU4X-Crates, `unicode-ident`, Unicode-Daten/Bidi-Code in MuPDF) – Ja**
+- Daten und Software dürfen ohne Einschränkung genutzt, geändert, zusammengeführt, veröffentlicht, weitergegeben und verkauft werden.
+- Bedingung: Copyright- und Erlaubnisvermerk bei allen Kopien **oder** in der zugehörigen Dokumentation (erfüllt, `rust-crates.html`, `mupdf-core-NOTICES.txt`).
+- Keine Werbung mit dem Namen des Rechteinhabers ohne schriftliche Erlaubnis; kein Copyleft.
+
+**Zlib-Lizenz (zlib in MuPDF, `foldhash`; NSIS-Stub: zlib/libpng-Variante) – Ja**
+- Freie Nutzung für jeden Zweck, auch kommerziell und proprietär; Änderung und Weitergabe erlaubt.
+- Die Herkunft darf nicht falsch dargestellt werden; geänderte Quellfassungen müssen als geändert gekennzeichnet sein.
+- Der Hinweis darf aus Quellweitergaben nicht entfernt werden; für Binärweitergabe gibt es keine Hinweispflicht (Nennung in der Doku nur erbeten).
+
+**MIT / ISC / BSD-2/3-Clause / 0BSD / CC0 / MIT-0 / Unlicense (React, Zod, Tauri, lucide-react, die meisten Crates, MuJS, zint, lcms2, OpenJPEG, HarfBuzz) – Ja**
+- Kommerzielle, auch proprietäre Nutzung und Veränderung erlaubt.
+- Pflicht: Copyright-Vermerk und Lizenztext beilegen (bei 0BSD, CC0, MIT-0, Unlicense nicht einmal das); BSD-3-Clause verbietet zusätzlich Werbung mit den Namen der Urheber.
+- Keine Gewährleistung, keine Pflicht zur Offenlegung von Quellcode.
+
+### Nur Entwicklung, nicht ausgeliefert (keine Pflichten aus der Weitergabe der App)
+
+| Lizenz | Pakete | Kurzfassung | Ja/Nein |
+|---|---|---|---|
+| BlueOak-1.0.0 | `lru-cache`, `minimatch`, `@isaacs/nonrecursive-glob-match` | permissiv; bei Weitergabe Lizenztext oder Link beilegen; enthält Patentlizenz | Ja |
+| CC-BY-4.0 | `caniuse-lite` (reine Daten) | Nutzung und Bearbeitung auch kommerziell bei Namensnennung, Hinweis auf Änderungen, Link zur Lizenz | Ja |
+| MPL-2.0 | `lightningcss` (+ Plattform-Binaries); Rust-Compile-Zeit: `cssparser`, `selectors`, `dtoa-short` | Copyleft nur je Datei, wie oben | Ja |
+| Apache-2.0 | TypeScript 7 u. a. | wie oben | Ja |
+
+Entfallen seit M1 (Silbentrennung abgeschaltet): LPPL-1.3, LGPL und das unlizenzierte rumänische Muster werden nicht mehr gebaut.
+
+### Pflichten bei Weitergabe des Installers
+
+| Pflicht | Grundlage | Umsetzung |
+|---|---|---|
+| AGPL-Text beilegen | AGPL §4/§6 | `PDF-Note-LICENSE-AGPL-3.0.txt` ✅ |
+| §7-Zusatzerlaubnis sichtbar machen | AGPL §7 | `PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md`, Über-Dialog ✅ (G1) |
+| Corresponding Source mind. 3 Jahre anbieten, zum exakten Release-Stand | AGPL §6 | `SOURCE.md`, Release-Assets inkl. MuPDF-Quellen und `vendor/mupdf`-Patch ✅ (R2, L1) |
+| Änderungsvermerk mit Datum | AGPL §5a | `vendor/mupdf/PATCH.md`, Vermerk an der Änderung in `native.rs` ✅ |
+| Appropriate Legal Notices in der UI | AGPL §5d | Über-Dialog ✅ (Y5) |
+| Copyright + Lizenztext aller permissiven Komponenten | MIT/BSD/ISC/Apache/Unicode/OFL/WebView2 | `THIRD-PARTY-LICENSES/` (beim Build erzeugt), `THIRD-PARTY-NOTICES.md` ✅ (R1) |
+| `NOTICE`-Dateien weitergeben | Apache-2.0 §4d | keine in Crates, `mupdf-sys/thirdparty`, `mathjax-full` ✅; tessdata siehe offene Frage 1 |
+| Bezugsquelle der MPL-Quellform | MPL-2.0 §3.2 | Kopf von `rust-crates.html` ✅ |
+| IJG-Satz in der Doku | IJG (2) | NOTICES/LIESMICH ✅ |
+| Schriften nicht einzeln verkaufen | OFL-1.1 | nur gebündelt ✅ |
+
+### Bewertung kommerzielle Nutzung
+
+- **Kommerzieller Vertrieb als AGPL-Software (Ist-Zustand):** zulässig. Verkauf, Support-Verträge oder Firmeneinsatz sind erlaubt, solange jede weitergegebene Binary mit Quellcode-Angebot und Lizenzsammlung kommt. Käufer dürfen die App ihrerseits frei (auch kostenlos) weitergeben – das Geschäftsmodell kann also nicht auf dem Verkauf der Kopie allein beruhen.
+- **Proprietärer Vertrieb:** nur ohne AGPL-Teile. MuPDF-AGPL ist der einzige Blocker; Artifex vergibt kommerzielle Lizenzen (Bedingungen und Kosten nur auf Anfrage, siehe offene Frage 2), alternativ PDFium. Zusätzlich müsste felix-d-git den eigenen Code relizenzieren (alleiniger Rechteinhaber, möglich), FreeType unter FTL und URW-Schriften unter OFL nehmen.
+- **Interne Nutzung in einer Firma ohne Weitergabe:** keine Offenlegungspflicht, auch bei eigenen Änderungen (Weitergabe an Konzerngesellschaften oder Auftragnehmer kann bereits „conveying“ sein – im Einzelfall prüfen).
+- **Erzeugte PDFs:** unterliegen weder der AGPL noch der OFL; eingebettete URW-Schriften sind über OFL bzw. Font-Ausnahme gedeckt.
+
+### Offene Fragen (nicht am Text klärbar, in #21/#32 kommentiert)
+
+1. **tessdata_fast `NOTICE`:** Upstream-Repo `tesseract-ocr/tessdata_fast` auf eine `NOTICE`-Datei prüfen (Apache §4d); bisher nur `LICENSE` übernommen.
+2. **Kommerzielle MuPDF-Lizenz:** Umfang (deckt sie jbig2dec, extract und die URW-AGPL-Schriften ab?) und Kosten nur über Artifex zu klären.
+3. **NSIS-Stub:** Die zlib/libpng-Einordnung stammt aus `THIRD-PARTY-NOTICES.md`; der NSIS-Lizenztext (`COPYING`, u. a. Teile für LZMA/bzip2) liegt nicht im Repo und ist nicht am Original geprüft.
+4. **WebView2 Loader:** Ob die Einordnung als System Library (R3) trägt, bleibt eine Rechtsfrage; technisch gelöst ist nur der eigene Code (§7-Erlaubnis).
+5. **Unternehmensinterne Weitergabe:** Ab wann die Weitergabe an verbundene Unternehmen oder Dienstleister als „convey“ gilt, ist nicht eindeutig und nur juristisch zu beantworten.
+
 ## Anhang – vollständige Listen
 
 ### A. Rust-Crates (ausgeliefert, Ziel `x86_64-pc-windows-msvc`, nur normale Abhängigkeiten)
 
-Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Cargo.lock` – 219 Crates (Stand 2026-11-03). Proc-Macro-Crates (z. B. `serde_derive`, `*-derive`, `*-macros`) laufen nur beim Kompilieren, sind aber zur Vorsicht mit aufgeführt.
+Quelle: `src-tauri/Cargo.lock` – 217 Crates ohne `pdf-note` selbst (Stand 2026-11-14, Version 1.4.0). Neu erzeugen mit `cargo tree --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc -e normal --prefix none -f '{p}|{l}' | sort -u`; gelinkt (139) zählt dasselbe mit `-e normal,no-proc-macro -f '{p}'`. Proc-Macro-Crates (z. B. `serde_derive`, `*-derive`, `*-macros`) laufen nur beim Kompilieren, sind aber zur Vorsicht mit aufgeführt.
 
 | Crate | Version | Lizenz (SPDX laut Cargo.toml) | Typ |
 |---|---|---|---|
@@ -305,15 +463,13 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `alloc-no-stdlib` | 3.0.0 | BSD-3-Clause | Permissiv |
 | `alloc-stdlib` | 0.3.0 | BSD-3-Clause | Permissiv |
 | `anyhow` | 1.0.104 | MIT OR Apache-2.0 | Permissiv |
-| `base64` | 0.22.1 | MIT OR Apache-2.0 | Permissiv |
 | `base64` | 0.23.1 | MIT OR Apache-2.0 | Permissiv |
 | `bit-set` | 0.8.0 | Apache-2.0 OR MIT | Permissiv |
 | `bit-vec` | 0.8.0 | Apache-2.0 OR MIT | Permissiv |
-| `bitflags` | 1.3.2 | MIT/Apache-2.0 | Permissiv |
 | `bitflags` | 2.13.2 | MIT OR Apache-2.0 | Permissiv |
 | `block-buffer` | 0.10.4 | MIT OR Apache-2.0 | Permissiv |
-| `brotli` | 9.0.0 | BSD-3-Clause AND MIT | Permissiv |
-| `brotli-decompressor` | 6.0.1 | BSD-3-Clause/MIT | Permissiv |
+| `brotli` | 9.1.1 | BSD-3-Clause AND MIT | Permissiv |
+| `brotli-decompressor` | 6.3.1 | BSD-3-Clause/MIT | Permissiv |
 | `byteorder` | 1.5.0 | Unlicense OR MIT | Permissiv |
 | `bytes` | 1.12.1 | MIT | Permissiv |
 | `camino` | 1.2.6 | MIT OR Apache-2.0 | Permissiv |
@@ -323,7 +479,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `cfg-if` | 1.0.5 | MIT OR Apache-2.0 | Permissiv |
 | `cookie` | 0.18.2 | MIT OR Apache-2.0 | Permissiv |
 | `cpufeatures` | 0.2.17 | MIT OR Apache-2.0 | Permissiv |
-| `crc32fast` | 1.5.2 | MIT OR Apache-2.0 | Permissiv |
+| `crc32fast` | 1.5.5 | MIT OR Apache-2.0 | Permissiv |
 | `crossbeam-channel` | 0.5.17 | MIT OR Apache-2.0 | Permissiv |
 | `crossbeam-utils` | 0.8.23 | MIT OR Apache-2.0 | Permissiv |
 | `crypto-common` | 0.1.7 | MIT OR Apache-2.0 | Permissiv |
@@ -347,10 +503,10 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `dunce` | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | Permissiv |
 | `dyn-clone` | 1.0.20 | MIT OR Apache-2.0 | Permissiv |
 | `equivalent` | 1.0.3 | Apache-2.0 OR MIT | Permissiv |
-| `erased-serde` | 0.4.10 | MIT OR Apache-2.0 | Permissiv |
+| `erased-serde` | 0.4.11 | MIT OR Apache-2.0 | Permissiv |
 | `fastrand` | 2.5.0 | Apache-2.0 OR MIT | Permissiv |
 | `fdeflate` | 0.3.7 | MIT OR Apache-2.0 | Permissiv |
-| `flate2` | 1.1.10 | MIT OR Apache-2.0 | Permissiv |
+| `flate2` | 1.1.11 | MIT OR Apache-2.0 | Permissiv |
 | `fnv` | 1.0.7 | Apache-2.0 / MIT | Permissiv |
 | `foldhash` | 0.2.0 | Zlib | Permissiv |
 | `form_urlencoded` | 1.2.2 | MIT OR Apache-2.0 | Permissiv |
@@ -363,31 +519,31 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `heck` | 0.5.0 | MIT OR Apache-2.0 | Permissiv |
 | `html5ever` | 0.39.0 | MIT OR Apache-2.0 | Permissiv |
 | `http` | 1.5.0 | MIT OR Apache-2.0 | Permissiv |
-| `ico` | 0.5.0 | MIT | Permissiv |
-| `icu_collections` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_locale_core` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_normalizer` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_normalizer_data` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_properties` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_properties_data` | 2.3.0 | Unicode-3.0 | Permissiv |
-| `icu_provider` | 2.3.1 | Unicode-3.0 | Permissiv |
+| `ico` | 0.6.0 | MIT | Permissiv |
+| `icu_collections` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_locale_core` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_normalizer` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_normalizer_data` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_properties` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_properties_data` | 2.4.0 | Unicode-3.0 | Permissiv |
+| `icu_provider` | 2.4.0 | Unicode-3.0 | Permissiv |
 | `ident_case` | 1.0.1 | MIT/Apache-2.0 | Permissiv |
 | `idna` | 1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `idna_adapter` | 1.2.2 | Apache-2.0 OR MIT | Permissiv |
 | `indexmap` | 1.9.3 | Apache-2.0 OR MIT | Permissiv |
 | `indexmap` | 2.14.2 | Apache-2.0 OR MIT | Permissiv |
 | `infer` | 0.22.0 | MIT | Permissiv |
-| `itoa` | 1.0.18 | MIT OR Apache-2.0 | Permissiv |
+| `itoa` | 1.0.19 | MIT OR Apache-2.0 | Permissiv |
 | `json-patch` | 4.2.0 | MIT/Apache-2.0 | Permissiv |
 | `jsonptr` | 0.7.1 | MIT OR Apache-2.0 | Permissiv |
 | `keyboard-types` | 0.8.3 | MIT OR Apache-2.0 | Permissiv |
-| `libc` | 0.2.190 | MIT OR Apache-2.0 | Permissiv |
+| `libc` | 0.2.191 | MIT OR Apache-2.0 | Permissiv |
 | `litemap` | 0.8.3 | Unicode-3.0 | Permissiv |
 | `lock_api` | 0.4.14 | MIT OR Apache-2.0 | Permissiv |
-| `log` | 0.4.34 | MIT OR Apache-2.0 | Permissiv |
+| `log` | 0.4.35 | MIT OR Apache-2.0 | Permissiv |
 | `markup5ever` | 0.39.0 | MIT OR Apache-2.0 | Permissiv |
 | `memchr` | 2.8.3 | Unlicense OR MIT | Permissiv |
-| `mime` | 0.3.17 | MIT OR Apache-2.0 | Permissiv |
+| `mime` | 0.3.18 | MIT OR Apache-2.0 | Permissiv |
 | `miniz_oxide` | 0.8.9 | MIT OR Zlib OR Apache-2.0 | Permissiv |
 | `miniz_oxide` | 0.9.1 | MIT OR Zlib OR Apache-2.0 | Permissiv |
 | `mio` | 1.2.4 | MIT | Permissiv |
@@ -406,8 +562,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `phf_macros` | 0.13.1 | MIT | Permissiv |
 | `phf_shared` | 0.13.1 | MIT | Permissiv |
 | `pin-project-lite` | 0.2.17 | Apache-2.0 OR MIT | Permissiv |
-| `plist` | 1.10.1 | MIT | Permissiv |
-| `png` | 0.17.16 | MIT OR Apache-2.0 | Permissiv |
+| `plist` | 1.10.3 | MIT | Permissiv |
 | `png` | 0.18.1 | MIT OR Apache-2.0 | Permissiv |
 | `potential_utf` | 0.1.6 | Unicode-3.0 | Permissiv |
 | `powerfmt` | 0.2.1 | MIT OR Apache-2.0 | Permissiv |
@@ -434,7 +589,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `serde_derive_internals` | 0.29.1 | MIT OR Apache-2.0 | Permissiv |
 | `serde_json` | 1.0.154 | MIT OR Apache-2.0 | Permissiv |
 | `serde_repr` | 0.1.21 | MIT OR Apache-2.0 | Permissiv |
-| `serde_spanned` | 1.1.2 | MIT OR Apache-2.0 | Permissiv |
+| `serde_spanned` | 1.1.3 | MIT OR Apache-2.0 | Permissiv |
 | `serde_with` | 3.24.0 | MIT OR Apache-2.0 | Permissiv |
 | `serde_with_macros` | 3.24.0 | MIT OR Apache-2.0 | Permissiv |
 | `serialize-to-javascript` | 0.1.2 | MIT OR Apache-2.0 | Permissiv |
@@ -443,37 +598,37 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `sha2` | 0.10.9 | MIT OR Apache-2.0 | Permissiv |
 | `simd-adler32` | 0.3.10 | MIT | Permissiv |
 | `siphasher` | 1.0.4 | MIT OR Apache-2.0 | Permissiv |
-| `smallvec` | 1.16.3 | MIT OR Apache-2.0 | Permissiv |
+| `smallvec` | 1.16.5 | MIT OR Apache-2.0 | Permissiv |
 | `socket2` | 0.6.5 | MIT OR Apache-2.0 | Permissiv |
 | `softbuffer` | 0.4.8 | MIT OR Apache-2.0 | Permissiv |
 | `stable_deref_trait` | 1.2.1 | MIT OR Apache-2.0 | Permissiv |
 | `string_cache` | 0.9.0 | MIT OR Apache-2.0 | Permissiv |
 | `strsim` | 0.11.1 | MIT | Permissiv |
 | `syn` | 2.0.119 | MIT OR Apache-2.0 | Permissiv |
-| `syn` | 3.0.9 | MIT OR Apache-2.0 | Permissiv |
+| `syn` | 3.0.10 | MIT OR Apache-2.0 | Permissiv |
 | `synstructure` | 0.14.0 | MIT | Permissiv |
-| `tao` | 0.37.1 | Apache-2.0 | Permissiv |
-| `tauri` | 2.12.3 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-codegen` | 2.7.2 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-macros` | 2.7.2 | Apache-2.0 OR MIT | Permissiv |
+| `tao` | 0.37.2 | Apache-2.0 | Permissiv |
+| `tauri` | 2.12.5 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-codegen` | 2.7.4 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-macros` | 2.7.4 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-dialog` | 2.8.4 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | Permissiv |
 | `tauri-plugin-single-instance` | 2.5.5 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-runtime` | 2.12.1 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-runtime-wry` | 2.12.1 | Apache-2.0 OR MIT | Permissiv |
-| `tauri-utils` | 2.10.1 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-runtime` | 2.12.2 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-runtime-wry` | 2.12.3 | Apache-2.0 OR MIT | Permissiv |
+| `tauri-utils` | 2.10.2 | Apache-2.0 OR MIT | Permissiv |
 | `tendril` | 0.5.1 | MIT OR Apache-2.0 | Permissiv |
 | `thiserror` | 2.0.21 | MIT OR Apache-2.0 | Permissiv |
 | `thiserror-impl` | 2.0.21 | MIT OR Apache-2.0 | Permissiv |
 | `time` | 0.3.55 | MIT OR Apache-2.0 | Permissiv |
 | `time-core` | 0.1.9 | MIT OR Apache-2.0 | Permissiv |
 | `time-macros` | 0.2.32 | MIT OR Apache-2.0 | Permissiv |
-| `tinystr` | 0.8.4 | Unicode-3.0 | Permissiv |
-| `tokio` | 1.53.3 | MIT | Permissiv |
-| `toml` | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
-| `toml_datetime` | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
+| `tinystr` | 0.8.5 | Unicode-3.0 | Permissiv |
+| `tokio` | 1.54.1 | MIT | Permissiv |
+| `toml` | 1.2.1+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
+| `toml_datetime` | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `toml_parser` | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
-| `toml_writer` | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
+| `toml_writer` | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `tracing` | 0.1.44 | MIT | Permissiv |
 | `tracing-attributes` | 0.1.31 | MIT | Permissiv |
 | `tracing-core` | 0.1.36 | MIT | Permissiv |
@@ -483,8 +638,9 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `unicode-segmentation` | 1.13.3 | MIT OR Apache-2.0 | Permissiv |
 | `url` | 2.5.8 | MIT OR Apache-2.0 | Permissiv |
 | `urlpattern` | 0.6.0 | MIT | Permissiv |
-| `utf8_iter` | 1.0.4 | Apache-2.0 OR MIT | Permissiv |
-| `uuid` | 1.28.0 | Apache-2.0 OR MIT | Permissiv |
+| `utf8_iter` | 1.1.0 | Apache-2.0 OR MIT | Permissiv |
+| `utf_types` | 1.0.0 | Apache-2.0 OR MIT | Permissiv |
+| `uuid` | 1.29.2 | Apache-2.0 OR MIT | Permissiv |
 | `walkdir` | 2.5.0 | Unlicense/MIT | Permissiv |
 | `web-time` | 1.1.0 | MIT OR Apache-2.0 | Permissiv |
 | `web_atoms` | 0.2.6 | MIT OR Apache-2.0 | Permissiv |
@@ -506,21 +662,21 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Permissiv |
 | `windows-threading` | 0.2.1 | MIT OR Apache-2.0 | Permissiv |
 | `windows-version` | 0.1.7 | MIT OR Apache-2.0 | Permissiv |
-| `winnow` | 1.0.4 | MIT | Permissiv |
+| `winnow` | 1.0.5 | MIT | Permissiv |
 | `writeable` | 0.6.4 | Unicode-3.0 | Permissiv |
-| `wry` | 0.57.0 | Apache-2.0 OR MIT | Permissiv |
-| `yoke` | 0.8.3 | Unicode-3.0 | Permissiv |
+| `wry` | 0.57.2 | Apache-2.0 OR MIT | Permissiv |
+| `yoke` | 0.8.4 | Unicode-3.0 | Permissiv |
 | `yoke-derive` | 0.8.4 | Unicode-3.0 | Permissiv |
 | `zerocopy` | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | Permissiv |
 | `zerocopy-derive` | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | Permissiv |
 | `zerofrom` | 0.1.8 | Unicode-3.0 | Permissiv |
 | `zerofrom-derive` | 0.1.8 | Unicode-3.0 | Permissiv |
 | `zerotrie` | 0.2.5 | Unicode-3.0 | Permissiv |
-| `zerovec` | 0.11.8 | Unicode-3.0 | Permissiv |
-| `zerovec-derive` | 0.11.6 | Unicode-3.0 | Permissiv |
+| `zerovec` | 0.11.9 | Unicode-3.0 | Permissiv |
+| `zerovec-derive` | 0.11.7 | Unicode-3.0 | Permissiv |
 | `zmij` | 1.0.23 | MIT | Permissiv |
 
-### B. Rust-Build-Abhängigkeiten (nur Build, nicht in der Binary) – 23 Crates
+### B. Rust-Build-Abhängigkeiten (nur Build, nicht in der Binary) – 24 Crates
 
 | Crate | Version | Lizenz |
 |---|---|---|
@@ -542,6 +698,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `rustc_version` | 0.4.1 | MIT OR Apache-2.0 |
 | `shlex` | 1.3.0 | MIT OR Apache-2.0 |
 | `shlex` | 2.0.1 | MIT OR Apache-2.0 |
+| `static_vcruntime` | 3.0.0 | MIT OR Apache-2.0 OR Zlib |
 | `string_cache_codegen` | 0.6.1 | MIT OR Apache-2.0 |
 | `tauri-build` | 2.7.2 | Apache-2.0 OR MIT |
 | `tauri-plugin` | 2.7.1 | Apache-2.0 OR MIT |
@@ -561,7 +718,7 @@ Quelle: `cargo tree --target x86_64-pc-windows-msvc -e normal` auf `src-tauri/Ca
 | `commander` | 13.1.0 | MIT | nein |
 | `csstype` | 3.2.3 | MIT | nein (nur Typen) |
 | `esm` | 3.2.25 | MIT | nein |
-| `lucide-react` | 1.64.0 | ISC | ja |
+| `lucide-react` | 1.72.0 | ISC | ja |
 | `mathjax-full` | 3.2.2 | Apache-2.0 | ja |
 | `mhchemparser` | 4.2.1 | Apache-2.0 | nein |
 | `mj-context-menu` | 0.6.1 | Apache-2.0 | nein |

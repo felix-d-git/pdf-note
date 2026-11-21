@@ -75,6 +75,11 @@ for (const [lib, sub] of [["harfbuzz", "src/ms-use"]]) {
   copyFileSync(f, join(OUT, `mupdf-${lib}-${sub.split("/").pop()}-COPYING.txt`));
 }
 
+// Rust-Standardbibliothek (std/core/alloc landen in der Binary): Copyright-Hinweise der Toolchain (rustc-Komponente, immer vorhanden)
+const stdCopyright = join(run("rustc", ["--print", "sysroot"]).trim(), "share", "doc", "rust", "COPYRIGHT-library.html");
+if (!existsSync(stdCopyright)) fail(`${stdCopyright} fehlt – Rust-Toolchain ohne COPYRIGHT-library.html`);
+copyFileSync(stdCopyright, join(OUT, "rust-std-COPYRIGHT.html"));
+
 // eigenes Werk + Quellcode-Angebot (Issue #8) mit Version aus package.json bzw. Cargo.lock
 copyFileSync("LICENSE", join(OUT, "PDF-Note-LICENSE-AGPL-3.0.txt"));
 // zusätzliche Erlaubnis nach AGPL §7 (WebView2 Loader) muss mit der Binary reisen, sonst kennt sie kein Empfänger (#20, G1)
@@ -82,7 +87,7 @@ copyFileSync("LICENSE-ADDITIONAL-PERMISSION.md", join(OUT, "PDF-Note-LICENSE-ADD
 writeFileSync(join(OUT, "SOURCE.md"), readFileSync("SOURCE.md", "utf8").replaceAll("<Version>", pkg.version).replaceAll("<mupdf-sys>", sys.version));
 
 // Selbstprüfung: jede erwartete Datei da und nicht leer
-const want = ["rust-crates.html", "npm-bundle.md", "mupdf-COPYING.txt", "PDF-Note-LICENSE-AGPL-3.0.txt",
+const want = ["rust-crates.html", "rust-std-COPYRIGHT.html", "npm-bundle.md", "mupdf-COPYING.txt", "PDF-Note-LICENSE-AGPL-3.0.txt",
   "PDF-Note-LICENSE-ADDITIONAL-PERMISSION.md", "tailwindcss-LICENSE.txt", "SOURCE.md",
   "mupdf-core-NOTICES.txt", "mupdf-harfbuzz-ms-use-COPYING.txt", "leptonica-LICENSE.txt", "libjpeg-IJG-README.txt", "freetype-GPLv2.TXT", "webview2-sdk-LICENSE.txt",
   "URW-Base35-OFL-1.1.txt", "URW-Base35-AGPL-Font-Exception.txt"];

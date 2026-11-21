@@ -5,7 +5,8 @@
 | Komponente | Version | Lizenz | Verwendung |
 |---|---|---|---|
 | MuPDF / Rust-Crates `mupdf`, `mupdf-sys` (Artifex; Rust-Bindings: messense) | 0.8.0 | MuPDF-C-Code: AGPL-3.0-or-later (Dateiköpfe „version 3 … or (at your option) any later version“); Rust-Crates: `AGPL-3.0` laut `Cargo.toml` (Altkennung) | PDF-Engine; `mupdf` lokal gepatcht in `vendor/mupdf/` (siehe `PATCH.md`). Feature `base14-fonts`: URW-Base-14-Schriften, Lizenz siehe Abschnitt „URW-Schriften“ unten. Mitgebaute C-Bibliotheken aus MuPDF-`thirdparty/` siehe nächste Tabelle |
-| Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`) |
+| Rust-Standardbibliothek (`std`, `core`, `alloc`; The Rust Project Developers) | Toolchain | MIT OR Apache-2.0 | in der Binary enthalten; Copyright-Hinweise samt Fremdcode: `THIRD-PARTY-LICENSES/rust-std-COPYRIGHT.html` |
+| Tesseract-Sprachdaten `deu.traineddata`, `eng.traineddata` (tesseract-ocr/tessdata_fast) | 4.1.0 | Apache-2.0 | OCR-Modelle Deutsch/Englisch, als App-Ressource gebündelt (`src-tauri/resources/tessdata/`). Quelle: `https://github.com/tesseract-ocr/tessdata_fast` (Tag `4.1.0`, `deu.traineddata` SHA-256 `19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d`, `eng.traineddata` SHA-256 `7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2`) |
 | Tauri (`tauri`, `tauri-build`, `@tauri-apps/api`, `@tauri-apps/cli`; Tauri Apps Contributors) | 2.x | MIT OR Apache-2.0 | Desktop-Shell (WebView2) |
 | Tauri Dialog-Plugin (`tauri-plugin-dialog`, `@tauri-apps/plugin-dialog`), darunter `rfd` 0.17 (MIT) | 2.8 | MIT OR Apache-2.0 | Datei-Öffnen-Dialog, Nachfrage beim Schließen |
 | Tauri Single-Instance-Plugin (`tauri-plugin-single-instance`) | 2.5 | MIT OR Apache-2.0 | eine Instanz: zweiter Start reicht den PDF-Pfad lokal an die laufende App |
@@ -13,7 +14,7 @@
 | serde_json | 1.0 | MIT OR Apache-2.0 | eigene Objekte als JSON in der Annotation (`/PDFNote`) |
 | base64 | 0.23 | MIT OR Apache-2.0 | Bilddaten (Stamp) zwischen Frontend und Rust |
 | React, React DOM | 19.3 | MIT | UI |
-| lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.64 | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
+| lucide-react (Lucide Contributors; teils aus Feather, MIT) | 1.x | ISC | Icons, lokal gebündelt (nur genutzte Icons per Tree-Shaking) |
 | Zod | 4.6 | MIT | Validierung an Grenzen |
 | MathJax (`mathjax-full`, MathJax Consortium), inkl. MathJax-TeX-Schriftdaten | 3.2.2 | Apache-2.0 | Formeln auf Markdown-Seiten: TeX → SVG → PDF-Pfade, lokal gebündelt (nur TeX-Eingabe, SVG-Ausgabe, base+ams; Abhängigkeiten speech-rule-engine/mhchemparser/mj-context-menu nicht gebündelt) |
 | Tailwind CSS (Tailwind Labs, Inc.) | 4.3 | MIT | Styles; Preflight- und Utility-CSS steckt im ausgelieferten Stylesheet (Lizenztext `tailwindcss-LICENSE.txt`) |
@@ -73,7 +74,7 @@ Die App bettet Nimbus Sans/Roman/Mono PS vollständig in PDFs ein: als Ersatzsch
 
 ### Weitere ausgelieferte Rust-Crates (transitiv)
 
-Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Version 1.2.0, 219 Crates für `x86_64-pc-windows-msvc`, davon 139 in der Binary gelinkt, der Rest nur Proc-Macros und deren Abhängigkeiten zur Compile-Zeit). Lizenzen dort: MIT OR Apache-2.0 (überwiegend), MIT, Apache-2.0 (`tao`), Unicode-3.0 (ICU4X: `icu_*`, `zerovec`, `yoke`, `tinystr`, … über `url`/`idna`), BSD-3-Clause (`alloc-no-stdlib`, `alloc-stdlib`, `brotli`), Zlib (`foldhash`), 0BSD/CC0-1.0/MIT-0/Unlicense als Wahlmöglichkeit, ISC.
+Vollständige Liste mit Versionen: `docs/LIZENZ-AUDIT.md`, Anhang A (Stand Version 1.4.0, 217 Crates für `x86_64-pc-windows-msvc`, davon 139 in der Binary gelinkt, der Rest nur Proc-Macros und deren Abhängigkeiten zur Compile-Zeit). Lizenzen dort: MIT OR Apache-2.0 (überwiegend), MIT, Apache-2.0 (`tao`), Unicode-3.0 (ICU4X: `icu_*`, `zerovec`, `yoke`, `tinystr`, … über `url`/`idna`), BSD-3-Clause (`alloc-no-stdlib`, `alloc-stdlib`), BSD-3-Clause AND MIT (`brotli`, `brotli-decompressor`), Zlib (`foldhash`), 0BSD/CC0-1.0/MIT-0/Unlicense als Wahlmöglichkeit, ISC.
 
 **MPL-2.0:** `option-ext` (über `dirs`, gelinkt) sowie `cssparser`, `cssparser-macros`, `dtoa-short`, `selectors` (über `tauri-utils`, nur zur Compile-Zeit in `tauri-codegen`/`tauri-macros`) stehen unter der Mozilla Public License 2.0. Ihr Quellcode ist unverändert auf https://crates.io erhältlich (jeweilige Version laut `src-tauri/Cargo.lock`).
 

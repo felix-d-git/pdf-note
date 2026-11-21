@@ -736,15 +736,21 @@ const turn = (a: Pt, b: Pt, c: Pt) => {
 
 /**
  * Form-Erkennung beim Shape-Hold: Freihand-Zug → saubere Form als Punktfolge (bleibt ein Stift-Strich auf Ebene 3).
- * Offen: Linie, gerader Pfeil (Spitze = vom Start entferntester Punkt, Schaft gerade, Haken zurück) oder Wurzelzeichen;
- * sonst `null` (Kurve → erst langes Halten glättet, `smoothCurve`). Geschlossen (Ende nah am Anfang):
+ * Es wird immer eine Form erkannt. Offen: gerader Pfeil (Spitze = vom Start entferntester Punkt, Schaft gerade,
+ * Haken zurück), Wurzelzeichen, Linie (großzügig), sonst geglättete Kurve (`smoothCurve`). Geschlossen (Ende nah am Anfang):
  * 3 Ecken → Dreieck, 4 → Rechteck (achsnah → achsparallel), sonst Kreis/Ellipse. Druck = Mittelwert.
  */
-export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } | null {
+export const LINE_BIAS = 0.12; // max. Abweichung von der Sehne (Anteil der Größe), die noch als Linie gilt
+export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[] } {
   // ponytail: Ecken-Zählung per Douglas-Peucker statt trainiertem Erkenner; reicht für die fünf Grundformen
   const pr = raw.reduce((s, q) => s + q[2], 0) / (raw.length || 1);
   const p = raw.map(([x, y]): Pt => [x, y]);
-  const out = (kind: ShapeKind, q: Pt[]) => ({ kind, points: q.map(([x, y]): InkPoint => [x, y, pr]) });
+  // Ecken doppelt: `curve` zeichnet Striche als Bézier durch die Punkt-Mittelpunkte (Kontrollpunkt = Punkt) und
+  // rundete ein Rechteck aus 5 Punkten zum krummen Kringel ab; mit doppeltem Punkt wird jedes Stück gerade, die Ecke spitz.
+  // Ellipse nicht: ihre 49 Punkte sollen rund bleiben.
+  const out = (kind: ShapeKind, q: Pt[]) => ({
+    kind, points: q.flatMap(([x, y], i): InkPoint[] => (kind !== "ellipse" && i > 0 && i < q.length - 1 ? [[x, y, pr], [x, y, pr]] : [[x, y, pr]])),
+  });
   const a = p[0] ?? [0, 0], z = p.at(-1) ?? a;
   const xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
   const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
@@ -752,7 +758,6 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
   const line = out("line", [a, z]);
   if (D < 4) return line;
   if (dist(a, z) > 0.25 * D) {
-    if (corners(p, 0.06 * D).length === 2) return line;
     // Pfeil: Spitze = erstes Maximum der Entfernung vom Start (Rückweg darf sie knapp überschreiten),
     // Schaft davor gerade, Haken danach läuft zurück
     const dm = Math.max(...p.map((q) => dist(q, a)));
@@ -773,7 +778,9 @@ export function recognize(raw: InkPoint[]): { kind: ShapeKind; points: InkPoint[
       if (dy1 > 0 && dx1 > -0.3 * dy1 && dy2 < 0 && -dy2 > dy1 && -dy2 > 0.5 * Math.abs(dx2) && dx3 > 0.3 * -dy2 && Math.abs(dy3) < 0.3 * dx3)
         return out("root", [...s.slice(0, -1), [e[0], t[1]]]);
     }
-    return null;
+    // Linie bevorzugt: gemeint ist fast immer gerade, kleine Wellen bis LINE_BIAS·D sind Zittern
+    if (corners(p, LINE_BIAS * D).length === 2) return line;
+    return { kind: "curve", points: smoothCurve(raw) };
   }
   // geschlossen: am entferntesten Punkt teilen, Ecken zyklisch, fast gerade Knicke und Doppelpunkte raus
   const k = p.reduce((m, q, i) => (dist(q, a) > dist(p[m] ?? a, a) ? i : m), 0);
